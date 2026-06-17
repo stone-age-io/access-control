@@ -1,0 +1,69 @@
+# access-controller configuration — the edge app. It watches the policy KV
+# bucket into in-memory maps, decides credential presentations locally with the
+# pure policy.Decide function, and publishes access events to JetStream.
+#
+# Loaded via the -config flag (default: config/controller.yaml). Every key can
+# be overridden by an SA_-prefixed env var, e.g. SA_CONTROLLER_SITE=hq.
+#
+# Run with:  access-controller -config config/controller.yaml
+
+# ----------------------------------------------------------------------------
+# NATS — must point at the SAME broker/account as accessd so this controller
+# sees the ACC_POLICY bucket accessd writes and can publish to ACC_EVENTS.
+# ----------------------------------------------------------------------------
+nats:
+  urls:
+    - "tls://nats.example.com:4222"
+
+  # Provision a SEPARATE NATS identity for each controller on the platform
+  # (least privilege: a controller only needs to watch ACC_POLICY and publish
+  # acc.evt.> / subscribe acc.cmd.{site}.>). Save its creds file outside the
+  # repo (*.creds is gitignored).
+  credsFile: "config/controller.creds"
+  #   nkeySeedFile: "config/controller.nk"
+  #   token: "${SA_NATS_TOKEN}"
+  #   username: "controller-hq"
+  #   password: "${SA_NATS_PASSWORD}"
+
+  tls:
+    enable: false
+    # caFile: "config/ca.pem"
+    # certFile: "config/client.pem"
+    # keyFile: "config/client.key"
+    insecure: false
+
+  maxReconnects: -1
+  reconnectWait: 250ms
+
+# ----------------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------------
+logging:
+  level: info
+  encoding: json
+  outputPath: stdout
+
+# ----------------------------------------------------------------------------
+# Metrics — distinct port from accessd so both can run on one host during dev.
+# ----------------------------------------------------------------------------
+metrics:
+  enabled: true
+  address: ":2114"
+  path: "/metrics"
+  updateInterval: 15s
+
+# ----------------------------------------------------------------------------
+# Policy KV — same bucket accessd publishes to.
+# ----------------------------------------------------------------------------
+policy:
+  bucket: "ACC_POLICY"
+
+# ----------------------------------------------------------------------------
+# Controller identity — which site this controller belongs to (selects the
+# timezone) and which access points it physically drives. The controller still
+# holds the whole-org policy but only arms readers/locks for these points.
+# ----------------------------------------------------------------------------
+controller:
+  site: "hq"
+  points:
+    - "lobby-main"

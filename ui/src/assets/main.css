@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(var(--bc) / 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(var(--bc) / 0.3);
+}
+
+/* Prevent mobile zoom on input focus by ensuring 16px minimum font size */
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
+
+/* Maintain smaller font size for desktop (DaisyUI default) */
+@media (min-width: 768px) {
+  input,
+  textarea,
+  select {
+    font-size: 0.875rem !important;
+  }
+}

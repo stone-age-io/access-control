@@ -1,0 +1,21 @@
+# Binaries
+/accessd
+/accessd.exe
+/access-controller
+/access-controller.exe
+/bin/
+/dist/
+
+# PocketBase runtime data (created at runtime by accessd)
+/pb_data/
+/pb_public/
+
+# Local config / credentials — never commit
+*.creds
+config/local*.yaml
+
+# Go / editor cruft
+*.test
+*.out
+.idea/
+.vscode/

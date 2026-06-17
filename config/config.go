@@ -1,0 +1,274 @@
+// file: config/config.go
+
+// Package config holds the unified configuration for both stone-access
+// binaries (accessd and access-controller). It is loaded via Viper with
+// environment-variable overrides (prefix SA_) and sensible defaults, mirroring
+// the conventions used in rule-router but trimmed to what this app needs.
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/go-viper/mapstructure/v2"
+	"github.com/spf13/viper"
+)
+
+// Defaults.
+const (
+	DefaultNATSURL       = "nats://localhost:4222"
+	DefaultReconnectWait = 250 * time.Millisecond
+
+	DefaultLogLevel    = "info"
+	DefaultLogEncoding = "json"
+	DefaultLogOutput   = "stdout"
+
+	DefaultMetricsAddress        = ":2113"
+	DefaultMetricsPath           = "/metrics"
+	DefaultMetricsUpdateInterval = "15s"
+
+	// DefaultPolicyBucket is the KV bucket that mirrors the policy graph,
+	// one key per record (cred.{value}, user.{id}, role.{code}, ...).
+	DefaultPolicyBucket = "ACC_POLICY"
+
+	// DefaultEventsStream / DefaultEventsSubjects back the JetStream audit log.
+	DefaultEventsStream   = "ACC_EVENTS"
+	DefaultEventsSubjects = "acc.evt.>"
+
+	// DefaultDataDir is where accessd's embedded PocketBase stores its data.
+	DefaultDataDir = "./pb_data"
+)
+
+// Config is the unified configuration. Each binary reads the sections it needs:
+// both read NATS/Logging/Metrics/Policy; accessd also reads Accessd/Events;
+// access-controller also reads Controller.
+type Config struct {
+	NATS       NATSConfig       `json:"nats" yaml:"nats" mapstructure:"nats"`
+	Logging    LogConfig        `json:"logging" yaml:"logging" mapstructure:"logging"`
+	Metrics    MetricsConfig    `json:"metrics" yaml:"metrics" mapstructure:"metrics"`
+	Policy     PolicyConfig     `json:"policy" yaml:"policy" mapstructure:"policy"`
+	Events     EventsConfig     `json:"events" yaml:"events" mapstructure:"events"`
+	Accessd    AccessdConfig    `json:"accessd" yaml:"accessd" mapstructure:"accessd"`
+	Controller ControllerConfig `json:"controller" yaml:"controller" mapstructure:"controller"`
+}
+
+// NATSConfig contains NATS connection settings. Exactly one auth method (or
+// none) may be set.
+type NATSConfig struct {
+	URLs         []string `json:"urls" yaml:"urls" mapstructure:"urls"`
+	Username     string   `json:"username" yaml:"username" mapstructure:"username"`
+	Password     string   `json:"password" yaml:"password" mapstructure:"password"`
+	Token        string   `json:"token" yaml:"token" mapstructure:"token"`
+	NKeySeedFile string   `json:"nkeySeedFile" yaml:"nkeySeedFile" mapstructure:"nkeySeedFile"`
+	CredsFile    string   `json:"credsFile" yaml:"credsFile" mapstructure:"credsFile"`
+
+	TLS struct {
+		Enable   bool   `json:"enable" yaml:"enable" mapstructure:"enable"`
+		CertFile string `json:"certFile" yaml:"certFile" mapstructure:"certFile"`
+		KeyFile  string `json:"keyFile" yaml:"keyFile" mapstructure:"keyFile"`
+		CAFile   string `json:"caFile" yaml:"caFile" mapstructure:"caFile"`
+		Insecure bool   `json:"insecure" yaml:"insecure" mapstructure:"insecure"`
+	} `json:"tls" yaml:"tls" mapstructure:"tls"`
+
+	MaxReconnects int           `json:"maxReconnects" yaml:"maxReconnects" mapstructure:"maxReconnects"`
+	ReconnectWait time.Duration `json:"reconnectWait" yaml:"reconnectWait" mapstructure:"reconnectWait"`
+}
+
+// LogConfig contains logging configuration.
+type LogConfig struct {
+	Level      string `json:"level" yaml:"level" mapstructure:"level"`
+	Encoding   string `json:"encoding" yaml:"encoding" mapstructure:"encoding"`
+	OutputPath string `json:"outputPath" yaml:"outputPath" mapstructure:"outputPath"`
+}
+
+// MetricsConfig contains the Prometheus metrics server configuration.
+type MetricsConfig struct {
+	Enabled        bool   `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	Address        string `json:"address" yaml:"address" mapstructure:"address"`
+	Path           string `json:"path" yaml:"path" mapstructure:"path"`
+	UpdateInterval string `json:"updateInterval" yaml:"updateInterval" mapstructure:"updateInterval"`
+}
+
+// PolicyConfig names the KV bucket that mirrors the policy graph.
+type PolicyConfig struct {
+	Bucket string `json:"bucket" yaml:"bucket" mapstructure:"bucket"`
+}
+
+// EventsConfig names the JetStream audit stream (subjects acc.evt.>).
+type EventsConfig struct {
+	Stream   string `json:"stream" yaml:"stream" mapstructure:"stream"`
+	Subjects string `json:"subjects" yaml:"subjects" mapstructure:"subjects"`
+}
+
+// AccessdConfig is the central app's configuration. The PocketBase HTTP
+// address is controlled by PocketBase's own `serve --http` flag, not here.
+type AccessdConfig struct {
+	// DataDir is the embedded PocketBase data directory.
+	DataDir string `json:"dataDir" yaml:"dataDir" mapstructure:"dataDir"`
+}
+
+// ControllerConfig is the edge controller's configuration. A controller holds
+// the whole-org policy but only drives the access points it is assigned.
+type ControllerConfig struct {
+	// Site is the site code this controller belongs to (selects the timezone).
+	Site string `json:"site" yaml:"site" mapstructure:"site"`
+	// Points are the access-point codes this controller drives.
+	Points []string `json:"points" yaml:"points" mapstructure:"points"`
+}
+
+// Load reads configuration from the given file path, layering in env vars
+// (prefix SA_) and applying defaults. A missing config file is not an error —
+// the app can run on defaults plus env vars.
+func Load(path string) (*Config, error) {
+	v := viper.New()
+
+	// Only wire a config file if one actually exists. A missing file (including
+	// the default path no one created) is fine — defaults + SA_ env vars apply.
+	// Viper's ConfigFileNotFoundError only covers path search, not an explicit
+	// SetConfigFile target, so we stat it ourselves.
+	hasFile := false
+	if path != "" {
+		if _, statErr := os.Stat(path); statErr == nil {
+			v.SetConfigFile(path)
+			ext := filepath.Ext(path)
+			v.SetConfigType(strings.TrimPrefix(ext, "."))
+			hasFile = true
+		}
+	}
+
+	v.SetEnvPrefix("SA") // e.g. SA_NATS_URLS, SA_CONTROLLER_SITE
+	v.AutomaticEnv()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// AutomaticEnv only resolves keys Viper already knows about; defaults are
+	// applied by mutating the struct, so bind the env-overridable keys
+	// explicitly so they work even when absent from the file.
+	for _, key := range []string{
+		"nats.urls", "nats.username", "nats.password", "nats.token",
+		"nats.credsFile", "nats.nkeySeedFile",
+		"logging.level",
+		"metrics.enabled", "metrics.address", "metrics.path",
+		"policy.bucket", "events.stream",
+		"accessd.dataDir",
+		"controller.site", "controller.points",
+	} {
+		_ = v.BindEnv(key)
+	}
+
+	if hasFile {
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+	}
+
+	var cfg Config
+	setDefaults(&cfg)
+
+	decodeHook := mapstructure.ComposeDecodeHookFunc(
+		mapstructure.StringToTimeDurationHookFunc(),
+		mapstructure.StringToSliceHookFunc(","),
+	)
+	if err := v.Unmarshal(&cfg, viper.DecodeHook(decodeHook)); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	if err := validate(&cfg); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	return &cfg, nil
+}
+
+func setDefaults(cfg *Config) {
+	if len(cfg.NATS.URLs) == 0 {
+		cfg.NATS.URLs = []string{DefaultNATSURL}
+	}
+	if cfg.NATS.MaxReconnects == 0 {
+		cfg.NATS.MaxReconnects = -1 // retry forever
+	}
+	if cfg.NATS.ReconnectWait == 0 {
+		cfg.NATS.ReconnectWait = DefaultReconnectWait
+	}
+
+	if cfg.Logging.Level == "" {
+		cfg.Logging.Level = DefaultLogLevel
+	}
+	if cfg.Logging.Encoding == "" {
+		cfg.Logging.Encoding = DefaultLogEncoding
+	}
+	if cfg.Logging.OutputPath == "" {
+		cfg.Logging.OutputPath = DefaultLogOutput
+	}
+
+	if cfg.Metrics.Address == "" {
+		cfg.Metrics.Address = DefaultMetricsAddress
+	}
+	if cfg.Metrics.Path == "" {
+		cfg.Metrics.Path = DefaultMetricsPath
+	}
+	if cfg.Metrics.UpdateInterval == "" {
+		cfg.Metrics.UpdateInterval = DefaultMetricsUpdateInterval
+	}
+
+	if cfg.Policy.Bucket == "" {
+		cfg.Policy.Bucket = DefaultPolicyBucket
+	}
+	if cfg.Events.Stream == "" {
+		cfg.Events.Stream = DefaultEventsStream
+	}
+	if cfg.Events.Subjects == "" {
+		cfg.Events.Subjects = DefaultEventsSubjects
+	}
+	if cfg.Accessd.DataDir == "" {
+		cfg.Accessd.DataDir = DefaultDataDir
+	}
+}
+
+func validate(cfg *Config) error {
+	if len(cfg.NATS.URLs) == 0 {
+		return fmt.Errorf("at least one NATS URL must be specified")
+	}
+
+	authCount := 0
+	for _, set := range []bool{
+		cfg.NATS.Username != "",
+		cfg.NATS.Token != "",
+		cfg.NATS.NKeySeedFile != "",
+		cfg.NATS.CredsFile != "",
+	} {
+		if set {
+			authCount++
+		}
+	}
+	if authCount > 1 {
+		return fmt.Errorf("only one NATS authentication method should be specified")
+	}
+	if cfg.NATS.CredsFile != "" {
+		if _, err := os.Stat(cfg.NATS.CredsFile); os.IsNotExist(err) {
+			return fmt.Errorf("NATS creds file does not exist: %s", cfg.NATS.CredsFile)
+		}
+	}
+	if cfg.NATS.TLS.Enable {
+		if (cfg.NATS.TLS.CertFile == "") != (cfg.NATS.TLS.KeyFile == "") {
+			return fmt.Errorf("NATS TLS cert and key files must be provided together")
+		}
+	}
+
+	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
+	if !validLevels[cfg.Logging.Level] {
+		return fmt.Errorf("invalid log level: %s", cfg.Logging.Level)
+	}
+
+	if cfg.Metrics.UpdateInterval != "" {
+		if _, err := time.ParseDuration(cfg.Metrics.UpdateInterval); err != nil {
+			return fmt.Errorf("invalid metrics update interval %q: %w", cfg.Metrics.UpdateInterval, err)
+		}
+	}
+
+	if cfg.Policy.Bucket == "" {
+		return fmt.Errorf("policy.bucket cannot be empty")
+	}
+	return nil
+}

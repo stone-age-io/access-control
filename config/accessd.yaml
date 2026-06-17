@@ -1,0 +1,87 @@
+# accessd configuration — the central stone-access app (PocketBase control
+# plane + KV mirror publisher + JetStream audit consumer).
+#
+# Loaded from $SA_CONFIG (default: config/accessd.yaml). Every key can be
+# overridden by an SA_-prefixed env var, e.g.:
+#   SA_NATS_URLS=nats://prod:4222   SA_NATS_CREDSFILE=/etc/accessd/svc.creds
+# A missing file is fine — defaults + env vars still apply.
+#
+# Run with:  accessd serve            (PocketBase owns the HTTP address via
+#                                       --http; default 127.0.0.1:8090)
+
+# ----------------------------------------------------------------------------
+# NATS — the data plane. accessd writes policy to the KV bucket and consumes
+# the audit stream. Point this at your remote broker.
+# ----------------------------------------------------------------------------
+nats:
+  # One or more server URLs (comma-separated via SA_NATS_URLS). For TLS use
+  # the tls:// scheme or set tls.enable below.
+  urls:
+    - "tls://nats.example.com:4222"
+
+  # --- Authentication: pick exactly ONE method (or none for an open dev box). ---
+  #
+  # Stone-Age.io issues per-identity NATS credentials (JWT + nkey seed) as a
+  # .creds file — the recommended path for a backend service. Provision a NATS
+  # user for accessd on the platform, save its creds file outside the repo
+  # (anything matching *.creds is gitignored), and reference it here:
+  credsFile: "config/example.creds"
+  #
+  # Alternatives (leave credsFile empty if you use one of these):
+  #   nkeySeedFile: "config/accessd.nk"   # raw nkey seed file
+  #   token: "${SA_NATS_TOKEN}"           # bearer token
+  #   username: "accessd"                 # user/password
+  #   password: "${SA_NATS_PASSWORD}"
+
+  # --- TLS. Not needed when the URL scheme is tls:// and the server presents a
+  # publicly-trusted cert. Enable for mutual TLS or a custom CA. ---
+  tls:
+    enable: false
+    # caFile: "config/ca.pem"        # custom CA to verify the server
+    # certFile: "config/client.pem"  # client cert (mutual TLS) — with keyFile
+    # keyFile: "config/client.key"
+    insecure: false                  # NEVER true in production
+
+  # Reconnect forever with a short backoff; the KV watcher re-arms on reconnect.
+  maxReconnects: -1
+  reconnectWait: 250ms
+
+# ----------------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------------
+logging:
+  level: info          # debug | info | warn | error
+  encoding: json       # json | console
+  outputPath: stdout
+
+# ----------------------------------------------------------------------------
+# Metrics — Prometheus endpoint
+# ----------------------------------------------------------------------------
+metrics:
+  enabled: true
+  address: ":2113"
+  path: "/metrics"
+  updateInterval: 15s
+
+# ----------------------------------------------------------------------------
+# Policy KV — the bucket accessd mirrors the policy graph into, one key per
+# record (cred.{value}, user.{id}, role.{code}, ...). Controllers watch it.
+# ----------------------------------------------------------------------------
+policy:
+  bucket: "ACC_POLICY"
+
+# ----------------------------------------------------------------------------
+# Events — the JetStream audit stream the controllers publish to and accessd
+# consumes into the PocketBase events collection.
+# ----------------------------------------------------------------------------
+events:
+  stream: "ACC_EVENTS"
+  subjects: "acc.evt.>"
+
+# ----------------------------------------------------------------------------
+# accessd-specific
+# ----------------------------------------------------------------------------
+accessd:
+  # Embedded PocketBase data directory (DB + the compiled UI is served from
+  # ./pb_public next to it). Created at runtime; gitignored.
+  dataDir: "./pb_data"

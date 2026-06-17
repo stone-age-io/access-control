@@ -1,0 +1,29 @@
+{
+  "name": "stone-access-ui",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vueuse/core": "^10.7.0",
+    "date-fns": "^4.1.0",
+    "pinia": "^2.1.0",
+    "pocketbase": "^0.26.8",
+    "vue": "^3.5.30",
+    "vue-router": "^4.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "autoprefixer": "^10.4.27",
+    "daisyui": "^4.4.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.0.0",
+    "vue-tsc": "^3.2.5"
+  }
+}
