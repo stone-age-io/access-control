@@ -115,8 +115,10 @@ async function handleLogout() {
                 class="tooltip tooltip-right absolute left-0 w-full h-full"
                 :data-tip="item.label"
               ></div>
-              <span v-if="item.child && !effectiveCompact" class="opacity-30 -ml-1 text-sm">└</span>
-              <span class="text-lg opacity-80 w-6 text-center">{{ item.icon }}</span>
+              <span v-if="item.child && !effectiveCompact" class="text-lg opacity-80 inline-flex items-center gap-1">
+                <span class="opacity-30 text-sm">└</span>{{ item.icon }}
+              </span>
+              <span v-else class="text-lg opacity-80 w-6 text-center">{{ item.icon }}</span>
               <span v-show="!effectiveCompact" class="font-medium truncate">{{ item.label }}</span>
             </router-link>
           </li>
