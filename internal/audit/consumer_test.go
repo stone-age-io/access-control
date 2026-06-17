@@ -5,32 +5,11 @@ import (
 
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/stone-age-io/access-control/internal/logger"
+	"github.com/stone-age-io/access-control/internal/subjects"
 
 	// Side-effect import registers the schema (events collection) + fixture.
 	_ "github.com/stone-age-io/access-control/pbmigrations"
 )
-
-func TestParseSubject(t *testing.T) {
-	cases := []struct {
-		subject           string
-		site, point, kind string
-	}{
-		{"acc.evt.hq.lobby-main.tap", "hq", "lobby-main", "tap"},
-		{"acc.evt.hq.lobby-main.state", "hq", "lobby-main", "state"},
-		{"acc.evt.hq.lobby-main.alarm", "hq", "lobby-main", "alarm"},
-		{"acc.evt.hq.fire", "hq", "", "fire"},
-		{"acc.evt.hq", "", "", ""},             // too short
-		{"other.evt.hq.lobby.tap", "", "", ""}, // wrong root
-		{"acc.evt.hq.a.b.c", "", "", ""},       // too long
-	}
-	for _, tc := range cases {
-		site, point, kind := parseSubject(tc.subject)
-		if site != tc.site || point != tc.point || kind != tc.kind {
-			t.Errorf("parseSubject(%q) = (%q,%q,%q), want (%q,%q,%q)",
-				tc.subject, site, point, kind, tc.site, tc.point, tc.kind)
-		}
-	}
-}
 
 func newConsumer(t *testing.T) (*Consumer, *tests.TestApp) {
 	t.Helper()
@@ -39,7 +18,7 @@ func newConsumer(t *testing.T) (*Consumer, *tests.TestApp) {
 		t.Fatalf("NewTestApp: %v", err)
 	}
 	t.Cleanup(app.Cleanup)
-	return New(app, nil, "ACC_EVENTS", logger.NewNopLogger(), nil), app
+	return New(app, nil, "ACC_EVENTS", subjects.Default(), logger.NewNopLogger(), nil), app
 }
 
 // A tap event maps onto the events row and persists (validating against the

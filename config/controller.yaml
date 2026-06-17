@@ -59,6 +59,14 @@ policy:
   bucket: "ACC_POLICY"
 
 # ----------------------------------------------------------------------------
+# Subjects — the root namespace for all NATS subjects. MUST match accessd's
+# subjects.root (and every other controller's), or this controller won't see
+# policy/commands or land its events in the audit stream. Single NATS token.
+# ----------------------------------------------------------------------------
+subjects:
+  root: "acc"
+
+# ----------------------------------------------------------------------------
 # Controller identity — which site this controller belongs to (selects the
 # timezone) and which access points it physically drives. The controller still
 # holds the whole-org policy but only arms readers/locks for these points.

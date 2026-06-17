@@ -30,6 +30,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/mirror"
 	"github.com/stone-age-io/access-control/internal/natsx"
+	"github.com/stone-age-io/access-control/internal/subjects"
 	"github.com/stone-age-io/access-control/internal/webui"
 
 	// Side-effect import: registers the schema + fixture migrations.
@@ -126,7 +127,10 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if _, err := nc.EnsureStream(ctx, cfg.Events.Stream, cfg.Events.Subjects); err != nil {
+		// The stream captures the whole event subtree; both its subject set and
+		// the audit consumer's filter come from the one subjects root.
+		subj := subjects.New(cfg.Subjects.Root)
+		if _, err := nc.EnsureStream(ctx, cfg.Events.Stream, subj.EventsWildcard()); err != nil {
 			return err
 		}
 
@@ -139,7 +143,7 @@ func main() {
 		}
 
 		// Audit consumer: ACC_EVENTS JetStream → events collection (UI timeline).
-		auditC = audit.New(e.App, nc.JS, cfg.Events.Stream, log, m)
+		auditC = audit.New(e.App, nc.JS, cfg.Events.Stream, subj, log, m)
 		if err := auditC.Start(ctx); err != nil {
 			return err
 		}
@@ -147,6 +151,7 @@ func main() {
 		log.Info("accessd serving",
 			"policyBucket", cfg.Policy.Bucket,
 			"eventsStream", cfg.Events.Stream,
+			"subjectsRoot", cfg.Subjects.Root,
 			"dataDir", cfg.Accessd.DataDir)
 		return e.Next()
 	})

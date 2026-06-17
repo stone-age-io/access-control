@@ -8,6 +8,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/policy"
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
 type fakeEmitter struct {
@@ -65,7 +66,7 @@ func runtimeFor(t *testing.T) (*Runtime, *drivers.MockReader, *drivers.MockLock,
 	emit := &fakeEmitter{}
 	rt := NewRuntime("hq", store, reader,
 		map[string]drivers.LockDriver{"lobby-main": lock}, emit,
-		logger.NewNopLogger(), nil)
+		subjects.Default(), logger.NewNopLogger(), nil)
 	return rt, reader, lock, emit
 }
 

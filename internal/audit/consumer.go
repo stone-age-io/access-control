@@ -8,12 +8,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
 const durableName = "acc-audit"
@@ -23,14 +23,15 @@ type Consumer struct {
 	app    core.App
 	js     jetstream.JetStream
 	stream string
+	subj   subjects.Subjects
 	log    *logger.Logger
 	m      *metrics.Metrics
 	cc     jetstream.ConsumeContext
 }
 
 // New creates an audit consumer. app writes the rows; js/stream supply events.
-func New(app core.App, js jetstream.JetStream, stream string, log *logger.Logger, m *metrics.Metrics) *Consumer {
-	return &Consumer{app: app, js: js, stream: stream, log: log.With("component", "audit"), m: m}
+func New(app core.App, js jetstream.JetStream, stream string, subj subjects.Subjects, log *logger.Logger, m *metrics.Metrics) *Consumer {
+	return &Consumer{app: app, js: js, stream: stream, subj: subj, log: log.With("component", "audit"), m: m}
 }
 
 // Start creates (or updates) the durable consumer and begins consuming. It
@@ -42,7 +43,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 	cons, err := c.js.CreateOrUpdateConsumer(ctx, c.stream, jetstream.ConsumerConfig{
 		Durable:       durableName,
 		AckPolicy:     jetstream.AckExplicitPolicy,
-		FilterSubject: "acc.evt.>",
+		FilterSubject: c.subj.EventsWildcard(),
 		DeliverPolicy: jetstream.DeliverAllPolicy,
 	})
 	if err != nil {
@@ -89,8 +90,8 @@ func (c *Consumer) handle(msg jetstream.Msg) error {
 // recordFrom builds (but does not save) an events record from an event subject
 // and body. ok is false for an unrecognized subject. Split out for testing.
 func (c *Consumer) recordFrom(subject string, data []byte) (*core.Record, bool, error) {
-	site, point, kind := parseSubject(subject)
-	if kind == "" {
+	site, point, kind, ok := c.subj.ParseEvent(subject)
+	if !ok {
 		return nil, false, nil
 	}
 
@@ -118,25 +119,6 @@ func (c *Consumer) recordFrom(subject string, data []byte) (*core.Record, bool, 
 	}
 	rec.Set("payload", body)
 	return rec, true, nil
-}
-
-// parseSubject splits an event subject into site/point/kind. Forms:
-//
-//	acc.evt.{site}.fire           -> site, "",    "fire"
-//	acc.evt.{site}.{point}.{kind} -> site, point, kind
-func parseSubject(subject string) (site, point, kind string) {
-	parts := strings.Split(subject, ".")
-	if len(parts) < 4 || parts[0] != "acc" || parts[1] != "evt" {
-		return "", "", ""
-	}
-	switch len(parts) {
-	case 4:
-		return parts[2], "", parts[3]
-	case 5:
-		return parts[2], parts[3], parts[4]
-	default:
-		return "", "", ""
-	}
 }
 
 func str(v any) string {

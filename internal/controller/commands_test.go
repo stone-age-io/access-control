@@ -6,12 +6,13 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/policy"
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
 func handlerFor(t *testing.T) (*CommandHandler, *Runtime, *fakeEmitterRefs) {
 	t.Helper()
 	rt, reader, lock, emit := runtimeFor(t)
-	h := NewCommandHandler("hq", rt, logger.NewNopLogger())
+	h := NewCommandHandler("hq", rt, subjects.Default(), logger.NewNopLogger())
 	return h, rt, &fakeEmitterRefs{reader: reader, lock: lock, emit: emit}
 }
 

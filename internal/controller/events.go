@@ -42,11 +42,3 @@ type StateEvent struct {
 	Reason  string `json:"reason,omitempty"`
 	TS      string `json:"ts"`
 }
-
-func tapSubject(site, point string) string {
-	return fmt.Sprintf("acc.evt.%s.%s.tap", site, point)
-}
-
-func stateSubject(site, point string) string {
-	return fmt.Sprintf("acc.evt.%s.%s.state", site, point)
-}

@@ -2,13 +2,13 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
 // Runtime is the edge controller's event loop. It is purely event-driven: it
@@ -21,6 +21,7 @@ type Runtime struct {
 	reader drivers.ReaderDriver
 	locks  map[string]drivers.LockDriver
 	emit   Emitter
+	subs   subjects.Subjects
 	log    *logger.Logger
 	m      *metrics.Metrics
 
@@ -30,13 +31,14 @@ type Runtime struct {
 }
 
 // NewRuntime wires the tap loop. locks maps access-point code to its lock driver.
-func NewRuntime(site string, store *PolicyStore, reader drivers.ReaderDriver, locks map[string]drivers.LockDriver, emit Emitter, log *logger.Logger, m *metrics.Metrics) *Runtime {
+func NewRuntime(site string, store *PolicyStore, reader drivers.ReaderDriver, locks map[string]drivers.LockDriver, emit Emitter, subs subjects.Subjects, log *logger.Logger, m *metrics.Metrics) *Runtime {
 	return &Runtime{
 		site:      site,
 		store:     store,
 		reader:    reader,
 		locks:     locks,
 		emit:      emit,
+		subs:      subs,
 		log:       log.With("component", "runtime"),
 		m:         m,
 		overrides: make(map[string]string),
@@ -73,7 +75,7 @@ func (r *Runtime) handleTap(tap drivers.Tap) {
 		site = ap.Site
 	}
 
-	if err := r.emit.Emit(tapSubject(site, tap.Point), TapEvent{
+	if err := r.emit.Emit(r.subs.EventTap(site, tap.Point), TapEvent{
 		Cred:   tap.Credential,
 		User:   d.User,
 		Allow:  d.Allow,
@@ -188,8 +190,7 @@ func (r *Runtime) EmitAlarm(point, alarmType string, at time.Time) {
 		return
 	}
 
-	subject := fmt.Sprintf("acc.evt.%s.%s.alarm", site, point)
-	if err := r.emit.Emit(subject, map[string]any{
+	if err := r.emit.Emit(r.subs.EventAlarm(site, point), map[string]any{
 		"type": alarmType,
 		"ts":   at.UTC().Format(time.RFC3339),
 	}); err != nil {
@@ -204,7 +205,7 @@ func (r *Runtime) emitState(point, posture, actor, reason string, at time.Time) 
 	if ap, ok := r.store.Point(point); ok && ap.Site != "" {
 		site = ap.Site
 	}
-	if err := r.emit.Emit(stateSubject(site, point), StateEvent{
+	if err := r.emit.Emit(r.subs.EventState(site, point), StateEvent{
 		Posture: posture, Actor: actor, Reason: reason,
 		TS: at.UTC().Format(time.RFC3339),
 	}); err != nil {

@@ -11,7 +11,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,6 +24,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/natsx"
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
 func main() {
@@ -69,6 +69,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// One subjects root shared by the reader, runtime emitter, and command
+	// handler — and matching accessd's, so policy/events flow between them.
+	subj := subjects.New(cfg.Subjects.Root)
+
 	// resync is wired to the policy store after it exists; a reconnect before
 	// then is a harmless no-op.
 	var resync func()
@@ -105,6 +109,7 @@ func main() {
 	}
 	log.Info("policy synced; controller ready",
 		"policyBucket", cfg.Policy.Bucket,
+		"subjectsRoot", cfg.Subjects.Root,
 		"points", cfg.Controller.Points)
 
 	// Tap loop with mock drivers. Taps are simulated by publishing to
@@ -113,7 +118,7 @@ func main() {
 	if len(points) == 0 {
 		log.Warn("no access points configured; tap loop will be idle", "hint", "set controller.points")
 	}
-	reader, err := controller.NewNATSReader(nc.NC, cfg.Controller.Site, points, log)
+	reader, err := controller.NewNATSReader(nc.NC, cfg.Controller.Site, points, subj, log)
 	if err != nil {
 		log.Fatal("failed to start reader", "error", err)
 	}
@@ -124,14 +129,14 @@ func main() {
 		locks[p] = drivers.NewMockLock(p, log)
 	}
 
-	rt := controller.NewRuntime(cfg.Controller.Site, store, reader, locks, controller.NewNATSEmitter(nc.NC), log, m)
+	rt := controller.NewRuntime(cfg.Controller.Site, store, reader, locks, controller.NewNATSEmitter(nc.NC), subj, log, m)
 	go func() { _ = rt.Run(ctx) }()
 	log.Info("tap loop running",
 		"site", cfg.Controller.Site,
-		"tapSubject", fmt.Sprintf("acc.tap.%s.<point>", cfg.Controller.Site))
+		"tapSubject", subj.Tap(cfg.Controller.Site, "<point>"))
 
 	// Command handler: posture/unlock commands + site fire-alarm-input signal.
-	cmds := controller.NewCommandHandler(cfg.Controller.Site, rt, log)
+	cmds := controller.NewCommandHandler(cfg.Controller.Site, rt, subj, log)
 	if err := cmds.Start(nc.NC); err != nil {
 		log.Fatal("failed to start command handler", "error", err)
 	}

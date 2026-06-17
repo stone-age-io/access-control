@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
 // Defaults.
@@ -34,23 +35,25 @@ const (
 	// one key per record (cred.{value}, user.{id}, role.{code}, ...).
 	DefaultPolicyBucket = "ACC_POLICY"
 
-	// DefaultEventsStream / DefaultEventsSubjects back the JetStream audit log.
-	DefaultEventsStream   = "ACC_EVENTS"
-	DefaultEventsSubjects = "acc.evt.>"
+	// DefaultEventsStream names the JetStream audit log. Its subject set is
+	// derived from the subjects root (see internal/subjects), not configured
+	// here, so the stream can never drift from what the controllers publish.
+	DefaultEventsStream = "ACC_EVENTS"
 
 	// DefaultDataDir is where accessd's embedded PocketBase stores its data.
 	DefaultDataDir = "./pb_data"
 )
 
 // Config is the unified configuration. Each binary reads the sections it needs:
-// both read NATS/Logging/Metrics/Policy; accessd also reads Accessd/Events;
-// access-controller also reads Controller.
+// both read NATS/Logging/Metrics/Policy/Subjects; accessd also reads
+// Accessd/Events; access-controller also reads Controller.
 type Config struct {
 	NATS       NATSConfig       `json:"nats" yaml:"nats" mapstructure:"nats"`
 	Logging    LogConfig        `json:"logging" yaml:"logging" mapstructure:"logging"`
 	Metrics    MetricsConfig    `json:"metrics" yaml:"metrics" mapstructure:"metrics"`
 	Policy     PolicyConfig     `json:"policy" yaml:"policy" mapstructure:"policy"`
 	Events     EventsConfig     `json:"events" yaml:"events" mapstructure:"events"`
+	Subjects   SubjectsConfig   `json:"subjects" yaml:"subjects" mapstructure:"subjects"`
 	Accessd    AccessdConfig    `json:"accessd" yaml:"accessd" mapstructure:"accessd"`
 	Controller ControllerConfig `json:"controller" yaml:"controller" mapstructure:"controller"`
 }
@@ -97,10 +100,17 @@ type PolicyConfig struct {
 	Bucket string `json:"bucket" yaml:"bucket" mapstructure:"bucket"`
 }
 
-// EventsConfig names the JetStream audit stream (subjects acc.evt.>).
+// EventsConfig names the JetStream audit stream. Its subjects are derived from
+// the subjects root (the {root}.evt.> subtree), not configured here.
 type EventsConfig struct {
-	Stream   string `json:"stream" yaml:"stream" mapstructure:"stream"`
-	Subjects string `json:"subjects" yaml:"subjects" mapstructure:"subjects"`
+	Stream string `json:"stream" yaml:"stream" mapstructure:"stream"`
+}
+
+// SubjectsConfig sets the root namespace every NATS subject hangs off (see
+// internal/subjects). accessd and every controller MUST use the same root, since
+// they publish and subscribe to each other's traffic. Defaults to "acc".
+type SubjectsConfig struct {
+	Root string `json:"root" yaml:"root" mapstructure:"root"`
 }
 
 // AccessdConfig is the central app's configuration. The PocketBase HTTP
@@ -151,7 +161,7 @@ func Load(path string) (*Config, error) {
 		"nats.credsFile", "nats.nkeySeedFile",
 		"logging.level",
 		"metrics.enabled", "metrics.address", "metrics.path",
-		"policy.bucket", "events.stream",
+		"policy.bucket", "events.stream", "subjects.root",
 		"accessd.dataDir",
 		"controller.site", "controller.points",
 	} {
@@ -218,8 +228,8 @@ func setDefaults(cfg *Config) {
 	if cfg.Events.Stream == "" {
 		cfg.Events.Stream = DefaultEventsStream
 	}
-	if cfg.Events.Subjects == "" {
-		cfg.Events.Subjects = DefaultEventsSubjects
+	if cfg.Subjects.Root == "" {
+		cfg.Subjects.Root = subjects.DefaultRoot
 	}
 	if cfg.Accessd.DataDir == "" {
 		cfg.Accessd.DataDir = DefaultDataDir
@@ -269,6 +279,13 @@ func validate(cfg *Config) error {
 
 	if cfg.Policy.Bucket == "" {
 		return fmt.Errorf("policy.bucket cannot be empty")
+	}
+
+	// The root must be a single NATS token: subject parsing compares it against
+	// the first dot-separated segment, so a "." (or a wildcard / whitespace)
+	// would silently break command and event routing.
+	if cfg.Subjects.Root == "" || strings.ContainsAny(cfg.Subjects.Root, ". \t*>") {
+		return fmt.Errorf("subjects.root must be a single NATS token (no '.', '*', '>', or whitespace): %q", cfg.Subjects.Root)
 	}
 	return nil
 }

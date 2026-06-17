@@ -17,7 +17,7 @@ nats:
   # One or more server URLs (comma-separated via SA_NATS_URLS). For TLS use
   # the tls:// scheme or set tls.enable below.
   urls:
-    - "tls://nats.example.com:4222"
+    - "nats://nats.example.com:4222"
 
   # --- Authentication: pick exactly ONE method (or none for an open dev box). ---
   #
@@ -72,16 +72,26 @@ policy:
 
 # ----------------------------------------------------------------------------
 # Events — the JetStream audit stream the controllers publish to and accessd
-# consumes into the PocketBase events collection.
+# consumes into the PocketBase events collection. The stream's subject set is
+# the {root}.evt.> subtree (see subjects.root below), not set here.
 # ----------------------------------------------------------------------------
 events:
   stream: "ACC_EVENTS"
-  subjects: "acc.evt.>"
+
+# ----------------------------------------------------------------------------
+# Subjects — the root namespace every NATS subject hangs off
+# ({root}.tap/.cmd/.evt …). accessd and EVERY controller must use the same root.
+# Change it only to isolate a deployment on a shared NATS account. Must be a
+# single NATS token (no '.', '*', '>', or whitespace).
+# ----------------------------------------------------------------------------
+subjects:
+  root: "acc"
 
 # ----------------------------------------------------------------------------
 # accessd-specific
 # ----------------------------------------------------------------------------
 accessd:
-  # Embedded PocketBase data directory (DB + the compiled UI is served from
-  # ./pb_public next to it). Created at runtime; gitignored.
+  # Embedded PocketBase data directory (database + uploads). Created at runtime;
+  # gitignored. The management UI is //go:embed-ed into the binary (from
+  # internal/webui/public), not served from disk — there is no pb_public.
   dataDir: "./pb_data"

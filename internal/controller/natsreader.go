@@ -8,6 +8,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/logger"
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
 // NATSReader is the v1 "reader": instead of OSDP/RS485 hardware, it turns NATS
@@ -20,14 +21,14 @@ type NATSReader struct {
 	subs []*nats.Subscription
 }
 
-// NewNATSReader subscribes to acc.tap.{site}.{point} for each point.
-func NewNATSReader(nc *nats.Conn, site string, points []string, log *logger.Logger) (*NATSReader, error) {
+// NewNATSReader subscribes to the tap subject for each point.
+func NewNATSReader(nc *nats.Conn, site string, points []string, subs subjects.Subjects, log *logger.Logger) (*NATSReader, error) {
 	r := &NATSReader{
 		log: log.With("component", "nats-reader"),
 		ch:  make(chan drivers.Tap, 64),
 	}
 	for _, point := range points {
-		subject := fmt.Sprintf("acc.tap.%s.%s", site, point)
+		subject := subs.Tap(site, point)
 		p := point // capture
 		sub, err := nc.Subscribe(subject, func(msg *nats.Msg) {
 			r.ch <- drivers.Tap{Point: p, Credential: parseCred(msg.Data), At: time.Now().UTC()}
