@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { watchDebounced } from '@vueuse/core'
 import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -15,17 +16,23 @@ const router = useRouter()
 const toast = useToast()
 const { confirm } = useConfirm()
 
-const { items: schedules, totalItems, loading, error, load } = usePagination<Schedule>('schedules', 50)
+const { items: schedules, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
+  usePagination<Schedule>('schedules', 50)
 const searchQuery = ref('')
 const deleting = ref(false)
 
 const DAY_SHORT = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-const filtered = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return schedules.value
-  return schedules.value.filter(s => s.code?.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q))
-})
+function queryOpts() {
+  const q = searchQuery.value.trim().replace(/["\\]/g, '')
+  const filter = q ? `code ~ "${q}" || name ~ "${q}"` : ''
+  return { sort: 'code', filter }
+}
+
+function reload() {
+  page.value = 1
+  load(queryOpts())
+}
 
 function summarize(windows: ScheduleWindow[] | undefined): string {
   if (!windows || windows.length === 0) return 'No windows'
@@ -42,10 +49,6 @@ const columns: Column<Schedule>[] = [
   { key: 'created', label: 'Created', format: (v) => formatDate(v, 'PP') },
 ]
 
-function loadSchedules() {
-  load({ sort: 'code' })
-}
-
 async function handleDelete(s: Schedule) {
   const confirmed = await confirm({
     title: 'Delete Schedule',
@@ -59,7 +62,7 @@ async function handleDelete(s: Schedule) {
   try {
     await pb.collection('schedules').delete(s.id)
     toast.success('Schedule deleted')
-    loadSchedules()
+    reload()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to delete schedule')
   } finally {
@@ -67,7 +70,8 @@ async function handleDelete(s: Schedule) {
   }
 }
 
-onMounted(loadSchedules)
+watchDebounced(searchQuery, reload, { debounce: 300 })
+onMounted(reload)
 </script>
 
 <template>
@@ -95,11 +99,11 @@ onMounted(loadSchedules)
         <span class="text-6xl">&#9888;</span>
         <h3 class="text-xl font-bold mt-4">Failed to load schedules</h3>
         <p class="text-base-content/70 mt-2">{{ error }}</p>
-        <button @click="loadSchedules" class="btn btn-primary mt-4">Retry</button>
+        <button @click="reload" class="btn btn-primary mt-4">Retry</button>
       </div>
     </BaseCard>
 
-    <BaseCard v-else-if="schedules.length === 0">
+    <BaseCard v-else-if="schedules.length === 0 && !searchQuery">
       <div class="text-center py-12">
         <span class="text-6xl">🗓️</span>
         <h3 class="text-xl font-bold mt-4">No schedules yet</h3>
@@ -109,17 +113,32 @@ onMounted(loadSchedules)
     </BaseCard>
 
     <BaseCard v-else :no-padding="true">
-      <ResponsiveList :items="filtered" :columns="columns" :loading="loading" @row-click="(s) => router.push(`/schedules/${s.id}/edit`)">
+      <ResponsiveList :items="schedules" :columns="columns" :loading="loading" @row-click="(s) => router.push(`/schedules/${s.id}`)">
         <template #cell-code="{ item }"><code class="text-xs font-bold text-primary">{{ item.code }}</code></template>
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>
         <template #cell-windows="{ item }"><span class="text-xs font-mono opacity-80">{{ summarize(item.windows) }}</span></template>
+
+        <template #empty>
+          <div class="flex flex-col items-center gap-2 opacity-40">
+            <span class="text-4xl">🔍</span>
+            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+          </div>
+        </template>
 
         <template #actions="{ item }">
           <router-link :to="`/schedules/${item.id}/edit`" class="btn btn-xs">Edit</router-link>
           <button @click="handleDelete(item)" class="btn btn-xs text-error" :disabled="deleting">Delete</button>
         </template>
       </ResponsiveList>
-      <div class="p-4 border-t border-base-300 text-sm text-base-content/60">{{ totalItems }} schedule(s)</div>
+
+      <div class="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t border-base-300">
+        <span class="text-sm text-base-content/60">{{ schedules.length }} of {{ totalItems }} schedule(s)</span>
+        <div v-if="totalPages > 1" class="join">
+          <button class="join-item btn btn-sm" :disabled="page === 1 || loading" @click="prevPage(queryOpts())">«</button>
+          <button class="join-item btn btn-sm">{{ page }} / {{ totalPages }}</button>
+          <button class="join-item btn btn-sm" :disabled="page === totalPages || loading" @click="nextPage(queryOpts())">»</button>
+        </div>
+      </div>
     </BaseCard>
   </div>
 </template>

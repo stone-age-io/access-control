@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { watchDebounced } from '@vueuse/core'
 import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -14,19 +15,21 @@ const router = useRouter()
 const toast = useToast()
 const { confirm } = useConfirm()
 
-const { items: points, totalItems, loading, error, load } = usePagination<AccessPoint>('access_points', 50)
+const { items: points, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
+  usePagination<AccessPoint>('access_points', 50)
 const searchQuery = ref('')
 const deleting = ref(false)
 
-const filtered = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return points.value
-  return points.value.filter(p =>
-    p.code?.toLowerCase().includes(q) ||
-    p.name?.toLowerCase().includes(q) ||
-    p.expand?.site?.code?.toLowerCase().includes(q)
-  )
-})
+function queryOpts() {
+  const q = searchQuery.value.trim().replace(/["\\]/g, '')
+  const filter = q ? `code ~ "${q}" || name ~ "${q}"` : ''
+  return { sort: 'code', expand: 'site', filter }
+}
+
+function reload() {
+  page.value = 1
+  load(queryOpts())
+}
 
 const columns: Column<AccessPoint>[] = [
   { key: 'code', label: 'Code' },
@@ -35,17 +38,6 @@ const columns: Column<AccessPoint>[] = [
   { key: 'posture', label: 'Posture' },
   { key: 'pulse_seconds', label: 'Pulse', mobileLabel: 'Pulse (s)' },
 ]
-
-const POSTURE_BADGE: Record<string, string> = {
-  secure: 'badge-success',
-  unlocked: 'badge-info',
-  lockdown: 'badge-error',
-  disabled: 'badge-ghost',
-}
-
-function loadPoints() {
-  load({ sort: 'code', expand: 'site' })
-}
 
 async function handleDelete(p: AccessPoint) {
   const confirmed = await confirm({
@@ -60,7 +52,7 @@ async function handleDelete(p: AccessPoint) {
   try {
     await pb.collection('access_points').delete(p.id)
     toast.success('Access point deleted')
-    loadPoints()
+    reload()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to delete access point')
   } finally {
@@ -68,7 +60,8 @@ async function handleDelete(p: AccessPoint) {
   }
 }
 
-onMounted(loadPoints)
+watchDebounced(searchQuery, reload, { debounce: 300 })
+onMounted(reload)
 </script>
 
 <template>
@@ -96,11 +89,11 @@ onMounted(loadPoints)
         <span class="text-6xl">&#9888;</span>
         <h3 class="text-xl font-bold mt-4">Failed to load access points</h3>
         <p class="text-base-content/70 mt-2">{{ error }}</p>
-        <button @click="loadPoints" class="btn btn-primary mt-4">Retry</button>
+        <button @click="reload" class="btn btn-primary mt-4">Retry</button>
       </div>
     </BaseCard>
 
-    <BaseCard v-else-if="points.length === 0">
+    <BaseCard v-else-if="points.length === 0 && !searchQuery">
       <div class="text-center py-12">
         <span class="text-6xl">🚪</span>
         <h3 class="text-xl font-bold mt-4">No access points yet</h3>
@@ -110,24 +103,35 @@ onMounted(loadPoints)
     </BaseCard>
 
     <BaseCard v-else :no-padding="true">
-      <ResponsiveList :items="filtered" :columns="columns" :loading="loading" @row-click="(p) => router.push(`/access-points/${p.id}/edit`)">
+      <ResponsiveList :items="points" :columns="columns" :loading="loading" @row-click="(p) => router.push(`/access-points/${p.id}`)">
         <template #cell-code="{ item }"><code class="text-xs font-bold text-primary">{{ item.code }}</code></template>
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>
 
         <template #cell-expand.site.code="{ item }">
-          <code v-if="item.expand?.site" class="text-xs">{{ item.expand.site.code }}</code>
+          <router-link v-if="item.expand?.site" :to="`/sites/${item.expand.site.id}`" class="link link-hover" @click.stop>
+            <code class="text-xs">{{ item.expand.site.code }}</code>
+          </router-link>
           <span v-else class="text-base-content/40">-</span>
         </template>
         <template #card-expand.site.code="{ item }">
-          <code v-if="item.expand?.site" class="text-xs">{{ item.expand.site.code }}</code>
+          <router-link v-if="item.expand?.site" :to="`/sites/${item.expand.site.id}`" class="link link-hover" @click.stop>
+            <code class="text-xs">{{ item.expand.site.code }}</code>
+          </router-link>
           <span v-else>-</span>
         </template>
 
         <template #cell-posture="{ item }">
-          <span class="badge badge-sm" :class="POSTURE_BADGE[item.posture] || 'badge-ghost'">{{ item.posture || 'secure' }}</span>
+          <span class="badge badge-ghost badge-sm">{{ item.posture || 'secure' }}</span>
         </template>
         <template #card-posture="{ item }">
-          <span class="badge badge-sm" :class="POSTURE_BADGE[item.posture] || 'badge-ghost'">{{ item.posture || 'secure' }}</span>
+          <span class="badge badge-ghost badge-sm">{{ item.posture || 'secure' }}</span>
+        </template>
+
+        <template #empty>
+          <div class="flex flex-col items-center gap-2 opacity-40">
+            <span class="text-4xl">🔍</span>
+            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+          </div>
         </template>
 
         <template #actions="{ item }">
@@ -135,7 +139,15 @@ onMounted(loadPoints)
           <button @click="handleDelete(item)" class="btn btn-xs text-error" :disabled="deleting">Delete</button>
         </template>
       </ResponsiveList>
-      <div class="p-4 border-t border-base-300 text-sm text-base-content/60">{{ totalItems }} access point(s)</div>
+
+      <div class="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t border-base-300">
+        <span class="text-sm text-base-content/60">{{ points.length }} of {{ totalItems }} access point(s)</span>
+        <div v-if="totalPages > 1" class="join">
+          <button class="join-item btn btn-sm" :disabled="page === 1 || loading" @click="prevPage(queryOpts())">«</button>
+          <button class="join-item btn btn-sm">{{ page }} / {{ totalPages }}</button>
+          <button class="join-item btn btn-sm" :disabled="page === totalPages || loading" @click="nextPage(queryOpts())">»</button>
+        </div>
+      </div>
     </BaseCard>
   </div>
 </template>

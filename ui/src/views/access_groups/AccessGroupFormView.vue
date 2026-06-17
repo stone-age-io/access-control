@@ -3,8 +3,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { policyKey } from '@/utils/policyKey'
 import type { AccessGroup, AccessPoint, Schedule } from '@/types/pocketbase'
+import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import RailCard from '@/components/ui/RailCard.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -24,6 +27,8 @@ const points = ref<AccessPoint[]>([])
 const schedules = ref<Schedule[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+
+const kvKey = computed(() => policyKey('access_groups', { code: form.value.code.trim() }))
 
 async function loadOptions() {
   try {
@@ -72,11 +77,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('access_groups').update(recordId!, data)
       toast.success('Access group updated')
+      router.push(`/access-groups/${recordId}`)
     } else {
-      await pb.collection('access_groups').create(data)
+      const created = await pb.collection('access_groups').create<AccessGroup>(data)
       toast.success('Access group created')
+      router.push(`/access-groups/${created.id}`)
     }
-    router.push('/access-groups')
   } catch (err: any) {
     toast.error(err?.message || 'Failed to save access group')
   } finally {
@@ -91,22 +97,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-6 max-w-2xl">
-    <div>
-      <div class="breadcrumbs text-sm">
-        <ul>
-          <li><router-link to="/access-groups">Access Groups</router-link></li>
-          <li>{{ isEdit ? 'Edit' : 'New' }}</li>
-        </ul>
-      </div>
-      <h1 class="text-3xl font-bold">{{ isEdit ? 'Edit Access Group' : 'New Access Group' }}</h1>
-    </div>
+  <div v-if="loadingRecord" class="flex justify-center p-12">
+    <span class="loading loading-spinner loading-lg"></span>
+  </div>
 
-    <div v-if="loadingRecord" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <form v-else @submit.prevent="handleSubmit" class="space-y-6">
+  <form v-else @submit.prevent="handleSubmit">
+    <DetailLayout
+      :title="isEdit ? 'Edit Access Group' : 'New Access Group'"
+      :breadcrumbs="[{ label: 'Access Groups', to: '/access-groups' }, { label: isEdit ? 'Edit' : 'New' }]"
+    >
       <BaseCard title="Access Group">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -148,13 +147,27 @@ onMounted(async () => {
         </div>
       </BaseCard>
 
-      <div class="flex flex-col sm:flex-row justify-end gap-2 sm:gap-4">
-        <button type="button" @click="router.back()" class="btn btn-ghost order-2 sm:order-1" :disabled="loading">Cancel</button>
-        <button type="submit" class="btn btn-primary order-1 sm:order-2" :disabled="loading">
+      <template #rail>
+        <RailCard title="Policy KV key" icon="🔑">
+          <code v-if="kvKey" class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block">{{ kvKey }}</code>
+          <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">group.&lt;code&gt;</code>
+          <p class="text-xs opacity-50">The controller mirrors this group to the ACC_POLICY bucket under this key.</p>
+        </RailCard>
+        <RailCard title="About access groups" icon="🗝️">
+          <p class="text-xs opacity-60 leading-relaxed">
+            An access level: a set of access points granted together under one schedule. Roles bundle access groups
+            and are assigned to cardholders.
+          </p>
+        </RailCard>
+      </template>
+
+      <template #footer>
+        <button type="button" @click="router.back()" class="btn btn-ghost" :disabled="loading">Cancel</button>
+        <button type="submit" class="btn btn-primary" :disabled="loading">
           <span v-if="loading" class="loading loading-spinner"></span>
           <span v-else>{{ isEdit ? 'Update' : 'Create' }} Access Group</span>
         </button>
-      </div>
-    </form>
-  </div>
+      </template>
+    </DetailLayout>
+  </form>
 </template>

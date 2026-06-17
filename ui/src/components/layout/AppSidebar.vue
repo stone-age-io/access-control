@@ -14,31 +14,26 @@ const uiStore = useUIStore()
 const isLargeScreen = useMediaQuery('(min-width: 1024px)')
 const effectiveCompact = computed(() => uiStore.sidebarCompact && isLargeScreen.value)
 
-interface NavItem { label: string; icon: string; path: string }
+interface NavItem { label: string; icon: string; path: string; child?: boolean }
 interface NavSection { title?: string; items: NavItem[] }
 
 const sections: NavSection[] = [
   { items: [{ label: 'Overview', icon: '📊', path: '/' }] },
   {
-    title: 'Topology',
-    items: [
-      { label: 'Sites', icon: '🏢', path: '/sites' },
-      { label: 'Schedules', icon: '🗓️', path: '/schedules' },
-      { label: 'Access Points', icon: '🚪', path: '/access-points' },
-    ],
-  },
-  {
-    title: 'Authorization',
-    items: [
-      { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
-      { label: 'Roles', icon: '🛡️', path: '/roles' },
-    ],
-  },
-  {
-    title: 'People',
+    title: 'People & Access',
     items: [
       { label: 'Cardholders', icon: '🪪', path: '/cardholders' },
-      { label: 'Credentials', icon: '🎫', path: '/credentials' },
+      { label: 'Credentials', icon: '🎫', path: '/credentials', child: true },
+      { label: 'Roles', icon: '🛡️', path: '/roles' },
+      { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
+    ],
+  },
+  {
+    title: 'Facility',
+    items: [
+      { label: 'Sites', icon: '🏢', path: '/sites' },
+      { label: 'Access Points', icon: '🚪', path: '/access-points' },
+      { label: 'Schedules', icon: '🗓️', path: '/schedules' },
     ],
   },
   {
@@ -108,7 +103,7 @@ async function handleLogout() {
             <div class="divider my-0"></div>
           </li>
 
-          <li v-for="item in section.items" :key="item.path">
+          <li v-for="item in section.items" :key="item.path" :class="{ 'ml-4': item.child && !effectiveCompact }">
             <router-link
               :to="item.path"
               :class="{ active: isActive(item.path) }"
@@ -120,6 +115,7 @@ async function handleLogout() {
                 class="tooltip tooltip-right absolute left-0 w-full h-full"
                 :data-tip="item.label"
               ></div>
+              <span v-if="item.child && !effectiveCompact" class="opacity-30 -ml-1 text-sm">└</span>
               <span class="text-lg opacity-80 w-6 text-center">{{ item.icon }}</span>
               <span v-show="!effectiveCompact" class="font-medium truncate">{{ item.label }}</span>
             </router-link>

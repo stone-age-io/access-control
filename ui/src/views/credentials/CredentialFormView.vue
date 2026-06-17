@@ -3,8 +3,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { policyKey } from '@/utils/policyKey'
 import type { Credential, CredentialType, CredentialStatus, Cardholder } from '@/types/pocketbase'
+import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import RailCard from '@/components/ui/RailCard.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -19,7 +22,8 @@ const STATUSES: CredentialStatus[] = ['active', 'revoked', 'suspended']
 const form = ref({
   value: '',
   type: 'wiegand' as CredentialType,
-  user: '',
+  // Prefill the holder when arriving from a cardholder page (?user=<id>).
+  user: (route.query.user as string) || '',
   status: 'active' as CredentialStatus,
   label: '',
 })
@@ -27,6 +31,8 @@ const form = ref({
 const cardholders = ref<Cardholder[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+
+const kvKey = computed(() => policyKey('credentials', { value: form.value.value.trim() }))
 
 async function loadOptions() {
   try {
@@ -72,11 +78,13 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('credentials').update(recordId!, data)
       toast.success('Credential updated')
+      router.push(`/credentials/${recordId}`)
     } else {
-      await pb.collection('credentials').create(data)
+      const created = await pb.collection('credentials').create<Credential>(data)
       toast.success('Credential created')
+      // Return to the holder when we came from one; otherwise the new credential.
+      router.push(form.value.user ? `/cardholders/${form.value.user}` : `/credentials/${created.id}`)
     }
-    router.push('/credentials')
   } catch (err: any) {
     toast.error(err?.message || 'Failed to save credential')
   } finally {
@@ -91,22 +99,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-6 max-w-2xl">
-    <div>
-      <div class="breadcrumbs text-sm">
-        <ul>
-          <li><router-link to="/credentials">Credentials</router-link></li>
-          <li>{{ isEdit ? 'Edit' : 'New' }}</li>
-        </ul>
-      </div>
-      <h1 class="text-3xl font-bold">{{ isEdit ? 'Edit Credential' : 'New Credential' }}</h1>
-    </div>
+  <div v-if="loadingRecord" class="flex justify-center p-12">
+    <span class="loading loading-spinner loading-lg"></span>
+  </div>
 
-    <div v-if="loadingRecord" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <form v-else @submit.prevent="handleSubmit" class="space-y-6">
+  <form v-else @submit.prevent="handleSubmit">
+    <DetailLayout
+      :title="isEdit ? 'Edit Credential' : 'New Credential'"
+      :breadcrumbs="[{ label: 'Credentials', to: '/credentials' }, { label: isEdit ? 'Edit' : 'New' }]"
+    >
       <BaseCard title="Credential">
         <div class="space-y-4">
           <div class="form-control">
@@ -148,13 +149,27 @@ onMounted(async () => {
         </div>
       </BaseCard>
 
-      <div class="flex flex-col sm:flex-row justify-end gap-2 sm:gap-4">
-        <button type="button" @click="router.back()" class="btn btn-ghost order-2 sm:order-1" :disabled="loading">Cancel</button>
-        <button type="submit" class="btn btn-primary order-1 sm:order-2" :disabled="loading">
+      <template #rail>
+        <RailCard title="Policy KV key" icon="🔑">
+          <code v-if="kvKey" class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block">{{ kvKey }}</code>
+          <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">cred.&lt;value&gt;</code>
+          <p class="text-xs opacity-50">The reader presents this value; the controller looks it up by this key.</p>
+        </RailCard>
+        <RailCard title="About credentials" icon="🎫">
+          <p class="text-xs opacity-60 leading-relaxed">
+            A credential is an opaque string mapped to one cardholder. Revoke or suspend it to stop access
+            without deleting the record.
+          </p>
+        </RailCard>
+      </template>
+
+      <template #footer>
+        <button type="button" @click="router.back()" class="btn btn-ghost" :disabled="loading">Cancel</button>
+        <button type="submit" class="btn btn-primary" :disabled="loading">
           <span v-if="loading" class="loading loading-spinner"></span>
           <span v-else>{{ isEdit ? 'Update' : 'Create' }} Credential</span>
         </button>
-      </div>
-    </form>
-  </div>
+      </template>
+    </DetailLayout>
+  </form>
 </template>

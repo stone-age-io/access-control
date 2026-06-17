@@ -3,8 +3,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { policyKey } from '@/utils/policyKey'
 import type { Schedule, ScheduleWindow } from '@/types/pocketbase'
+import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import RailCard from '@/components/ui/RailCard.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -30,6 +33,8 @@ const windows = ref<ScheduleWindow[]>([{ days: [1, 2, 3, 4, 5], start: '08:00', 
 
 const loading = ref(false)
 const loadingRecord = ref(false)
+
+const kvKey = computed(() => policyKey('schedules', { code: code.value.trim() }))
 
 function addWindow() {
   windows.value.push({ days: [1, 2, 3, 4, 5], start: '08:00', end: '17:00' })
@@ -89,11 +94,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('schedules').update(recordId!, data)
       toast.success('Schedule updated')
+      router.push(`/schedules/${recordId}`)
     } else {
-      await pb.collection('schedules').create(data)
+      const created = await pb.collection('schedules').create<Schedule>(data)
       toast.success('Schedule created')
+      router.push(`/schedules/${created.id}`)
     }
-    router.push('/schedules')
   } catch (err: any) {
     toast.error(err?.message || 'Failed to save schedule')
   } finally {
@@ -107,22 +113,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-6 max-w-3xl">
-    <div>
-      <div class="breadcrumbs text-sm">
-        <ul>
-          <li><router-link to="/schedules">Schedules</router-link></li>
-          <li>{{ isEdit ? 'Edit' : 'New' }}</li>
-        </ul>
-      </div>
-      <h1 class="text-3xl font-bold">{{ isEdit ? 'Edit Schedule' : 'New Schedule' }}</h1>
-    </div>
+  <div v-if="loadingRecord" class="flex justify-center p-12">
+    <span class="loading loading-spinner loading-lg"></span>
+  </div>
 
-    <div v-if="loadingRecord" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <form v-else @submit.prevent="handleSubmit" class="space-y-6">
+  <form v-else @submit.prevent="handleSubmit">
+    <DetailLayout
+      :title="isEdit ? 'Edit Schedule' : 'New Schedule'"
+      :breadcrumbs="[{ label: 'Schedules', to: '/schedules' }, { label: isEdit ? 'Edit' : 'New' }]"
+    >
       <BaseCard title="Schedule">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -194,13 +193,27 @@ onMounted(() => {
         </div>
       </BaseCard>
 
-      <div class="flex flex-col sm:flex-row justify-end gap-2 sm:gap-4">
-        <button type="button" @click="router.back()" class="btn btn-ghost order-2 sm:order-1" :disabled="loading">Cancel</button>
-        <button type="submit" class="btn btn-primary order-1 sm:order-2" :disabled="loading">
+      <template #rail>
+        <RailCard title="Policy KV key" icon="🔑">
+          <code v-if="kvKey" class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block">{{ kvKey }}</code>
+          <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">sched.&lt;code&gt;</code>
+          <p class="text-xs opacity-50">The mirror writes this schedule to the ACC_POLICY bucket under this key.</p>
+        </RailCard>
+        <RailCard title="About schedules" icon="🗓️">
+          <p class="text-xs opacity-60 leading-relaxed">
+            Reusable weekly time windows. Access is open during any window; each window is evaluated in its
+            site's local time. An end at or before the start crosses midnight.
+          </p>
+        </RailCard>
+      </template>
+
+      <template #footer>
+        <button type="button" @click="router.back()" class="btn btn-ghost" :disabled="loading">Cancel</button>
+        <button type="submit" class="btn btn-primary" :disabled="loading">
           <span v-if="loading" class="loading loading-spinner"></span>
           <span v-else>{{ isEdit ? 'Update' : 'Create' }} Schedule</span>
         </button>
-      </div>
-    </form>
-  </div>
+      </template>
+    </DetailLayout>
+  </form>
 </template>

@@ -1,0 +1,1 @@
+const i={sites:"site.",schedules:"sched.",access_points:"point.",access_groups:"group.",roles:"role.",cardholders:"user.",credentials:"cred."};function d(s,r){const t=i[s];if(!t)return"";let e="";return s==="cardholders"?e=r.id||"":s==="credentials"?e=r.value||"":e=r.code||"",e?t+e:""}export{d as p};

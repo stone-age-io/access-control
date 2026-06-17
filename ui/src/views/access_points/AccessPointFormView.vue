@@ -3,8 +3,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { policyKey } from '@/utils/policyKey'
 import type { AccessPoint, Site, Posture } from '@/types/pocketbase'
+import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import RailCard from '@/components/ui/RailCard.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,6 +29,8 @@ const form = ref({
 const sites = ref<Site[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+
+const kvKey = computed(() => policyKey('access_points', { code: form.value.code.trim() }))
 
 async function loadOptions() {
   try {
@@ -71,11 +76,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('access_points').update(recordId!, data)
       toast.success('Access point updated')
+      router.push(`/access-points/${recordId}`)
     } else {
-      await pb.collection('access_points').create(data)
+      const created = await pb.collection('access_points').create<AccessPoint>(data)
       toast.success('Access point created')
+      router.push(`/access-points/${created.id}`)
     }
-    router.push('/access-points')
   } catch (err: any) {
     toast.error(err?.message || 'Failed to save access point')
   } finally {
@@ -90,22 +96,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-6 max-w-2xl">
-    <div>
-      <div class="breadcrumbs text-sm">
-        <ul>
-          <li><router-link to="/access-points">Access Points</router-link></li>
-          <li>{{ isEdit ? 'Edit' : 'New' }}</li>
-        </ul>
-      </div>
-      <h1 class="text-3xl font-bold">{{ isEdit ? 'Edit Access Point' : 'New Access Point' }}</h1>
-    </div>
+  <div v-if="loadingRecord" class="flex justify-center p-12">
+    <span class="loading loading-spinner loading-lg"></span>
+  </div>
 
-    <div v-if="loadingRecord" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <form v-else @submit.prevent="handleSubmit" class="space-y-6">
+  <form v-else @submit.prevent="handleSubmit">
+    <DetailLayout
+      :title="isEdit ? 'Edit Access Point' : 'New Access Point'"
+      :breadcrumbs="[{ label: 'Access Points', to: '/access-points' }, { label: isEdit ? 'Edit' : 'New' }]"
+    >
       <BaseCard title="Access Point">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -147,13 +146,27 @@ onMounted(async () => {
         </div>
       </BaseCard>
 
-      <div class="flex flex-col sm:flex-row justify-end gap-2 sm:gap-4">
-        <button type="button" @click="router.back()" class="btn btn-ghost order-2 sm:order-1" :disabled="loading">Cancel</button>
-        <button type="submit" class="btn btn-primary order-1 sm:order-2" :disabled="loading">
+      <template #rail>
+        <RailCard title="Policy KV key" icon="🔑">
+          <code v-if="kvKey" class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block">{{ kvKey }}</code>
+          <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">point.&lt;code&gt;</code>
+          <p class="text-xs opacity-50">The controller looks up this point by this key when a credential is presented.</p>
+        </RailCard>
+        <RailCard title="About access points" icon="🚪">
+          <p class="text-xs opacity-60 leading-relaxed">
+            A controllable opening — door, gate, turnstile, or elevator. Its standing posture is the default;
+            a controller command can override it at runtime.
+          </p>
+        </RailCard>
+      </template>
+
+      <template #footer>
+        <button type="button" @click="router.back()" class="btn btn-ghost" :disabled="loading">Cancel</button>
+        <button type="submit" class="btn btn-primary" :disabled="loading">
           <span v-if="loading" class="loading loading-spinner"></span>
           <span v-else>{{ isEdit ? 'Update' : 'Create' }} Access Point</span>
         </button>
-      </div>
-    </form>
-  </div>
+      </template>
+    </DetailLayout>
+  </form>
 </template>

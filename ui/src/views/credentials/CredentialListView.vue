@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { watchDebounced } from '@vueuse/core'
 import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -14,20 +15,21 @@ const router = useRouter()
 const toast = useToast()
 const { confirm } = useConfirm()
 
-const { items: credentials, totalItems, loading, error, load } = usePagination<Credential>('credentials', 50)
+const { items: credentials, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
+  usePagination<Credential>('credentials', 50)
 const searchQuery = ref('')
 const deleting = ref(false)
 
-const filtered = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return credentials.value
-  return credentials.value.filter(c =>
-    c.value?.toLowerCase().includes(q) ||
-    c.label?.toLowerCase().includes(q) ||
-    c.expand?.user?.name?.toLowerCase().includes(q) ||
-    c.expand?.user?.email?.toLowerCase().includes(q)
-  )
-})
+function queryOpts() {
+  const q = searchQuery.value.trim().replace(/["\\]/g, '')
+  const filter = q ? `value ~ "${q}" || label ~ "${q}" || user.name ~ "${q}" || user.email ~ "${q}"` : ''
+  return { sort: 'value', expand: 'user', filter }
+}
+
+function reload() {
+  page.value = 1
+  load(queryOpts())
+}
 
 const columns: Column<Credential>[] = [
   { key: 'value', label: 'Value' },
@@ -43,10 +45,6 @@ const STATUS_BADGE: Record<string, string> = {
   suspended: 'badge-warning',
 }
 
-function loadCredentials() {
-  load({ sort: 'value', expand: 'user' })
-}
-
 async function handleDelete(c: Credential) {
   const confirmed = await confirm({
     title: 'Delete Credential',
@@ -60,7 +58,7 @@ async function handleDelete(c: Credential) {
   try {
     await pb.collection('credentials').delete(c.id)
     toast.success('Credential deleted')
-    loadCredentials()
+    reload()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to delete credential')
   } finally {
@@ -68,7 +66,8 @@ async function handleDelete(c: Credential) {
   }
 }
 
-onMounted(loadCredentials)
+watchDebounced(searchQuery, reload, { debounce: 300 })
+onMounted(reload)
 </script>
 
 <template>
@@ -96,11 +95,11 @@ onMounted(loadCredentials)
         <span class="text-6xl">&#9888;</span>
         <h3 class="text-xl font-bold mt-4">Failed to load credentials</h3>
         <p class="text-base-content/70 mt-2">{{ error }}</p>
-        <button @click="loadCredentials" class="btn btn-primary mt-4">Retry</button>
+        <button @click="reload" class="btn btn-primary mt-4">Retry</button>
       </div>
     </BaseCard>
 
-    <BaseCard v-else-if="credentials.length === 0">
+    <BaseCard v-else-if="credentials.length === 0 && !searchQuery">
       <div class="text-center py-12">
         <span class="text-6xl">🎫</span>
         <h3 class="text-xl font-bold mt-4">No credentials yet</h3>
@@ -110,7 +109,7 @@ onMounted(loadCredentials)
     </BaseCard>
 
     <BaseCard v-else :no-padding="true">
-      <ResponsiveList :items="filtered" :columns="columns" :loading="loading" @row-click="(c) => router.push(`/credentials/${c.id}/edit`)">
+      <ResponsiveList :items="credentials" :columns="columns" :loading="loading" @row-click="(c) => router.push(`/credentials/${c.id}`)">
         <template #cell-value="{ item }"><code class="text-xs font-bold text-primary">{{ item.value }}</code></template>
         <template #card-value="{ item }"><code class="text-sm font-bold text-primary">{{ item.value }}</code></template>
 
@@ -122,7 +121,9 @@ onMounted(loadCredentials)
         </template>
 
         <template #cell-expand.user.name="{ item }">
-          <span v-if="item.expand?.user">{{ item.expand.user.name || item.expand.user.email }}</span>
+          <router-link v-if="item.expand?.user" :to="`/cardholders/${item.expand.user.id}`" class="link link-hover" @click.stop>
+            {{ item.expand.user.name || item.expand.user.email }}
+          </router-link>
           <span v-else class="text-base-content/40">-</span>
         </template>
         <template #card-expand.user.name="{ item }">
@@ -137,12 +138,27 @@ onMounted(loadCredentials)
           <span class="badge badge-sm" :class="STATUS_BADGE[item.status] || 'badge-ghost'">{{ item.status || '-' }}</span>
         </template>
 
+        <template #empty>
+          <div class="flex flex-col items-center gap-2 opacity-40">
+            <span class="text-4xl">🔍</span>
+            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+          </div>
+        </template>
+
         <template #actions="{ item }">
           <router-link :to="`/credentials/${item.id}/edit`" class="btn btn-xs">Edit</router-link>
           <button @click="handleDelete(item)" class="btn btn-xs text-error" :disabled="deleting">Delete</button>
         </template>
       </ResponsiveList>
-      <div class="p-4 border-t border-base-300 text-sm text-base-content/60">{{ totalItems }} credential(s)</div>
+
+      <div class="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t border-base-300">
+        <span class="text-sm text-base-content/60">{{ credentials.length }} of {{ totalItems }} credential(s)</span>
+        <div v-if="totalPages > 1" class="join">
+          <button class="join-item btn btn-sm" :disabled="page === 1 || loading" @click="prevPage(queryOpts())">«</button>
+          <button class="join-item btn btn-sm">{{ page }} / {{ totalPages }}</button>
+          <button class="join-item btn btn-sm" :disabled="page === totalPages || loading" @click="nextPage(queryOpts())">»</button>
+        </div>
+      </div>
     </BaseCard>
   </div>
 </template>
