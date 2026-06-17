@@ -23,8 +23,41 @@ internal/controller/    PolicyStore (KV watch → maps), tap loop, command handl
 internal/drivers/       ReaderDriver / LockDriver / FAIInput interfaces + mocks
 internal/audit/         JetStream consumer → PocketBase events collection
 internal/natsx/         NATS connection + KV helpers
+internal/webui/         the compiled management UI, //go:embed-ed into accessd
 pbmigrations/           PocketBase collections (schema-in-code)
+ui/                     Vue 3 + Vite management UI source (PocketBase-backed CRUD)
 ```
+
+## Web UI
+
+`accessd` serves a Vue 3 management console (sites, schedules, access points,
+groups, roles, cardholders, credentials, an events timeline) at `/`. It is
+compiled into `internal/webui/public` and **`//go:embed`-ed into the accessd
+binary** — there is no `pb_public` directory to ship; the binary is
+self-contained.
+
+Auth is PocketBase superuser only (`accessd superuser upsert <email> <pass>`),
+since the access-control collections have superuser-only API rules.
+
+### Build order (the embed happens at Go compile time)
+
+```
+cd ui && npm install        # once
+npm run build               # → internal/webui/public  (commit this)
+cd .. && go build ./cmd/accessd
+./accessd serve             # UI at http://127.0.0.1:8090/  · admin at /_
+```
+
+Always build the UI **before** the binary; the committed `internal/webui/public`
+means a fresh checkout embeds a working UI without needing npm.
+
+### UI development
+
+```
+npm --prefix ui run dev     # http://localhost:5174, proxies /api + /_ to :8090
+```
+
+Requires Node 20.19+ / 22.12+ (Vite 8).
 
 ## Test
 

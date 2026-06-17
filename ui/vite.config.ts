@@ -19,16 +19,12 @@ export default defineConfig({
     },
   },
   build: {
-    // Compiled UI is served by accessd's embedded PocketBase from pb_public/.
-    outDir: '../pb_public',
+    // Compiled UI is //go:embed-ed into the accessd binary from
+    // internal/webui/public and served by accessd's OnServe SPA route.
+    outDir: '../internal/webui/public',
     emptyOutDir: true,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'vue-vendor': ['vue', 'vue-router', 'pinia'],
-        },
-      },
-    },
+    // Vite 8 bundles with rolldown; default chunking is fine for an app this
+    // size (no manualChunks object — rolldown only accepts the function form).
     chunkSizeWarningLimit: 600,
   },
 })

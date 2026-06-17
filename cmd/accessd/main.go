@@ -6,16 +6,18 @@
 // config (NATS, policy bucket, audit stream, logging) is loaded from the file
 // at $SA_CONFIG (default config/accessd.yaml) plus environment overrides.
 //
-// This build step boots PocketBase with the schema migrations and fixture and
-// brings up the NATS connection (ensuring the policy KV bucket and audit
-// stream) in the serve lifecycle. The mirror publisher and audit consumer are
-// wired in later build steps.
+// On `serve` it boots PocketBase with the schema migrations and fixture, serves
+// the embedded management UI at "/", and brings up the NATS connection (ensuring
+// the policy KV bucket and audit stream), the KV mirror publisher, and the
+// JetStream audit consumer in the serve lifecycle.
 package main
 
 import (
 	"context"
+	"io/fs"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pocketbase/pocketbase"
@@ -28,6 +30,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/mirror"
 	"github.com/stone-age-io/access-control/internal/natsx"
+	"github.com/stone-age-io/access-control/internal/webui"
 
 	// Side-effect import: registers the schema + fixture migrations.
 	_ "github.com/stone-age-io/access-control/pbmigrations"
@@ -74,6 +77,31 @@ func main() {
 	)
 
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		// Serve the embedded management UI (SPA) at "/" with history-mode
+		// fallback. PocketBase does not serve static assets in framework mode,
+		// so we register the catch-all ourselves; the more specific /api and /_
+		// routes PocketBase registers take precedence over /{path...}.
+		uiFS, err := fs.Sub(webui.FS, "public")
+		if err != nil {
+			return err
+		}
+		e.Router.GET("/{path...}", func(re *core.RequestEvent) error {
+			p := re.Request.PathValue("path")
+			if p == "" || p == "/" {
+				return re.FileFS(uiFS, "index.html")
+			}
+			if f, openErr := uiFS.Open(p); openErr == nil {
+				_ = f.Close()
+				return re.FileFS(uiFS, p)
+			}
+			// A missing asset (has an extension) is a real 404; anything else is
+			// a client-side route → hand back index.html so vue-router resolves it.
+			if strings.Contains(p, ".") {
+				return re.NotFoundError("File not found", nil)
+			}
+			return re.FileFS(uiFS, "index.html")
+		})
+
 		updateInterval, _ := time.ParseDuration(cfg.Metrics.UpdateInterval)
 		collector = metrics.NewCollector(m, updateInterval)
 		collector.Start()
