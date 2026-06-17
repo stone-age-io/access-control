@@ -5,6 +5,7 @@
 /access-controller.exe
 /bin/
 /dist/
+/public/
 
 # PocketBase runtime data (created at runtime by accessd)
 /pb_data/
