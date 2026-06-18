@@ -16,15 +16,16 @@ export type Posture = 'secure' | 'unlocked' | 'lockdown' | 'disabled'
 export type CardholderStatus = 'active' | 'suspended'
 export type CredentialStatus = 'active' | 'revoked' | 'suspended'
 export type CredentialType = 'nkey' | 'wiegand' | 'pin' | 'mobile'
+export type PortalType = 'door' | 'turnstile' | 'elevator' | 'gate' | 'logical'
 export type EventKind = 'tap' | 'state' | 'alarm' | 'fire' | 'command'
 
 /** A building/campus; owns the timezone. */
-export interface Site extends BaseRecord {
+export interface Location extends BaseRecord {
   code: string
   name: string
   /** IANA timezone name, e.g. "America/New_York". */
   timezone: string
-  /** Suppress forced/held-open alarms while the site fire input is active. */
+  /** Suppress forced/held-open alarms while the location fire input is active. */
   fai_suppress: boolean
 }
 
@@ -44,23 +45,24 @@ export interface Schedule extends BaseRecord {
   windows: ScheduleWindow[]
 }
 
-/** A controllable opening (door/gate/turnstile/elevator). */
-export interface AccessPoint extends BaseRecord {
+/** A controllable opening (door/gate/turnstile/elevator/logical). */
+export interface Portal extends BaseRecord {
   code: string
-  site: string
+  type: PortalType | ''
+  location: string
   name: string
   posture: Posture | ''
   pulse_seconds: number
-  expand?: { site?: Site }
+  expand?: { location?: Location }
 }
 
-/** A set of points under one schedule (an "access level"). */
+/** A set of portals under one schedule (an "access level"). */
 export interface AccessGroup extends BaseRecord {
   code: string
   name: string
-  access_points: string[]
+  portals: string[]
   schedule: string
-  expand?: { access_points?: AccessPoint[]; schedule?: Schedule }
+  expand?: { portals?: Portal[]; schedule?: Schedule }
 }
 
 /** A named bundle of access groups assigned to cardholders. */
@@ -93,8 +95,9 @@ export interface Credential extends BaseRecord {
 
 /** Queryable projection of the JetStream audit stream. */
 export interface AccessEvent extends BaseRecord {
-  site: string
-  access_point: string
+  location: string
+  portal: string
+  type: string
   kind: EventKind | ''
   credential: string
   user: string

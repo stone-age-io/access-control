@@ -5,7 +5,7 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { policyKey } from '@/utils/policyKey'
-import type { Cardholder, Credential, Role, AccessGroup, AccessPoint } from '@/types/pocketbase'
+import type { Cardholder, Credential, Role, AccessGroup, Portal } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
@@ -28,24 +28,24 @@ const roles = computed<Role[]>(() => record.value?.expand?.roles || [])
 const title = computed(() => record.value?.name || record.value?.email || 'Cardholder')
 const kvKey = computed(() => (record.value ? policyKey('cardholders', record.value) : ''))
 
-// Effective access: every access point reachable via this holder's
-// roles → access groups → access points, deduped, with the granting groups.
-interface EffectivePoint { point: AccessPoint; groups: string[] }
-const effectiveAccess = computed<EffectivePoint[]>(() => {
-  const byId = new Map<string, EffectivePoint>()
+// Effective access: every portal reachable via this holder's
+// roles → access groups → portals, deduped, with the granting groups.
+interface EffectivePortal { portal: Portal; groups: string[] }
+const effectiveAccess = computed<EffectivePortal[]>(() => {
+  const byId = new Map<string, EffectivePortal>()
   for (const role of roles.value) {
     for (const group of (role.expand?.access_groups || []) as AccessGroup[]) {
-      for (const point of (group.expand?.access_points || []) as AccessPoint[]) {
-        const existing = byId.get(point.id)
+      for (const portal of (group.expand?.portals || []) as Portal[]) {
+        const existing = byId.get(portal.id)
         if (existing) {
           if (!existing.groups.includes(group.code)) existing.groups.push(group.code)
         } else {
-          byId.set(point.id, { point, groups: [group.code] })
+          byId.set(portal.id, { portal, groups: [group.code] })
         }
       }
     }
   }
-  return [...byId.values()].sort((a, b) => a.point.code.localeCompare(b.point.code))
+  return [...byId.values()].sort((a, b) => a.portal.code.localeCompare(b.portal.code))
 })
 
 async function load() {
@@ -53,7 +53,7 @@ async function load() {
   try {
     const [c, creds] = await Promise.all([
       pb.collection('cardholders').getOne<Cardholder>(recordId, {
-        expand: 'roles,roles.access_groups,roles.access_groups.access_points',
+        expand: 'roles,roles.access_groups,roles.access_groups.portals',
       }),
       pb.collection('credentials').getFullList<Credential>({ filter: `user = "${recordId}"`, sort: 'value' }),
     ])
@@ -159,20 +159,20 @@ onMounted(load)
         <span class="text-xs opacity-50">{{ effectiveAccess.length }} point(s)</span>
       </template>
       <p class="text-sm text-base-content/60 mb-3">
-        Access points this person can reach through their roles — during each granting group's schedule.
+        Portals this person can reach through their roles — during each granting group's schedule.
       </p>
       <div v-if="effectiveAccess.length === 0" class="text-center py-6 text-sm opacity-50">
-        No access yet. Assign roles whose access groups include some access points.
+        No access yet. Assign roles whose access groups include some portals.
       </div>
       <ul v-else class="divide-y divide-base-200">
         <li
           v-for="ea in effectiveAccess"
-          :key="ea.point.id"
+          :key="ea.portal.id"
           class="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded hover:bg-base-200 cursor-pointer transition-colors"
-          @click="router.push(`/access-points/${ea.point.id}`)"
+          @click="router.push(`/portals/${ea.portal.id}`)"
         >
-          <code class="text-sm font-medium text-primary">{{ ea.point.code }}</code>
-          <span class="text-sm opacity-60 truncate flex-1">{{ ea.point.name }}</span>
+          <code class="text-sm font-medium text-primary">{{ ea.portal.code }}</code>
+          <span class="text-sm opacity-60 truncate flex-1">{{ ea.portal.name }}</span>
           <span class="text-[10px] uppercase opacity-40 tracking-wide">via</span>
           <span v-for="g in ea.groups" :key="g" class="badge badge-ghost badge-sm">{{ g }}</span>
         </li>

@@ -94,12 +94,12 @@ func basePolicy() *Policy {
 		Schedules: map[string]Schedule{
 			"biz": {Windows: []Window{{Days: []int{1, 2, 3, 4, 5}, Start: "08:00", End: "17:00"}}},
 		},
-		Points: map[string]AccessPoint{
-			"lobby": {Code: "lobby", Site: "hq", Posture: PostureSecure, PulseSeconds: 5},
-			"vault": {Code: "vault", Site: "hq", Posture: PostureSecure, PulseSeconds: 3},
+		Portals: map[string]Portal{
+			"lobby": {Code: "lobby", Type: "door", Location: "hq", Posture: PostureSecure, PulseSeconds: 5},
+			"vault": {Code: "vault", Type: "door", Location: "hq", Posture: PostureSecure, PulseSeconds: 3},
 		},
 		Groups: map[string]AccessGroup{
-			"g1": {Code: "g1", Points: set("lobby"), Schedule: "biz"},
+			"g1": {Code: "g1", Portals: set("lobby"), Schedule: "biz"},
 		},
 		Roles: map[string]Role{"r1": {Code: "r1", Groups: []string{"g1"}}},
 		Users: map[string]User{"u1": {ID: "u1", Status: StatusActive, Roles: []string{"r1"}}},
@@ -124,7 +124,7 @@ func TestDecide(t *testing.T) {
 		p          *Policy
 		posture    string
 		cred       string
-		point      string
+		portal     string
 		at         time.Time
 		wantAllow  bool
 		wantReason string
@@ -146,7 +146,7 @@ func TestDecide(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Decide(tc.p, loc, tc.posture, tc.cred, tc.point, tc.at)
+			got := Decide(tc.p, loc, tc.posture, tc.cred, tc.portal, tc.at)
 			if got.Allow != tc.wantAllow {
 				t.Errorf("Allow = %v, want %v", got.Allow, tc.wantAllow)
 			}

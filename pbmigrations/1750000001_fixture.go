@@ -8,15 +8,15 @@ import (
 // Seeds a minimal end-to-end fixture so a fresh accessd boot has something to
 // mirror and decide against:
 //
-//	site hq (America/New_York) → access point lobby-main (secure, pulse 5s)
+//	location hq (America/New_York) → portal lobby-main (door, secure, pulse 5s)
 //	schedule business-hours (M–F 08:00–17:00) → access group lobby-group
 //	role staff → user alice → credential CARD-001
 //
-// Idempotent and safe in any environment: it no-ops if the sites collection is
-// already populated, so it only ever touches a fresh dev database.
+// Idempotent and safe in any environment: it no-ops if the locations collection
+// is already populated, so it only ever touches a fresh dev database.
 func init() {
 	migrations.Register(func(app core.App) error {
-		existing, err := app.FindAllRecords("sites")
+		existing, err := app.FindAllRecords("locations")
 		if err != nil {
 			return err
 		}
@@ -39,7 +39,7 @@ func init() {
 			return rec, nil
 		}
 
-		site, err := save("sites", map[string]any{
+		location, err := save("locations", map[string]any{
 			"code": "hq", "name": "Headquarters",
 			"timezone": "America/New_York", "fai_suppress": true,
 		})
@@ -57,9 +57,9 @@ func init() {
 			return err
 		}
 
-		point, err := save("access_points", map[string]any{
-			"code": "lobby-main", "site": site.Id, "name": "Lobby Main Entrance",
-			"posture": "secure", "pulse_seconds": 5,
+		portal, err := save("portals", map[string]any{
+			"code": "lobby-main", "type": "door", "location": location.Id,
+			"name": "Lobby Main Entrance", "posture": "secure", "pulse_seconds": 5,
 		})
 		if err != nil {
 			return err
@@ -67,7 +67,7 @@ func init() {
 
 		group, err := save("access_groups", map[string]any{
 			"code": "lobby-group", "name": "Lobby Access",
-			"access_points": []string{point.Id}, "schedule": schedule.Id,
+			"portals": []string{portal.Id}, "schedule": schedule.Id,
 		})
 		if err != nil {
 			return err
@@ -108,9 +108,9 @@ func init() {
 		_ = removeByFilter("cardholders", "external_id", "alice")
 		_ = removeByFilter("roles", "code", "staff")
 		_ = removeByFilter("access_groups", "code", "lobby-group")
-		_ = removeByFilter("access_points", "code", "lobby-main")
+		_ = removeByFilter("portals", "code", "lobby-main")
 		_ = removeByFilter("schedules", "code", "business-hours")
-		_ = removeByFilter("sites", "code", "hq")
+		_ = removeByFilter("locations", "code", "hq")
 		return nil
 	})
 }

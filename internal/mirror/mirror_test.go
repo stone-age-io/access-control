@@ -73,28 +73,28 @@ func TestKeyAndValue_GroupResolvesCodes(t *testing.T) {
 	if got.Schedule != "business-hours" {
 		t.Errorf("schedule = %q, want business-hours", got.Schedule)
 	}
-	if len(got.Points) != 1 || got.Points[0] != "lobby-main" {
-		t.Errorf("points = %v, want [lobby-main]", got.Points)
+	if len(got.Portals) != 1 || got.Portals[0] != "lobby-main" {
+		t.Errorf("portals = %v, want [lobby-main]", got.Portals)
 	}
 }
 
-func TestKeyAndValue_PointSiteAndDefaults(t *testing.T) {
+func TestKeyAndValue_PortalFieldsAndDefaults(t *testing.T) {
 	app := newApp(t)
-	point := find(t, app, "access_points", "code", "lobby-main")
+	portal := find(t, app, "portals", "code", "lobby-main")
 
-	key, val, err := keyAndValue(app, point)
+	key, val, err := keyAndValue(app, portal)
 	if err != nil {
 		t.Fatalf("keyAndValue: %v", err)
 	}
-	if key != "point.lobby-main" {
-		t.Errorf("key = %q, want point.lobby-main", key)
+	if key != "portal.lobby-main" {
+		t.Errorf("key = %q, want portal.lobby-main", key)
 	}
-	var got policykv.AccessPoint
+	var got policykv.Portal
 	if err := json.Unmarshal(val, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.Site != "hq" || got.Posture != "secure" || got.PulseSeconds != 5 {
-		t.Errorf("point = %+v, want site=hq posture=secure pulse=5", got)
+	if got.Location != "hq" || got.Type != "door" || got.Posture != "secure" || got.PulseSeconds != 5 {
+		t.Errorf("portal = %+v, want location=hq type=door posture=secure pulse=5", got)
 	}
 }
 
@@ -133,18 +133,19 @@ func TestRecordKey_Cardholder(t *testing.T) {
 	}
 }
 
-// An access point with no posture set defaults to "secure" at the mirror boundary.
+// A portal with no posture set defaults to "secure" at the mirror boundary.
 func TestKeyAndValue_PostureDefault(t *testing.T) {
 	app := newApp(t)
-	site := find(t, app, "sites", "code", "hq")
+	location := find(t, app, "locations", "code", "hq")
 
-	col, err := app.FindCollectionByNameOrId("access_points")
+	col, err := app.FindCollectionByNameOrId("portals")
 	if err != nil {
 		t.Fatalf("collection: %v", err)
 	}
 	rec := core.NewRecord(col)
 	rec.Set("code", "back-door")
-	rec.Set("site", site.Id)
+	rec.Set("type", "door")
+	rec.Set("location", location.Id)
 	// posture intentionally left empty
 	if err := app.Save(rec); err != nil {
 		t.Fatalf("save: %v", err)
@@ -154,7 +155,7 @@ func TestKeyAndValue_PostureDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keyAndValue: %v", err)
 	}
-	var got policykv.AccessPoint
+	var got policykv.Portal
 	if err := json.Unmarshal(val, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

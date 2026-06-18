@@ -31,7 +31,7 @@ async function load() {
   loading.value = true
   try {
     const [g, r] = await Promise.all([
-      pb.collection('access_groups').getOne<AccessGroup>(recordId, { expand: 'access_points,schedule' }),
+      pb.collection('access_groups').getOne<AccessGroup>(recordId, { expand: 'portals,schedule' }),
       pb.collection('roles').getFullList<Role>({ filter: `access_groups ~ "${recordId}"`, sort: 'code' }),
     ])
     record.value = g
@@ -104,17 +104,17 @@ onMounted(load)
       </div>
     </BaseCard>
 
-    <!-- Access points in this group -->
-    <BaseCard title="Access Points">
-      <div v-if="(record.expand?.access_points || []).length === 0" class="text-center py-6 text-sm opacity-50">
-        No access points in this group.
+    <!-- Portals in this group -->
+    <BaseCard title="Portals">
+      <div v-if="(record.expand?.portals || []).length === 0" class="text-center py-6 text-sm opacity-50">
+        No portals in this group.
       </div>
       <ul v-else class="divide-y divide-base-200">
         <li
-          v-for="p in record.expand?.access_points || []"
+          v-for="p in record.expand?.portals || []"
           :key="p.id"
           class="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded hover:bg-base-200 cursor-pointer transition-colors"
-          @click="router.push(`/access-points/${p.id}`)"
+          @click="router.push(`/portals/${p.id}`)"
         >
           <code class="text-sm font-medium text-primary">{{ p.code }}</code>
           <span class="text-sm opacity-60 truncate flex-1">{{ p.name }}</span>

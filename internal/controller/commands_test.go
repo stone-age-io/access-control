@@ -26,7 +26,7 @@ func TestCommandPostureOverrideAndClear(t *testing.T) {
 	h, rt, _ := handlerFor(t)
 
 	h.onPosture(&nats.Msg{
-		Subject: "acc.cmd.hq.lobby-main.posture",
+		Subject: "hq.door.lobby-main.acc.cmd.posture",
 		Data:    []byte(`{"posture":"lockdown","actor":"guard"}`),
 	})
 	if got := rt.postureFor("lobby-main"); got != policy.PostureLockdown {
@@ -34,7 +34,7 @@ func TestCommandPostureOverrideAndClear(t *testing.T) {
 	}
 
 	h.onPosture(&nats.Msg{
-		Subject: "acc.cmd.hq.lobby-main.posture",
+		Subject: "hq.door.lobby-main.acc.cmd.posture",
 		Data:    []byte(`{"posture":"clear"}`),
 	})
 	if got := rt.postureFor("lobby-main"); got != policy.PostureSecure {
@@ -45,7 +45,7 @@ func TestCommandPostureOverrideAndClear(t *testing.T) {
 func TestCommandPostureInvalidIgnored(t *testing.T) {
 	h, rt, _ := handlerFor(t)
 	h.onPosture(&nats.Msg{
-		Subject: "acc.cmd.hq.lobby-main.posture",
+		Subject: "hq.door.lobby-main.acc.cmd.posture",
 		Data:    []byte(`{"posture":"bogus"}`),
 	})
 	if got := rt.postureFor("lobby-main"); got != policy.PostureSecure {
@@ -56,7 +56,7 @@ func TestCommandPostureInvalidIgnored(t *testing.T) {
 func TestCommandUnlockExplicitSeconds(t *testing.T) {
 	h, _, refs := handlerFor(t)
 	h.onUnlock(&nats.Msg{
-		Subject: "acc.cmd.hq.lobby-main.unlock",
+		Subject: "hq.door.lobby-main.acc.cmd.unlock",
 		Data:    []byte(`{"seconds":7,"actor":"guard"}`),
 	})
 	if got := refs.lock.Pulses(); len(got) != 1 || got[0] != 7 {
@@ -64,35 +64,35 @@ func TestCommandUnlockExplicitSeconds(t *testing.T) {
 	}
 }
 
-func TestCommandUnlockDefaultsToPointPulse(t *testing.T) {
+func TestCommandUnlockDefaultsToPortalPulse(t *testing.T) {
 	h, _, refs := handlerFor(t)
 	h.onUnlock(&nats.Msg{
-		Subject: "acc.cmd.hq.lobby-main.unlock",
+		Subject: "hq.door.lobby-main.acc.cmd.unlock",
 		Data:    []byte(`{}`),
 	})
 	if got := refs.lock.Pulses(); len(got) != 1 || got[0] != 5 {
-		t.Errorf("pulses = %v, want [5] (point's configured pulse)", got)
+		t.Errorf("pulses = %v, want [5] (portal's configured pulse)", got)
 	}
 }
 
-// Fire suppresses alarms for the site while active, and resumes when cleared.
+// Fire suppresses alarms for the location while active, and resumes when cleared.
 func TestFireSuppressesAlarm(t *testing.T) {
 	h, rt, refs := handlerFor(t)
 	at := ny(t, 2026, 1, 5, 9, 0)
-	const alarmSubj = "acc.evt.hq.lobby-main.alarm"
+	const alarmSubj = "hq.door.lobby-main.acc.evt.alarm"
 
 	rt.EmitAlarm("lobby-main", "forced", at)
 	if n := refs.emit.countSubject(alarmSubj); n != 1 {
 		t.Fatalf("alarms before fire = %d, want 1", n)
 	}
 
-	h.onFire(&nats.Msg{Subject: "acc.evt.hq.fire", Data: []byte(`{"active":true}`)})
+	h.onFire(&nats.Msg{Subject: "hq.acc.evt.fire", Data: []byte(`{"active":true}`)})
 	rt.EmitAlarm("lobby-main", "forced", at)
 	if n := refs.emit.countSubject(alarmSubj); n != 1 {
 		t.Errorf("alarms during fire = %d, want 1 (suppressed)", n)
 	}
 
-	h.onFire(&nats.Msg{Subject: "acc.evt.hq.fire", Data: []byte(`{"active":false}`)})
+	h.onFire(&nats.Msg{Subject: "hq.acc.evt.fire", Data: []byte(`{"active":false}`)})
 	rt.EmitAlarm("lobby-main", "forced", at)
 	if n := refs.emit.countSubject(alarmSubj); n != 2 {
 		t.Errorf("alarms after fire clears = %d, want 2 (resumed)", n)

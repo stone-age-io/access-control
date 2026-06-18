@@ -11,27 +11,27 @@ import (
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
-// CommandHandler subscribes to the control-plane inputs for a site over core
+// CommandHandler subscribes to the control-plane inputs for a location over core
 // NATS and drives the Runtime:
 //
-//	acc.cmd.{site}.{point}.posture {posture, actor, reason, until?}
-//	acc.cmd.{site}.{point}.unlock  {seconds, actor, reason}
-//	acc.evt.{site}.fire            {active}
+//	{location}.{type}.{thing}.acc.cmd.posture {posture, actor, reason, until?}
+//	{location}.{type}.{thing}.acc.cmd.unlock  {seconds, actor, reason}
+//	{location}.acc.evt.fire                   {active}
 //
 // posture installs/clears a runtime override (posture "clear" reverts to the
 // standing value); unlock momentarily pulses the lock; fire toggles alarm
 // suppression. Commands are core NATS (not JetStream) — fire-and-forget control.
 type CommandHandler struct {
-	site string
-	rt   *Runtime
-	subj subjects.Subjects
-	log  *logger.Logger
-	subs []*nats.Subscription
+	location string
+	rt       *Runtime
+	subj     subjects.Subjects
+	log      *logger.Logger
+	subs     []*nats.Subscription
 }
 
-// NewCommandHandler creates a handler bound to a site's Runtime.
-func NewCommandHandler(site string, rt *Runtime, subj subjects.Subjects, log *logger.Logger) *CommandHandler {
-	return &CommandHandler{site: site, rt: rt, subj: subj, log: log.With("component", "commands")}
+// NewCommandHandler creates a handler bound to a location's Runtime.
+func NewCommandHandler(location string, rt *Runtime, subj subjects.Subjects, log *logger.Logger) *CommandHandler {
+	return &CommandHandler{location: location, rt: rt, subj: subj, log: log.With("component", "commands")}
 }
 
 // Start subscribes to the command and fire subjects.
@@ -40,9 +40,9 @@ func (h *CommandHandler) Start(nc *nats.Conn) error {
 		subject string
 		handler nats.MsgHandler
 	}{
-		{h.subj.PostureWildcard(h.site), h.onPosture},
-		{h.subj.UnlockWildcard(h.site), h.onUnlock},
-		{h.subj.Fire(h.site), h.onFire},
+		{h.subj.PostureWildcard(h.location), h.onPosture},
+		{h.subj.UnlockWildcard(h.location), h.onUnlock},
+		{h.subj.Fire(h.location), h.onFire},
 	}
 	for _, s := range subscriptions {
 		sub, err := nc.Subscribe(s.subject, s.handler)
@@ -65,9 +65,9 @@ func (h *CommandHandler) Stop() {
 }
 
 func (h *CommandHandler) onPosture(msg *nats.Msg) {
-	_, point, _, ok := h.subj.ParseCommand(msg.Subject)
-	if !ok || point == "" {
-		h.log.Warn("posture command with no point", "subject", msg.Subject)
+	_, _, portal, _, ok := h.subj.ParseCommand(msg.Subject)
+	if !ok || portal == "" {
+		h.log.Warn("posture command with no portal", "subject", msg.Subject)
 		return
 	}
 	var cmd struct {
@@ -84,27 +84,27 @@ func (h *CommandHandler) onPosture(msg *nats.Msg) {
 		// Time-based reversion is delegated to an external scheduler publishing a
 		// follow-up command — the controller deliberately grows no ticker.
 		h.log.Warn("posture 'until' is not enforced by the controller; ignoring",
-			"point", point, "until", cmd.Until)
+			"portal", portal, "until", cmd.Until)
 	}
 
 	now := time.Now().UTC()
 	if cmd.Posture == "clear" {
-		h.rt.ClearPosture(point, cmd.Actor, cmd.Reason, now)
-		h.log.Info("posture override cleared", "point", point, "actor", cmd.Actor)
+		h.rt.ClearPosture(portal, cmd.Actor, cmd.Reason, now)
+		h.log.Info("posture override cleared", "portal", portal, "actor", cmd.Actor)
 		return
 	}
 	if !validPosture(cmd.Posture) {
-		h.log.Warn("posture command with invalid posture", "point", point, "posture", cmd.Posture)
+		h.log.Warn("posture command with invalid posture", "portal", portal, "posture", cmd.Posture)
 		return
 	}
-	h.rt.SetPosture(point, cmd.Posture, cmd.Actor, cmd.Reason, now)
-	h.log.Info("posture override set", "point", point, "posture", cmd.Posture, "actor", cmd.Actor)
+	h.rt.SetPosture(portal, cmd.Posture, cmd.Actor, cmd.Reason, now)
+	h.log.Info("posture override set", "portal", portal, "posture", cmd.Posture, "actor", cmd.Actor)
 }
 
 func (h *CommandHandler) onUnlock(msg *nats.Msg) {
-	_, point, _, ok := h.subj.ParseCommand(msg.Subject)
-	if !ok || point == "" {
-		h.log.Warn("unlock command with no point", "subject", msg.Subject)
+	_, _, portal, _, ok := h.subj.ParseCommand(msg.Subject)
+	if !ok || portal == "" {
+		h.log.Warn("unlock command with no portal", "subject", msg.Subject)
 		return
 	}
 	var cmd struct {
@@ -116,7 +116,7 @@ func (h *CommandHandler) onUnlock(msg *nats.Msg) {
 		h.log.Error("bad unlock command", "subject", msg.Subject, "error", err)
 		return
 	}
-	h.rt.Unlock(point, cmd.Seconds, cmd.Actor, cmd.Reason)
+	h.rt.Unlock(portal, cmd.Seconds, cmd.Actor, cmd.Reason)
 }
 
 func (h *CommandHandler) onFire(msg *nats.Msg) {
@@ -127,7 +127,7 @@ func (h *CommandHandler) onFire(msg *nats.Msg) {
 		h.log.Error("bad fire signal", "subject", msg.Subject, "error", err)
 		return
 	}
-	h.rt.SetFire(h.site, sig.Active, time.Now().UTC())
+	h.rt.SetFire(h.location, sig.Active, time.Now().UTC())
 }
 
 // validPosture reports whether p is a settable standing posture (not "clear").

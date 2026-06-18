@@ -30,8 +30,8 @@ const filtered = computed(() => {
   const q = searchQuery.value.toLowerCase().trim()
   if (!q) return events.value
   return events.value.filter(e =>
-    e.site?.toLowerCase().includes(q) ||
-    e.access_point?.toLowerCase().includes(q) ||
+    e.location?.toLowerCase().includes(q) ||
+    e.portal?.toLowerCase().includes(q) ||
     e.credential?.toLowerCase().includes(q) ||
     e.user?.toLowerCase().includes(q) ||
     e.reason?.toLowerCase().includes(q)
@@ -41,8 +41,8 @@ const filtered = computed(() => {
 const columns: Column<AccessEvent>[] = [
   { key: 'ts', label: 'Time', format: (v, item) => formatDate(v || item.created, 'PP p') },
   { key: 'kind', label: 'Kind' },
-  { key: 'site', label: 'Site' },
-  { key: 'access_point', label: 'Access Point', mobileLabel: 'Point' },
+  { key: 'location', label: 'Location' },
+  { key: 'portal', label: 'Portal', mobileLabel: 'Portal' },
   { key: 'reason', label: 'Reason', format: (v) => (v ? formatConstant(v) : '-') },
 ]
 
@@ -67,7 +67,7 @@ onMounted(loadEvents)
         <option value="">All kinds</option>
         <option v-for="k in KINDS" :key="k" :value="k">{{ formatConstant(k) }}</option>
       </select>
-      <input v-model="searchQuery" type="text" placeholder="Filter this page by site, point, credential, user, reason..." class="input input-bordered flex-1" />
+      <input v-model="searchQuery" type="text" placeholder="Filter this page by location, portal, credential, user, reason..." class="input input-bordered flex-1" />
     </div>
 
     <div v-if="loading && events.length === 0" class="flex justify-center p-12">
@@ -95,7 +95,7 @@ onMounted(loadEvents)
       <ResponsiveList :items="filtered" :columns="columns" :loading="loading" @row-click="(e) => selected = e">
         <template #cell-kind="{ item }"><span class="badge badge-sm" :class="kindBadge(item)">{{ item.kind || '—' }}</span></template>
         <template #card-kind="{ item }"><span class="badge badge-sm" :class="kindBadge(item)">{{ item.kind || '—' }}</span></template>
-        <template #cell-site="{ item }"><code class="text-xs">{{ item.site || '-' }}</code></template>
+        <template #cell-location="{ item }"><code class="text-xs">{{ item.location || '-' }}</code></template>
 
         <template #actions="{ item }">
           <button class="btn btn-xs" @click="selected = item">Details</button>
@@ -126,8 +126,8 @@ onMounted(loadEvents)
 
           <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mb-4">
             <div><span class="opacity-50 text-xs uppercase block">Time</span>{{ formatDate(selected.ts || selected.created, 'PPpp') }}</div>
-            <div><span class="opacity-50 text-xs uppercase block">Site</span><code>{{ selected.site || '-' }}</code></div>
-            <div><span class="opacity-50 text-xs uppercase block">Access Point</span><code>{{ selected.access_point || '-' }}</code></div>
+            <div><span class="opacity-50 text-xs uppercase block">Location</span><code>{{ selected.location || '-' }}</code></div>
+            <div><span class="opacity-50 text-xs uppercase block">Portal</span><code>{{ selected.portal || '-' }}</code></div>
             <div><span class="opacity-50 text-xs uppercase block">Allow</span>
               <span v-if="selected.kind === 'tap'" class="badge badge-sm" :class="selected.allow ? 'badge-success' : 'badge-error'">{{ selected.allow ? 'allow' : 'deny' }}</span>
               <span v-else class="opacity-40">n/a</span>

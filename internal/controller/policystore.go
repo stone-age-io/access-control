@@ -32,11 +32,11 @@ func nextKVWatchBackoff(d time.Duration) time.Duration {
 	return d
 }
 
-// siteEntry pairs a site record with its parsed timezone (resolved once on
-// apply so the hot decision path never calls time.LoadLocation under the lock).
-type siteEntry struct {
-	site policykv.Site
-	loc  *time.Location
+// locationEntry pairs a location record with its parsed timezone (resolved once
+// on apply so the hot decision path never calls time.LoadLocation under the lock).
+type locationEntry struct {
+	location policykv.Location
+	loc      *time.Location
 }
 
 // PolicyStore holds the whole-org policy graph in plain maps behind an RWMutex
@@ -49,9 +49,9 @@ type PolicyStore struct {
 	log *logger.Logger
 	m   *metrics.Metrics
 
-	mu    sync.RWMutex
-	sites map[string]siteEntry
-	graph policy.Policy
+	mu        sync.RWMutex
+	locations map[string]locationEntry
+	graph     policy.Policy
 
 	ready     chan struct{}
 	readyOnce sync.Once
@@ -69,13 +69,13 @@ type PolicyStore struct {
 // caller ensures the bucket exists).
 func NewPolicyStore(kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metrics) *PolicyStore {
 	return &PolicyStore{
-		kv:    kv,
-		log:   log.With("component", "policystore"),
-		m:     m,
-		sites: make(map[string]siteEntry),
+		kv:        kv,
+		log:       log.With("component", "policystore"),
+		m:         m,
+		locations: make(map[string]locationEntry),
 		graph: policy.Policy{
 			Schedules: make(map[string]policy.Schedule),
-			Points:    make(map[string]policy.AccessPoint),
+			Portals:   make(map[string]policy.Portal),
 			Users:     make(map[string]policy.User),
 			Roles:     make(map[string]policy.Role),
 			Groups:    make(map[string]policy.AccessGroup),
@@ -85,28 +85,28 @@ func NewPolicyStore(kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metric
 	}
 }
 
-// Decide resolves the access point's site timezone and delegates to the pure
+// Decide resolves the portal's location timezone and delegates to the pure
 // policy.Decide under a read lock. Effective posture is supplied by the caller
 // (standing value, possibly overridden by a runtime command).
-func (s *PolicyStore) Decide(posture, cred, point string, atUTC time.Time) policy.Decision {
+func (s *PolicyStore) Decide(posture, cred, portal string, atUTC time.Time) policy.Decision {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	loc := time.UTC
-	if ap, ok := s.graph.Points[point]; ok {
-		if se, ok := s.sites[ap.Site]; ok && se.loc != nil {
-			loc = se.loc
+	if ap, ok := s.graph.Portals[portal]; ok {
+		if le, ok := s.locations[ap.Location]; ok && le.loc != nil {
+			loc = le.loc
 		}
 	}
-	return policy.Decide(&s.graph, loc, posture, cred, point, atUTC)
+	return policy.Decide(&s.graph, loc, posture, cred, portal, atUTC)
 }
 
-// Point returns a copy of the access point and whether it is known. The tap
-// loop uses it to resolve the standing posture and the site (for event subjects).
-func (s *PolicyStore) Point(code string) (policy.AccessPoint, bool) {
+// Portal returns a copy of the portal and whether it is known. The tap loop uses
+// it to resolve the standing posture, the type, and the location (for subjects).
+func (s *PolicyStore) Portal(code string) (policy.Portal, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	ap, ok := s.graph.Points[code]
+	ap, ok := s.graph.Portals[code]
 	return ap, ok
 }
 
@@ -277,17 +277,17 @@ func (s *PolicyStore) apply(key string, value []byte) {
 	defer s.mu.Unlock()
 
 	switch {
-	case strings.HasPrefix(key, policykv.PrefixSite):
-		var w policykv.Site
+	case strings.HasPrefix(key, policykv.PrefixLocation):
+		var w policykv.Location
 		if !s.unmarshal(key, value, &w) {
 			return
 		}
 		loc, err := time.LoadLocation(w.Timezone)
 		if err != nil {
-			s.log.Error("policystore: bad timezone, using UTC", "site", w.Code, "tz", w.Timezone, "error", err)
+			s.log.Error("policystore: bad timezone, using UTC", "location", w.Code, "tz", w.Timezone, "error", err)
 			loc = time.UTC
 		}
-		s.sites[w.Code] = siteEntry{site: w, loc: loc}
+		s.locations[w.Code] = locationEntry{location: w, loc: loc}
 
 	case strings.HasPrefix(key, policykv.PrefixSched):
 		var w policykv.Schedule
@@ -296,13 +296,14 @@ func (s *PolicyStore) apply(key string, value []byte) {
 		}
 		s.graph.Schedules[w.Code] = toSchedule(w)
 
-	case strings.HasPrefix(key, policykv.PrefixPoint):
-		var w policykv.AccessPoint
+	case strings.HasPrefix(key, policykv.PrefixPortal):
+		var w policykv.Portal
 		if !s.unmarshal(key, value, &w) {
 			return
 		}
-		s.graph.Points[w.Code] = policy.AccessPoint{
-			Code: w.Code, Site: w.Site, Posture: w.Posture, PulseSeconds: w.PulseSeconds,
+		s.graph.Portals[w.Code] = policy.Portal{
+			Code: w.Code, Type: w.Type, Location: w.Location,
+			Posture: w.Posture, PulseSeconds: w.PulseSeconds,
 		}
 
 	case strings.HasPrefix(key, policykv.PrefixGroup):
@@ -311,7 +312,7 @@ func (s *PolicyStore) apply(key string, value []byte) {
 			return
 		}
 		s.graph.Groups[w.Code] = policy.AccessGroup{
-			Code: w.Code, Points: toSet(w.Points), Schedule: w.Schedule,
+			Code: w.Code, Portals: toSet(w.Portals), Schedule: w.Schedule,
 		}
 
 	case strings.HasPrefix(key, policykv.PrefixRole):
@@ -348,12 +349,12 @@ func (s *PolicyStore) remove(key string) {
 	defer s.mu.Unlock()
 
 	switch {
-	case strings.HasPrefix(key, policykv.PrefixSite):
-		delete(s.sites, strings.TrimPrefix(key, policykv.PrefixSite))
+	case strings.HasPrefix(key, policykv.PrefixLocation):
+		delete(s.locations, strings.TrimPrefix(key, policykv.PrefixLocation))
 	case strings.HasPrefix(key, policykv.PrefixSched):
 		delete(s.graph.Schedules, strings.TrimPrefix(key, policykv.PrefixSched))
-	case strings.HasPrefix(key, policykv.PrefixPoint):
-		delete(s.graph.Points, strings.TrimPrefix(key, policykv.PrefixPoint))
+	case strings.HasPrefix(key, policykv.PrefixPortal):
+		delete(s.graph.Portals, strings.TrimPrefix(key, policykv.PrefixPortal))
 	case strings.HasPrefix(key, policykv.PrefixGroup):
 		delete(s.graph.Groups, strings.TrimPrefix(key, policykv.PrefixGroup))
 	case strings.HasPrefix(key, policykv.PrefixRole):

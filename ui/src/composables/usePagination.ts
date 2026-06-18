@@ -12,7 +12,7 @@ interface QueryOptions {
  * Pagination over a PocketBase collection.
  *
  *   const { items, page, totalPages, loading, load, nextPage, prevPage } =
- *     usePagination<Site>('sites', 20)
+ *     usePagination<Location>('locations', 20)
  *   onMounted(() => load({ sort: 'code' }))
  */
 export function usePagination<T extends BaseRecord>(collectionName: string, perPage = 20) {

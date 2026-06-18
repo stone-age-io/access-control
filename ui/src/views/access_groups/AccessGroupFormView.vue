@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
-import type { AccessGroup, AccessPoint, Schedule } from '@/types/pocketbase'
+import type { AccessGroup, Portal, Schedule } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
@@ -20,10 +20,10 @@ const form = ref({
   code: '',
   name: '',
   schedule: '',
-  access_points: [] as string[],
+  portals: [] as string[],
 })
 
-const points = ref<AccessPoint[]>([])
+const portals = ref<Portal[]>([])
 const schedules = ref<Schedule[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
@@ -33,10 +33,10 @@ const kvKey = computed(() => policyKey('access_groups', { code: form.value.code.
 async function loadOptions() {
   try {
     const [pts, scheds] = await Promise.all([
-      pb.collection('access_points').getFullList<AccessPoint>({ sort: 'code' }),
+      pb.collection('portals').getFullList<Portal>({ sort: 'code' }),
       pb.collection('schedules').getFullList<Schedule>({ sort: 'code' }),
     ])
-    points.value = pts
+    portals.value = pts
     schedules.value = scheds
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load options')
@@ -52,7 +52,7 @@ async function loadRecord() {
       code: g.code || '',
       name: g.name || '',
       schedule: g.schedule || '',
-      access_points: [...(g.access_points || [])],
+      portals: [...(g.portals || [])],
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load access group')
@@ -72,7 +72,7 @@ async function handleSubmit() {
       code: form.value.code.trim(),
       name: form.value.name.trim(),
       schedule: form.value.schedule,
-      access_points: form.value.access_points,
+      portals: form.value.portals,
     }
     if (isEdit.value) {
       await pb.collection('access_groups').update(recordId!, data)
@@ -132,18 +132,18 @@ onMounted(async () => {
         </div>
       </BaseCard>
 
-      <BaseCard title="Access Points">
+      <BaseCard title="Portals">
         <div class="space-y-2">
-          <p class="text-sm text-base-content/60">The points this group grants (during the schedule's windows).</p>
+          <p class="text-sm text-base-content/60">The portals this group grants (during the schedule's windows).</p>
           <div class="border border-base-300 rounded-box p-3 max-h-64 overflow-y-auto space-y-1">
-            <label v-for="p in points" :key="p.id" class="flex items-center gap-3 cursor-pointer py-1 px-1 rounded hover:bg-base-200">
-              <input type="checkbox" class="checkbox checkbox-sm" :value="p.id" v-model="form.access_points" />
+            <label v-for="p in portals" :key="p.id" class="flex items-center gap-3 cursor-pointer py-1 px-1 rounded hover:bg-base-200">
+              <input type="checkbox" class="checkbox checkbox-sm" :value="p.id" v-model="form.portals" />
               <code class="text-sm font-medium">{{ p.code }}</code>
               <span class="text-sm opacity-50 truncate">{{ p.name }}</span>
             </label>
-            <p v-if="points.length === 0" class="text-sm opacity-50 py-2">No access points available. Create some first.</p>
+            <p v-if="portals.length === 0" class="text-sm opacity-50 py-2">No portals available. Create some first.</p>
           </div>
-          <p class="text-xs opacity-50">{{ form.access_points.length }} selected</p>
+          <p class="text-xs opacity-50">{{ form.portals.length }} selected</p>
         </div>
       </BaseCard>
 
@@ -155,7 +155,7 @@ onMounted(async () => {
         </RailCard>
         <RailCard title="About access groups" icon="🗝️">
           <p class="text-xs opacity-60 leading-relaxed">
-            An access level: a set of access points granted together under one schedule. Roles bundle access groups
+            An access level: a set of portals granted together under one schedule. Roles bundle access groups
             and are assigned to cardholders.
           </p>
         </RailCard>

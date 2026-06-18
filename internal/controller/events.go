@@ -7,8 +7,8 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// Emitter publishes access events. The controller emits to acc.evt.> over core
-// NATS; the ACC_EVENTS JetStream stream captures them for audit.
+// Emitter publishes access events. The controller emits to the {app}.evt subtree
+// over core NATS; the ACC_EVENTS JetStream stream captures them for audit.
 type Emitter interface {
 	Emit(subject string, payload any) error
 }
@@ -35,7 +35,7 @@ type TapEvent struct {
 	TS     string `json:"ts"`
 }
 
-// StateEvent is emitted when an access point's effective posture changes.
+// StateEvent is emitted when a portal's effective posture changes.
 type StateEvent struct {
 	Posture string `json:"posture"`
 	Actor   string `json:"actor,omitempty"`

@@ -7,14 +7,14 @@
 // central app and the edge, and makes it trivially table-testable.
 //
 // The graph mirrors the operator's mental model 1:1 — user → roles → access
-// groups → (access points + one schedule). A grant is the union over a user's
+// groups → (portals + one schedule). A grant is the union over a user's
 // access groups; a deny (revoked/suspended credential or user) overrides. There
 // is deliberately no compiled/denormalized form: the data is small (low
 // single-digit MB for a whole org) and the join is a cheap nested-map walk
 // bounded by one user's role/group fan-out.
 package policy
 
-// Posture is an access point's standing state. Effective posture is resolved by
+// Posture is a portal's standing state. Effective posture is resolved by
 // the controller (standing value from policy, optionally overridden by a command)
 // and passed into Decide, so Decide stays pure.
 const (
@@ -32,9 +32,9 @@ const (
 	StatusRevoked   = "revoked"
 )
 
-// Decision reason codes. Stable strings — they flow verbatim into
-// acc.evt.*.tap events and the events collection, so downstream consumers and
-// dashboards can rely on them.
+// Decision reason codes. Stable strings — they flow verbatim into tap events
+// and the events collection, so downstream consumers and dashboards can rely on
+// them.
 const (
 	ReasonAllowGrant           = "allow_grant"
 	ReasonAllowPostureUnlocked = "allow_posture_unlocked"
@@ -54,7 +54,7 @@ const (
 // not found), so a zero Policy{} default-denies everything.
 type Policy struct {
 	Schedules map[string]Schedule    // schedule code -> schedule
-	Points    map[string]AccessPoint // access-point code -> point
+	Portals   map[string]Portal      // portal code -> portal
 	Users     map[string]User        // user id -> user
 	Roles     map[string]Role        // role code -> role
 	Groups    map[string]AccessGroup // access-group code -> group
@@ -76,11 +76,13 @@ type Window struct {
 	End   string
 }
 
-// AccessPoint is a controllable opening (door/gate/turnstile/elevator). Posture
-// here is the standing default; the controller may hold a runtime override.
-type AccessPoint struct {
+// Portal is a controllable opening (door/gate/turnstile/elevator) or a logical
+// access target. Type is the portal kind (also the {type} subject segment).
+// Posture here is the standing default; the controller may hold a runtime override.
+type Portal struct {
 	Code         string
-	Site         string
+	Type         string
+	Location     string
 	Posture      string
 	PulseSeconds int
 }
@@ -98,11 +100,11 @@ type Role struct {
 	Groups []string // access-group codes
 }
 
-// AccessGroup ("access level") grants a set of access points under exactly one
-// schedule. Points is a set for O(1) membership at decision time.
+// AccessGroup ("access level") grants a set of portals under exactly one
+// schedule. Portals is a set for O(1) membership at decision time.
 type AccessGroup struct {
 	Code     string
-	Points   map[string]struct{}
+	Portals  map[string]struct{}
 	Schedule string // schedule code
 }
 

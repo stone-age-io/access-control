@@ -79,7 +79,7 @@ onMounted(reload)
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
       <div>
         <h1 class="text-3xl font-bold">Schedules</h1>
-        <p class="text-base-content/70 mt-1">Reusable weekly time windows. Evaluated in each site's local time.</p>
+        <p class="text-base-content/70 mt-1">Reusable weekly time windows. Evaluated in each location's local time.</p>
       </div>
       <router-link to="/schedules/new" class="btn btn-primary w-full sm:w-auto">
         <span class="text-lg">+</span><span>New Schedule</span>

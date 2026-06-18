@@ -2,15 +2,15 @@ package policy
 
 import "time"
 
-// Decide answers "should this credential open this access point right now?" as a
+// Decide answers "should this credential open this portal right now?" as a
 // pure function. The caller passes the effective posture (standing value from
 // policy, possibly overridden by a runtime command), the credential value, the
-// access-point code, the access point's timezone (resolved once per site), and
+// portal code, the portal's timezone (resolved once per location), and
 // the current instant in UTC.
 //
 // Evaluation order is the contract — deny-overrides come first:
 //
-//  1. Unknown access point        -> deny_unknown_point
+//  1. Unknown portal              -> deny_unknown_point
 //  2. Posture gate:
 //        disabled                 -> deny_point_disabled
 //        lockdown                 -> deny_lockdown          (beats a valid credential)
@@ -20,14 +20,14 @@ import "time"
 //        unknown credential       -> deny_unknown_credential
 //        non-active credential    -> deny_revoked
 //        unknown or non-active user -> deny_revoked
-//  4. Grant (walk roles -> groups): a group that contains this point AND whose
-//     schedule window is open now -> allow_grant. If a group contained the point
+//  4. Grant (walk roles -> groups): a group that contains this portal AND whose
+//     schedule window is open now -> allow_grant. If a group contained the portal
 //     but none were open -> deny_schedule_closed; if none contained it -> deny_no_access.
 //
 // Anything unrecognized fails closed (deny). Missing referents (a role/group/
 // schedule not yet synced) are skipped, which is also fail-safe.
-func Decide(p *Policy, loc *time.Location, posture, cred, point string, atUTC time.Time) Decision {
-	ap, ok := p.Points[point]
+func Decide(p *Policy, loc *time.Location, posture, cred, portal string, atUTC time.Time) Decision {
+	ap, ok := p.Portals[portal]
 	if !ok {
 		return Decision{Reason: ReasonDenyUnknownPoint}
 	}
@@ -59,7 +59,7 @@ func Decide(p *Policy, loc *time.Location, posture, cred, point string, atUTC ti
 		return Decision{Reason: ReasonDenyRevoked, User: c.User}
 	}
 
-	pointReachable := false
+	portalReachable := false
 	for _, roleCode := range u.Roles {
 		role, ok := p.Roles[roleCode]
 		if !ok {
@@ -70,10 +70,10 @@ func Decide(p *Policy, loc *time.Location, posture, cred, point string, atUTC ti
 			if !ok {
 				continue // group not yet synced
 			}
-			if _, has := g.Points[point]; !has {
+			if _, has := g.Portals[portal]; !has {
 				continue
 			}
-			pointReachable = true
+			portalReachable = true
 			sched, ok := p.Schedules[g.Schedule]
 			if !ok {
 				continue // schedule not yet synced; can't confirm an open window
@@ -84,14 +84,14 @@ func Decide(p *Policy, loc *time.Location, posture, cred, point string, atUTC ti
 		}
 	}
 
-	if pointReachable {
+	if portalReachable {
 		return Decision{Reason: ReasonDenyScheduleClosed, User: u.ID}
 	}
 	return Decision{Reason: ReasonDenyNoAccess, User: u.ID}
 }
 
 // windowOpen reports whether the given schedule has an open window at atUTC,
-// evaluated in the access point's local timezone. The UTC→local conversion
+// evaluated in the portal's local timezone. The UTC→local conversion
 // happens exactly once. Windows that cross midnight (End <= Start) are split
 // into a tail segment on the start day and a head segment on the following day,
 // each gated by the correct weekday.

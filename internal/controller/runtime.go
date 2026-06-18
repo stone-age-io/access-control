@@ -12,28 +12,28 @@ import (
 )
 
 // Runtime is the edge controller's event loop. It is purely event-driven: it
-// reacts to taps (and, in step 7, commands and fire signals) with no polling
-// ticker. For each tap it resolves the effective posture, decides locally,
-// emits one tap event, and pulses the lock on allow.
+// reacts to taps, commands, and fire signals with no polling ticker. For each
+// tap it resolves the effective posture, decides locally, emits one tap event,
+// and pulses the lock on allow.
 type Runtime struct {
-	site   string
-	store  *PolicyStore
-	reader drivers.ReaderDriver
-	locks  map[string]drivers.LockDriver
-	emit   Emitter
-	subs   subjects.Subjects
-	log    *logger.Logger
-	m      *metrics.Metrics
+	location string
+	store    *PolicyStore
+	reader   drivers.ReaderDriver
+	locks    map[string]drivers.LockDriver
+	emit     Emitter
+	subs     subjects.Subjects
+	log      *logger.Logger
+	m        *metrics.Metrics
 
 	mu        sync.RWMutex
-	overrides map[string]string // point -> runtime posture override (command-driven)
-	fire      map[string]bool   // site -> fire-alarm-input active (suppresses alarms)
+	overrides map[string]string // portal -> runtime posture override (command-driven)
+	fire      map[string]bool   // location -> fire-alarm-input active (suppresses alarms)
 }
 
-// NewRuntime wires the tap loop. locks maps access-point code to its lock driver.
-func NewRuntime(site string, store *PolicyStore, reader drivers.ReaderDriver, locks map[string]drivers.LockDriver, emit Emitter, subs subjects.Subjects, log *logger.Logger, m *metrics.Metrics) *Runtime {
+// NewRuntime wires the tap loop. locks maps portal code to its lock driver.
+func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver, locks map[string]drivers.LockDriver, emit Emitter, subs subjects.Subjects, log *logger.Logger, m *metrics.Metrics) *Runtime {
 	return &Runtime{
-		site:      site,
+		location:  location,
 		store:     store,
 		reader:    reader,
 		locks:     locks,
@@ -49,7 +49,7 @@ func NewRuntime(site string, store *PolicyStore, reader drivers.ReaderDriver, lo
 // Run consumes taps until the context is cancelled or the reader channel closes.
 func (r *Runtime) Run(ctx context.Context) error {
 	taps := r.reader.Taps()
-	r.log.Info("tap loop started", "site", r.site)
+	r.log.Info("tap loop started", "location", r.location)
 	for {
 		select {
 		case <-ctx.Done():
@@ -65,151 +65,166 @@ func (r *Runtime) Run(ctx context.Context) error {
 }
 
 func (r *Runtime) handleTap(tap drivers.Tap) {
-	posture := r.postureFor(tap.Point)
-	d := r.store.Decide(posture, tap.Credential, tap.Point, tap.At)
+	posture := r.postureFor(tap.Portal)
+	d := r.store.Decide(posture, tap.Credential, tap.Portal, tap.At)
 	r.m.IncDecision(d.Allow, d.Reason)
 
-	// Attribute the event to the point's actual site when known.
-	site := r.site
-	if ap, ok := r.store.Point(tap.Point); ok && ap.Site != "" {
-		site = ap.Site
-	}
-
-	if err := r.emit.Emit(r.subs.EventTap(site, tap.Point), TapEvent{
-		Cred:   tap.Credential,
-		User:   d.User,
-		Allow:  d.Allow,
-		Reason: d.Reason,
-		TS:     tap.At.UTC().Format(time.RFC3339),
-	}); err != nil {
-		r.log.Error("failed to emit tap event", "point", tap.Point, "error", err)
+	location, ptype := r.portalAddr(tap.Portal)
+	if ptype != "" {
+		if err := r.emit.Emit(r.subs.EventTap(location, ptype, tap.Portal), TapEvent{
+			Cred:   tap.Credential,
+			User:   d.User,
+			Allow:  d.Allow,
+			Reason: d.Reason,
+			TS:     tap.At.UTC().Format(time.RFC3339),
+		}); err != nil {
+			r.log.Error("failed to emit tap event", "portal", tap.Portal, "error", err)
+		} else {
+			r.m.IncEventPublished("tap")
+		}
 	} else {
-		r.m.IncEventPublished("tap")
+		r.log.Warn("unknown portal type; tap event not emitted", "portal", tap.Portal)
 	}
 
 	r.log.Info("tap decided",
-		"site", site, "point", tap.Point, "cred", tap.Credential,
+		"location", location, "portal", tap.Portal, "cred", tap.Credential,
 		"allow", d.Allow, "reason", d.Reason, "user", d.User)
 
 	if d.Allow {
-		if lock, ok := r.locks[tap.Point]; ok {
+		if lock, ok := r.locks[tap.Portal]; ok {
 			if err := lock.Pulse(d.Pulse); err != nil {
-				r.log.Error("lock pulse failed", "point", tap.Point, "error", err)
+				r.log.Error("lock pulse failed", "portal", tap.Portal, "error", err)
 			}
 		} else {
-			r.log.Warn("granted but no lock driver for point", "point", tap.Point)
+			r.log.Warn("granted but no lock driver for portal", "portal", tap.Portal)
 		}
 	}
 }
 
-// postureFor returns the effective posture for an access point: a runtime
-// command override if present, otherwise the point's standing posture. Unknown
-// points return "" — Decide checks point existence first and denies regardless.
-func (r *Runtime) postureFor(point string) string {
+// postureFor returns the effective posture for a portal: a runtime command
+// override if present, otherwise the portal's standing posture. Unknown portals
+// return "" — Decide checks portal existence first and denies regardless.
+func (r *Runtime) postureFor(portal string) string {
 	r.mu.RLock()
-	override, has := r.overrides[point]
+	override, has := r.overrides[portal]
 	r.mu.RUnlock()
 	if has {
 		return override
 	}
-	if ap, ok := r.store.Point(point); ok {
+	if ap, ok := r.store.Portal(portal); ok {
 		return ap.Posture
 	}
 	return ""
 }
 
-// SetPosture installs a runtime posture override for an access point and emits a
-// state event. Used by the command handler (step 7). The override is
-// operational state and is never written back to PocketBase.
-func (r *Runtime) SetPosture(point, posture, actor, reason string, at time.Time) {
+// portalAddr resolves a portal's location and type for subject construction. It
+// falls back to the controller's configured location; an unknown portal yields
+// an empty type, which callers treat as "can't build a subject" (skip + log).
+func (r *Runtime) portalAddr(portal string) (location, ptype string) {
+	location = r.location
+	if ap, ok := r.store.Portal(portal); ok {
+		if ap.Location != "" {
+			location = ap.Location
+		}
+		ptype = ap.Type
+	}
+	return location, ptype
+}
+
+// SetPosture installs a runtime posture override for a portal and emits a state
+// event. Used by the command handler. The override is operational state and is
+// never written back to PocketBase.
+func (r *Runtime) SetPosture(portal, posture, actor, reason string, at time.Time) {
 	r.mu.Lock()
-	r.overrides[point] = posture
+	r.overrides[portal] = posture
 	r.mu.Unlock()
-	r.emitState(point, posture, actor, reason, at)
+	r.emitState(portal, posture, actor, reason, at)
 }
 
 // ClearPosture removes a runtime override, reverting to the standing posture,
 // and emits a state event reflecting the now-effective posture.
-func (r *Runtime) ClearPosture(point, actor, reason string, at time.Time) {
+func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
 	r.mu.Lock()
-	delete(r.overrides, point)
+	delete(r.overrides, portal)
 	r.mu.Unlock()
-	r.emitState(point, r.postureFor(point), actor, reason, at)
+	r.emitState(portal, r.postureFor(portal), actor, reason, at)
 }
 
-// Unlock momentarily energizes the strike for an access point (a command-driven
-// pulse, distinct from a standing posture change). A non-positive seconds falls
-// back to the point's configured pulse.
-func (r *Runtime) Unlock(point string, seconds int, actor, reason string) {
+// Unlock momentarily energizes the strike for a portal (a command-driven pulse,
+// distinct from a standing posture change). A non-positive seconds falls back to
+// the portal's configured pulse.
+func (r *Runtime) Unlock(portal string, seconds int, actor, reason string) {
 	if seconds <= 0 {
-		if ap, ok := r.store.Point(point); ok {
+		if ap, ok := r.store.Portal(portal); ok {
 			seconds = ap.PulseSeconds
 		}
 	}
-	lock, ok := r.locks[point]
+	lock, ok := r.locks[portal]
 	if !ok {
-		r.log.Warn("unlock command but no lock driver for point", "point", point)
+		r.log.Warn("unlock command but no lock driver for portal", "portal", portal)
 		return
 	}
 	if err := lock.Pulse(seconds); err != nil {
-		r.log.Error("command unlock pulse failed", "point", point, "error", err)
+		r.log.Error("command unlock pulse failed", "portal", portal, "error", err)
 		return
 	}
-	r.log.Info("command unlock", "point", point, "seconds", seconds, "actor", actor, "reason", reason)
+	r.log.Info("command unlock", "portal", portal, "seconds", seconds, "actor", actor, "reason", reason)
 }
 
-// SetFire records a site's fire-alarm-input state. While active, the controller
-// suppresses alarm emission for that site (forced/held-open events would be
-// false alarms during an evacuation). It never changes posture and never
+// SetFire records a location's fire-alarm-input state. While active, the
+// controller suppresses alarm emission for that location (forced/held-open events
+// would be false alarms during an evacuation). It never changes posture and never
 // unlocks — hardware owns egress.
-func (r *Runtime) SetFire(site string, active bool, at time.Time) {
+func (r *Runtime) SetFire(location string, active bool, at time.Time) {
 	r.mu.Lock()
 	if active {
-		r.fire[site] = true
+		r.fire[location] = true
 	} else {
-		delete(r.fire, site)
+		delete(r.fire, location)
 	}
 	r.mu.Unlock()
-	r.log.Info("fire state changed", "site", site, "active", active, "ts", at.UTC().Format(time.RFC3339))
+	r.log.Info("fire state changed", "location", location, "active", active, "ts", at.UTC().Format(time.RFC3339))
 }
 
-// EmitAlarm emits an access-point alarm unless the site's fire input is active,
-// in which case it is suppressed. (v1 has no alarm source yet; this is the gate
-// real forced/held-open detection will flow through.)
-func (r *Runtime) EmitAlarm(point, alarmType string, at time.Time) {
-	site := r.site
-	if ap, ok := r.store.Point(point); ok && ap.Site != "" {
-		site = ap.Site
+// EmitAlarm emits a portal alarm unless the location's fire input is active, in
+// which case it is suppressed. (v1 has no alarm source yet; this is the gate real
+// forced/held-open detection will flow through.)
+func (r *Runtime) EmitAlarm(portal, alarmType string, at time.Time) {
+	location, ptype := r.portalAddr(portal)
+	if ptype == "" {
+		r.log.Warn("unknown portal type; alarm not emitted", "portal", portal)
+		return
 	}
 
 	r.mu.RLock()
-	suppressed := r.fire[site]
+	suppressed := r.fire[location]
 	r.mu.RUnlock()
 	if suppressed {
-		r.log.Info("alarm suppressed (fire active)", "site", site, "point", point, "type", alarmType)
+		r.log.Info("alarm suppressed (fire active)", "location", location, "portal", portal, "type", alarmType)
 		return
 	}
 
-	if err := r.emit.Emit(r.subs.EventAlarm(site, point), map[string]any{
+	if err := r.emit.Emit(r.subs.EventAlarm(location, ptype, portal), map[string]any{
 		"type": alarmType,
 		"ts":   at.UTC().Format(time.RFC3339),
 	}); err != nil {
-		r.log.Error("failed to emit alarm event", "point", point, "error", err)
+		r.log.Error("failed to emit alarm event", "portal", portal, "error", err)
 		return
 	}
 	r.m.IncEventPublished("alarm")
 }
 
-func (r *Runtime) emitState(point, posture, actor, reason string, at time.Time) {
-	site := r.site
-	if ap, ok := r.store.Point(point); ok && ap.Site != "" {
-		site = ap.Site
+func (r *Runtime) emitState(portal, posture, actor, reason string, at time.Time) {
+	location, ptype := r.portalAddr(portal)
+	if ptype == "" {
+		r.log.Warn("unknown portal type; state event not emitted", "portal", portal)
+		return
 	}
-	if err := r.emit.Emit(r.subs.EventState(site, point), StateEvent{
+	if err := r.emit.Emit(r.subs.EventState(location, ptype, portal), StateEvent{
 		Posture: posture, Actor: actor, Reason: reason,
 		TS: at.UTC().Format(time.RFC3339),
 	}); err != nil {
-		r.log.Error("failed to emit state event", "point", point, "error", err)
+		r.log.Error("failed to emit state event", "portal", portal, "error", err)
 	} else {
 		r.m.IncEventPublished("state")
 	}

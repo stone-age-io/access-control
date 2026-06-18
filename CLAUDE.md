@@ -16,7 +16,7 @@ Two Go binaries plus a Vue 3 management UI:
   hardware (mocked in v1), and emits access events to JetStream.
 
 v1 status: **software substrate, no hardware.** Reader/lock/FAI are interfaces (`internal/drivers`) with
-mock implementations. Taps are simulated by publishing to `acc.tap.{site}.{point}`.
+mock implementations. Taps are simulated by publishing to `{location}.{type}.{thing}.acc.tap`.
 
 ## Build & run
 
@@ -53,13 +53,13 @@ cd ui && npm run build                           # UI has no test suite; the typ
 
 ### The decision is a pure function
 
-`internal/policy` is the core. `Decide(p, loc, posture, cred, point, atUTC) Decision` is a pure function over
+`internal/policy` is the core. `Decide(p, loc, posture, cred, portal, atUTC) Decision` is a pure function over
 plain maps — no I/O, no locks, no rules engine. It runs identically on central and edge and is table-tested.
-The graph mirrors the operator's mental model 1:1: **user → roles → access groups → (access points + one schedule)**.
+The graph mirrors the operator's mental model 1:1: **user → roles → access groups → (portals + one schedule)**.
 
 **Evaluation order is the contract — deny-overrides come first** (see the doc comment on `Decide`):
-unknown point → posture gate (disabled/lockdown deny; unlocked allows without consulting credential; secure
-continues) → credential/user status → grant walk (a group containing the point whose schedule window is open).
+unknown portal → posture gate (disabled/lockdown deny; unlocked allows without consulting credential; secure
+continues) → credential/user status → grant walk (a group containing the portal whose schedule window is open).
 Everything unrecognized or not-yet-synced **fails closed (deny)**. A zero `Policy{}` default-denies everything.
 
 ### Data flow (one direction, eventually consistent)
@@ -69,7 +69,7 @@ operator edits PocketBase ─┐
                            ├─► internal/mirror ──► NATS KV (ACC_POLICY) ──► controller PolicyStore (in-mem maps)
 migrations seed fixture ───┘    (one key/record)        watch                       │
                                                                                     ▼  policy.Decide (local)
-events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream ◄── acc.evt.> ◄── Runtime (tap loop)
+events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream ◄── *.acc.evt.> ◄── Runtime (tap loop)
    (rebuildable read model)   consumer                                              pulses lock on allow
 ```
 
@@ -77,11 +77,11 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   record hooks. No aggregation, no whole-policy rebuild. `SyncAll` reconciles on boot (covers migration-seeded
   data and changes made while accessd was down) and prunes stale keys.
 - **Wire contract** (`internal/policykv`) is the shared JSON shape + key scheme between mirror (writer) and
-  PolicyStore (reader). Key = `<prefix><natural-key>`, e.g. `cred.CARD-001`, `point.lobby-main`, `user.<pbid>`.
+  PolicyStore (reader). Key = `<prefix><natural-key>`, e.g. `cred.CARD-001`, `portal.lobby-main`, `user.<pbid>`.
   **Cross-references are stored as stable codes** (or credential value / cardholder id), never PocketBase ids,
   so KV stays human-readable and self-contained.
 - **PolicyStore** (`internal/controller/policystore.go`) watches `WatchAll`, parses into maps behind an RWMutex,
-  resolves each site's timezone once on apply (hot path never calls `LoadLocation`). Self-heals across NATS
+  resolves each location's timezone once on apply (hot path never calls `LoadLocation`). Self-heals across NATS
   reconnects: `Resync` (wired to the reconnect handler) stops the watcher so `runWatch` re-creates it
   (`WatchAll` re-delivers every key = full re-sync). Controller blocks on `WaitReady` (default-deny) before arming.
 - **Audit** (`internal/audit`) — JetStream is the system of record for events; the PocketBase `events`
@@ -89,16 +89,21 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
 
 ### NATS subjects
 
-- `acc.tap.{site}.{point}` — credential presentation (v1: mock reader publishes here)
-- `acc.evt.{site}.{point}.{kind}` (`tap`/`state`/`alarm`) and `acc.evt.{site}.fire` — audit events → ACC_EVENTS
-- `acc.cmd.{site}.{point}.posture` / `.unlock` — control-plane commands (core NATS, fire-and-forget)
+Platform-aligned: a **portal** is a Thing addressed `{location}.{type}.{thing}`, and `acc` is an
+app-discriminator segment placed *before the verb*. `{type}` is the portal kind (door/turnstile/elevator/
+gate/logical), a single NATS token.
 
-**All subject construction and parsing lives in `internal/subjects`** (one `Subjects` value rooted at a namespace
-from `subjects.root` config, default `acc`, threaded through every constructor) — never hand-format `acc.…` strings
-elsewhere. The `{root}.evt.>` stream subjects and the audit filter both derive from that root, so they can't drift
-from what controllers publish. **accessd and every controller must share the same `subjects.root`** (a mismatch
-silently severs policy/commands/events). `docs/protocol.md` is the full wire reference (subjects, message shapes,
-KV key scheme, decision reason codes).
+- `{location}.{type}.{thing}.acc.tap` — credential presentation (v1: mock reader publishes here)
+- `{location}.{type}.{thing}.acc.evt.{kind}` (`tap`/`state`/`alarm`) and `{location}.acc.evt.fire` (location-scoped) — audit events → ACC_EVENTS
+- `{location}.{type}.{thing}.acc.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget)
+
+**All subject construction and parsing lives in `internal/subjects`** (one `Subjects` value carrying the `acc`
+app token from `subjects.app` config, default `acc`, threaded through every constructor) — never hand-format
+subject strings elsewhere. The audit stream captures two **token-count-disjoint** patterns — `*.acc.evt.>`
+(4-token fire) and `*.*.*.acc.evt.>` (6-token portal events) — both deriving from that app token, so they can't
+drift from what controllers publish and can't capture a foreign Thing's events. **accessd and every controller
+must share the same `subjects.app`** (a mismatch silently severs policy/commands/events). `docs/protocol.md` is
+the full wire reference (subjects, message shapes, KV key scheme, decision reason codes).
 
 Commands (`internal/controller/commands.go`) install **runtime posture overrides** that are operational state,
 never written back to PocketBase. `posture: "clear"` reverts to the standing value. The controller grows **no
@@ -108,14 +113,14 @@ scheduler publishing a follow-up command. Fire input suppresses alarm emission (
 ### Schema is code
 
 `pbmigrations` defines collections in Go (`1750000000_collections.go`) and seeds an idempotent dev fixture
-(`1750000001_fixture.go`, no-ops if `sites` is non-empty). Collections have **nil access rules = superuser-only**,
+(`1750000001_fixture.go`, no-ops if `locations` is non-empty). Collections have **nil access rules = superuser-only**,
 the right default for a PACS control plane. `migratecmd` Automigrate snapshots dashboard collection edits into
 new Go files beside the hand-authored ones — review those before committing.
 
 ## Config
 
 Unified `config.Config` (`config/config.go`) for both binaries, loaded via Viper. Every key is overridable by an
-**`SA_`-prefixed env var** (`SA_NATS_URLS`, `SA_CONTROLLER_SITE`, ...). A missing config file is fine — defaults +
+**`SA_`-prefixed env var** (`SA_NATS_URLS`, `SA_CONTROLLER_LOCATION`, ...). A missing config file is fine — defaults +
 env apply. `accessd` reads `$SA_CONFIG` (default `config/accessd.yaml`); `access-controller` uses its `-config`
 flag (default `config/controller.yaml`). Exactly one NATS auth method may be set (creds file / nkey / token /
 user-pass); `*.creds` and `config/local*.yaml` are gitignored — never commit credentials.

@@ -12,17 +12,17 @@ import (
 )
 
 // seeded returns a store loaded with the fixture graph via apply (the same path
-// the KV watcher drives). Mirrors the PocketBase fixture: site hq
-// (America/New_York) → lobby-main (secure, pulse 5) under business-hours
-// (M–F 08:00–17:00); role staff → cardholder alice → credential CARD-001.
+// the KV watcher drives). Mirrors the PocketBase fixture: location hq
+// (America/New_York) → portal lobby-main (door, secure, pulse 5) under
+// business-hours (M–F 08:00–17:00); role staff → cardholder alice → CARD-001.
 func seeded(t *testing.T) *PolicyStore {
 	t.Helper()
 	s := NewPolicyStore(nil, logger.NewNopLogger(), nil)
 	records := []struct{ key, val string }{
-		{"site.hq", `{"code":"hq","timezone":"America/New_York","faiSuppress":true}`},
+		{"location.hq", `{"code":"hq","timezone":"America/New_York","faiSuppress":true}`},
 		{"sched.business-hours", `{"code":"business-hours","windows":[{"days":[1,2,3,4,5],"start":"08:00","end":"17:00"}]}`},
-		{"point.lobby-main", `{"code":"lobby-main","site":"hq","posture":"secure","pulseSeconds":5}`},
-		{"group.lobby-group", `{"code":"lobby-group","points":["lobby-main"],"schedule":"business-hours"}`},
+		{"portal.lobby-main", `{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5}`},
+		{"group.lobby-group", `{"code":"lobby-group","portals":["lobby-main"],"schedule":"business-hours"}`},
 		{"role.staff", `{"code":"staff","groups":["lobby-group"]}`},
 		{"user.alice", `{"id":"alice","status":"active","roles":["staff"]}`},
 		{"cred.CARD-001", `{"value":"CARD-001","user":"alice","status":"active"}`},
@@ -53,7 +53,7 @@ func TestStoreDecideGrant(t *testing.T) {
 	}
 }
 
-// TestStoreDecideTimezone proves the store resolves the site timezone rather
+// TestStoreDecideTimezone proves the store resolves the location timezone rather
 // than evaluating in UTC: 16:30 NY (= 21:30 UTC) is inside the window in NY but
 // would be outside if evaluated as 21:30 UTC.
 func TestStoreDecideTimezone(t *testing.T) {
@@ -107,13 +107,13 @@ func TestStoreSuspendUpdate(t *testing.T) {
 	}
 }
 
-func TestStorePointLookup(t *testing.T) {
+func TestStorePortalLookup(t *testing.T) {
 	s := seeded(t)
-	ap, ok := s.Point("lobby-main")
-	if !ok || ap.Site != "hq" || ap.Posture != policy.PostureSecure || ap.PulseSeconds != 5 {
-		t.Errorf("Point(lobby-main) = %+v ok=%v, want site=hq posture=secure pulse=5", ap, ok)
+	ap, ok := s.Portal("lobby-main")
+	if !ok || ap.Location != "hq" || ap.Type != "door" || ap.Posture != policy.PostureSecure || ap.PulseSeconds != 5 {
+		t.Errorf("Portal(lobby-main) = %+v ok=%v, want location=hq type=door posture=secure pulse=5", ap, ok)
 	}
-	if _, ok := s.Point("nope"); ok {
-		t.Errorf("Point(nope) ok=true, want false")
+	if _, ok := s.Portal("nope"); ok {
+		t.Errorf("Portal(nope) ok=true, want false")
 	}
 }

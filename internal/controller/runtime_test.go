@@ -82,7 +82,7 @@ func drain(rt *Runtime, reader *drivers.MockReader, taps ...drivers.Tap) {
 
 func TestRuntimeGrantPulses(t *testing.T) {
 	rt, reader, lock, emit := runtimeFor(t)
-	drain(rt, reader, drivers.Tap{Point: "lobby-main", Credential: "CARD-001", At: ny(t, 2026, 1, 5, 9, 0)})
+	drain(rt, reader, drivers.Tap{Portal: "lobby-main", Credential: "CARD-001", At: ny(t, 2026, 1, 5, 9, 0)})
 
 	if got := lock.Pulses(); len(got) != 1 || got[0] != 5 {
 		t.Errorf("pulses = %v, want [5]", got)
@@ -91,14 +91,14 @@ func TestRuntimeGrantPulses(t *testing.T) {
 	if len(taps) != 1 || !taps[0].Allow || taps[0].Reason != policy.ReasonAllowGrant || taps[0].User != "alice" {
 		t.Errorf("tap events = %+v, want one allow_grant for alice", taps)
 	}
-	if !emit.hasSubject("acc.evt.hq.lobby-main.tap") {
-		t.Errorf("missing acc.evt.hq.lobby-main.tap subject")
+	if !emit.hasSubject("hq.door.lobby-main.acc.evt.tap") {
+		t.Errorf("missing hq.door.lobby-main.acc.evt.tap subject")
 	}
 }
 
 func TestRuntimeScheduleClosedNoPulse(t *testing.T) {
 	rt, reader, lock, emit := runtimeFor(t)
-	drain(rt, reader, drivers.Tap{Point: "lobby-main", Credential: "CARD-001", At: ny(t, 2026, 1, 5, 18, 0)})
+	drain(rt, reader, drivers.Tap{Portal: "lobby-main", Credential: "CARD-001", At: ny(t, 2026, 1, 5, 18, 0)})
 
 	if got := lock.Pulses(); len(got) != 0 {
 		t.Errorf("pulses = %v, want none (after hours)", got)
@@ -111,7 +111,7 @@ func TestRuntimeScheduleClosedNoPulse(t *testing.T) {
 
 func TestRuntimeUnknownCredNoPulse(t *testing.T) {
 	rt, reader, lock, emit := runtimeFor(t)
-	drain(rt, reader, drivers.Tap{Point: "lobby-main", Credential: "NOPE", At: ny(t, 2026, 1, 5, 9, 0)})
+	drain(rt, reader, drivers.Tap{Portal: "lobby-main", Credential: "NOPE", At: ny(t, 2026, 1, 5, 9, 0)})
 
 	if got := lock.Pulses(); len(got) != 0 {
 		t.Errorf("pulses = %v, want none", got)
@@ -125,7 +125,7 @@ func TestRuntimePostureOverrideUnlocked(t *testing.T) {
 	rt, reader, lock, emit := runtimeFor(t)
 	// Unlock the door: an unknown credential should now pass freely.
 	rt.SetPosture("lobby-main", policy.PostureUnlocked, "guard", "open house", ny(t, 2026, 1, 5, 8, 0))
-	drain(rt, reader, drivers.Tap{Point: "lobby-main", Credential: "NOPE", At: ny(t, 2026, 1, 5, 9, 0)})
+	drain(rt, reader, drivers.Tap{Portal: "lobby-main", Credential: "NOPE", At: ny(t, 2026, 1, 5, 9, 0)})
 
 	if got := lock.Pulses(); len(got) != 1 || got[0] != 5 {
 		t.Errorf("pulses = %v, want [5] (free passage)", got)
@@ -133,7 +133,7 @@ func TestRuntimePostureOverrideUnlocked(t *testing.T) {
 	if taps := emit.taps(); len(taps) != 1 || !taps[0].Allow || taps[0].Reason != policy.ReasonAllowPostureUnlocked {
 		t.Errorf("tap events = %+v, want one allow_posture_unlocked", taps)
 	}
-	if !emit.hasSubject("acc.evt.hq.lobby-main.state") {
+	if !emit.hasSubject("hq.door.lobby-main.acc.evt.state") {
 		t.Errorf("expected a state event on posture override")
 	}
 }
@@ -141,7 +141,7 @@ func TestRuntimePostureOverrideUnlocked(t *testing.T) {
 func TestRuntimeLockdownOverride(t *testing.T) {
 	rt, reader, lock, emit := runtimeFor(t)
 	rt.SetPosture("lobby-main", policy.PostureLockdown, "guard", "incident", ny(t, 2026, 1, 5, 8, 0))
-	drain(rt, reader, drivers.Tap{Point: "lobby-main", Credential: "CARD-001", At: ny(t, 2026, 1, 5, 9, 0)})
+	drain(rt, reader, drivers.Tap{Portal: "lobby-main", Credential: "CARD-001", At: ny(t, 2026, 1, 5, 9, 0)})
 
 	if got := lock.Pulses(); len(got) != 0 {
 		t.Errorf("pulses = %v, want none (lockdown)", got)

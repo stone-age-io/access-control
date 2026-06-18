@@ -4,8 +4,7 @@
 // in v1), and emits access events to JetStream.
 //
 // v1 drivers are mocks: taps are simulated by publishing to
-// acc.tap.{site}.{point} and the lock just logs its pulse. The command handler
-// and FAI suppression arrive in step 7.
+// {location}.{type}.{thing}.acc.tap and the lock just logs its pulse.
 package main
 
 import (
@@ -43,7 +42,7 @@ func main() {
 		boot.Fatal("failed to create logger", "error", err)
 	}
 	defer func() { _ = log.Sync() }()
-	log = log.With("app", "access-controller", "site", cfg.Controller.Site)
+	log = log.With("app", "access-controller", "location", cfg.Controller.Location)
 
 	m, err := metrics.NewMetrics(prometheus.NewRegistry())
 	if err != nil {
@@ -69,9 +68,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// One subjects root shared by the reader, runtime emitter, and command
+	// One subjects app token shared by the reader, runtime emitter, and command
 	// handler — and matching accessd's, so policy/events flow between them.
-	subj := subjects.New(cfg.Subjects.Root)
+	subj := subjects.New(cfg.Subjects.App)
 
 	// resync is wired to the policy store after it exists; a reconnect before
 	// then is a harmless no-op.
@@ -109,34 +108,46 @@ func main() {
 	}
 	log.Info("policy synced; controller ready",
 		"policyBucket", cfg.Policy.Bucket,
-		"subjectsRoot", cfg.Subjects.Root,
-		"points", cfg.Controller.Points)
+		"subjectsApp", cfg.Subjects.App,
+		"portals", cfg.Controller.Portals)
+
+	// Resolve each configured portal's type from the synced policy so the reader
+	// and emitter can build exact {location}.{type}.{thing} subjects. A portal
+	// unknown to policy (or with no type) is skipped + logged — it default-denies
+	// by omission rather than arming a reader we can't address.
+	if len(cfg.Controller.Portals) == 0 {
+		log.Warn("no portals configured; tap loop will be idle", "hint", "set controller.portals")
+	}
+	portals := make([]controller.Portal, 0, len(cfg.Controller.Portals))
+	for _, code := range cfg.Controller.Portals {
+		ap, ok := store.Portal(code)
+		if !ok || ap.Type == "" {
+			log.Error("configured portal is unknown or has no type; skipping",
+				"portal", code, "hint", "create the portal in accessd with a type")
+			continue
+		}
+		portals = append(portals, controller.Portal{Code: code, Type: ap.Type})
+	}
 
 	// Tap loop with mock drivers. Taps are simulated by publishing to
-	// acc.tap.{site}.{point}; the lock just logs its pulse.
-	points := cfg.Controller.Points
-	if len(points) == 0 {
-		log.Warn("no access points configured; tap loop will be idle", "hint", "set controller.points")
-	}
-	reader, err := controller.NewNATSReader(nc.NC, cfg.Controller.Site, points, subj, log)
+	// {location}.{type}.{thing}.acc.tap; the lock just logs its pulse.
+	reader, err := controller.NewNATSReader(nc.NC, cfg.Controller.Location, portals, subj, log)
 	if err != nil {
 		log.Fatal("failed to start reader", "error", err)
 	}
 	defer reader.Stop()
 
-	locks := make(map[string]drivers.LockDriver, len(points))
-	for _, p := range points {
-		locks[p] = drivers.NewMockLock(p, log)
+	locks := make(map[string]drivers.LockDriver, len(portals))
+	for _, p := range portals {
+		locks[p.Code] = drivers.NewMockLock(p.Code, log)
 	}
 
-	rt := controller.NewRuntime(cfg.Controller.Site, store, reader, locks, controller.NewNATSEmitter(nc.NC), subj, log, m)
+	rt := controller.NewRuntime(cfg.Controller.Location, store, reader, locks, controller.NewNATSEmitter(nc.NC), subj, log, m)
 	go func() { _ = rt.Run(ctx) }()
-	log.Info("tap loop running",
-		"site", cfg.Controller.Site,
-		"tapSubject", subj.Tap(cfg.Controller.Site, "<point>"))
+	log.Info("tap loop running", "location", cfg.Controller.Location, "portals", len(portals))
 
-	// Command handler: posture/unlock commands + site fire-alarm-input signal.
-	cmds := controller.NewCommandHandler(cfg.Controller.Site, rt, subj, log)
+	// Command handler: posture/unlock commands + location fire-alarm-input signal.
+	cmds := controller.NewCommandHandler(cfg.Controller.Location, rt, subj, log)
 	if err := cmds.Start(nc.NC); err != nil {
 		log.Fatal("failed to start command handler", "error", err)
 	}

@@ -3,7 +3,7 @@
 # pure policy.Decide function, and publishes access events to JetStream.
 #
 # Loaded via the -config flag (default: config/controller.yaml). Every key can
-# be overridden by an SA_-prefixed env var, e.g. SA_CONTROLLER_SITE=hq.
+# be overridden by an SA_-prefixed env var, e.g. SA_CONTROLLER_LOCATION=hq.
 #
 # Run with:  access-controller -config config/controller.yaml
 
@@ -16,9 +16,10 @@ nats:
     - "tls://nats.example.com:4222"
 
   # Provision a SEPARATE NATS identity for each controller on the platform
-  # (least privilege: a controller only needs to watch ACC_POLICY and publish
-  # acc.evt.> / subscribe acc.cmd.{site}.>). Save its creds file outside the
-  # repo (*.creds is gitignored).
+  # (least privilege: a controller only needs to watch ACC_POLICY, publish
+  # {location}.{type}.{thing}.acc.evt.> and subscribe to the matching
+  # acc.cmd/acc.tap subjects). Save its creds file outside the repo
+  # (*.creds is gitignored).
   credsFile: "config/controller.creds"
   #   nkeySeedFile: "config/controller.nk"
   #   token: "${SA_NATS_TOKEN}"
@@ -59,19 +60,20 @@ policy:
   bucket: "ACC_POLICY"
 
 # ----------------------------------------------------------------------------
-# Subjects — the root namespace for all NATS subjects. MUST match accessd's
-# subjects.root (and every other controller's), or this controller won't see
-# policy/commands or land its events in the audit stream. Single NATS token.
+# Subjects — the app-discriminator segment for all NATS subjects. MUST match
+# accessd's subjects.app (and every other controller's), or this controller
+# won't see policy/commands or land its events in the audit stream. Single
+# NATS token.
 # ----------------------------------------------------------------------------
 subjects:
-  root: "acc"
+  app: "acc"
 
 # ----------------------------------------------------------------------------
-# Controller identity — which site this controller belongs to (selects the
-# timezone) and which access points it physically drives. The controller still
-# holds the whole-org policy but only arms readers/locks for these points.
+# Controller identity — which location this controller belongs to (selects the
+# timezone) and which portals it physically drives. The controller still holds
+# the whole-org policy but only arms readers/locks for these portals.
 # ----------------------------------------------------------------------------
 controller:
-  site: "hq"
-  points:
+  location: "hq"
+  portals:
     - "lobby-main"

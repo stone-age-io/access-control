@@ -6,11 +6,11 @@ package drivers
 
 import "time"
 
-// Tap is a single credential presentation at a reader: which access point, what
+// Tap is a single credential presentation at a reader: which portal, what
 // opaque credential value, and when (UTC). The reader stamps At so tests can
 // drive deterministic instants.
 type Tap struct {
-	Point      string
+	Portal     string
 	Credential string
 	At         time.Time
 }
@@ -20,23 +20,23 @@ type ReaderDriver interface {
 	Taps() <-chan Tap
 }
 
-// LockDriver energizes a strike/relay for an access point. Pulse holds it for
-// the given number of seconds (the decision's pulse value). A zero or negative
+// LockDriver energizes a strike/relay for a portal. Pulse holds it for the
+// given number of seconds (the decision's pulse value). A zero or negative
 // value means "use the driver's default"; the mock just records it.
 type LockDriver interface {
 	Pulse(seconds int) error
 }
 
-// FAIInput reports a site's fire-alarm-input state. Active is true while the
+// FAIInput reports a location's fire-alarm-input state. Active is true while the
 // FAI asserts free egress. The controller only observes this to suppress false
 // alarms — hardware owns egress, software never unlocks for fire.
 type FAIInput interface {
 	Fire() <-chan FireState
 }
 
-// FireState is a site-level fire signal.
+// FireState is a location-scoped fire signal.
 type FireState struct {
-	Site   string
-	Active bool
-	At     time.Time
+	Location string
+	Active   bool
+	At       time.Time
 }

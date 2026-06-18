@@ -87,21 +87,21 @@ func (c *Conn) EnsureKVBucket(ctx context.Context, bucket string) (jetstream.Key
 }
 
 // EnsureStream returns the named JetStream stream, creating it if it does not
-// exist (file storage; subjects are the configured event subjects).
-func (c *Conn) EnsureStream(ctx context.Context, name, subjects string) (jetstream.Stream, error) {
+// exist (file storage; subjs are the event subjects to capture).
+func (c *Conn) EnsureStream(ctx context.Context, name string, subjs []string) (jetstream.Stream, error) {
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
 
 	stream, err := c.JS.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:        name,
 		Description: "stone-access audit events",
-		Subjects:    strings.Split(subjects, ","),
+		Subjects:    subjs,
 		Storage:     jetstream.FileStorage,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to ensure stream %q: %w", name, err)
 	}
-	c.log.Info("JetStream stream ready", "stream", name, "subjects", subjects)
+	c.log.Info("JetStream stream ready", "stream", name, "subjects", subjs)
 	return stream, nil
 }
 

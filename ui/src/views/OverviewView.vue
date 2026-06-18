@@ -14,9 +14,9 @@ interface StatCard {
 }
 
 const stats = ref<StatCard[]>([
-  { label: 'Sites', icon: '🏢', path: '/sites', collection: 'sites', count: null },
+  { label: 'Locations', icon: '🏢', path: '/locations', collection: 'locations', count: null },
   { label: 'Schedules', icon: '🗓️', path: '/schedules', collection: 'schedules', count: null },
-  { label: 'Access Points', icon: '🚪', path: '/access-points', collection: 'access_points', count: null },
+  { label: 'Portals', icon: '🚪', path: '/portals', collection: 'portals', count: null },
   { label: 'Access Groups', icon: '🗝️', path: '/access-groups', collection: 'access_groups', count: null },
   { label: 'Roles', icon: '🛡️', path: '/roles', collection: 'roles', count: null },
   { label: 'Cardholders', icon: '🪪', path: '/cardholders', collection: 'cardholders', count: null },
@@ -110,8 +110,8 @@ onMounted(async () => {
           <span class="badge badge-sm" :class="eventBadge(e)">{{ e.kind || 'event' }}</span>
           <div class="flex-1 min-w-0">
             <div class="text-sm truncate">
-              <span class="font-medium">{{ e.site || '—' }}</span>
-              <span v-if="e.access_point" class="opacity-60"> / {{ e.access_point }}</span>
+              <span class="font-medium">{{ e.location || '—' }}</span>
+              <span v-if="e.portal" class="opacity-60"> / {{ e.portal }}</span>
               <span v-if="e.reason" class="opacity-60"> — {{ formatConstant(e.reason) }}</span>
             </div>
             <div v-if="e.credential || e.user" class="text-xs opacity-50 truncate">

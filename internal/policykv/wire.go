@@ -9,20 +9,20 @@
 package policykv
 
 // Key prefixes. One KV key per record: "<prefix><natural-key>", e.g.
-// "cred.CARD-001", "user.<pbid>", "point.lobby-main".
+// "cred.CARD-001", "user.<pbid>", "portal.lobby-main".
 const (
-	PrefixSite  = "site."
-	PrefixSched = "sched."
-	PrefixPoint = "point."
-	PrefixGroup = "group."
-	PrefixRole  = "role."
-	PrefixUser  = "user."
-	PrefixCred  = "cred."
+	PrefixLocation = "location."
+	PrefixSched    = "sched."
+	PrefixPortal   = "portal."
+	PrefixGroup    = "group."
+	PrefixRole     = "role."
+	PrefixUser     = "user."
+	PrefixCred     = "cred."
 )
 
-// Site carries the timezone (the controller resolves it once per evaluation)
+// Location carries the timezone (the controller resolves it once per evaluation)
 // and the fire-alarm-input alarm-suppression flag.
-type Site struct {
+type Location struct {
 	Code        string `json:"code"`
 	Name        string `json:"name"`
 	Timezone    string `json:"timezone"`
@@ -43,18 +43,20 @@ type Schedule struct {
 	Windows []Window `json:"windows"`
 }
 
-// AccessPoint references its site by code; Posture is the standing default.
-type AccessPoint struct {
+// Portal references its location by code; Type is the portal kind (also the
+// {type} subject segment, a single NATS token); Posture is the standing default.
+type Portal struct {
 	Code         string `json:"code"`
-	Site         string `json:"site"`
+	Type         string `json:"type"`
+	Location     string `json:"location"`
 	Posture      string `json:"posture"`
 	PulseSeconds int    `json:"pulseSeconds"`
 }
 
-// AccessGroup grants a set of access points (by code) under one schedule (by code).
+// AccessGroup grants a set of portals (by code) under one schedule (by code).
 type AccessGroup struct {
 	Code     string   `json:"code"`
-	Points   []string `json:"points"`
+	Portals  []string `json:"portals"`
 	Schedule string   `json:"schedule"`
 }
 

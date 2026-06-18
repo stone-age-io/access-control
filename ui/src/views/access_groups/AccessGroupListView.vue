@@ -6,7 +6,7 @@ import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { pb } from '@/utils/pb'
-import type { AccessGroup, AccessPoint } from '@/types/pocketbase'
+import type { AccessGroup, Portal } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
@@ -23,7 +23,7 @@ const deleting = ref(false)
 function queryOpts() {
   const q = searchQuery.value.trim().replace(/["\\]/g, '')
   const filter = q ? `code ~ "${q}" || name ~ "${q}"` : ''
-  return { sort: 'code', expand: 'access_points,schedule', filter }
+  return { sort: 'code', expand: 'portals,schedule', filter }
 }
 
 function reload() {
@@ -35,11 +35,11 @@ const columns: Column<AccessGroup>[] = [
   { key: 'code', label: 'Code' },
   { key: 'name', label: 'Name' },
   { key: 'expand.schedule.code', label: 'Schedule' },
-  { key: 'access_points', label: 'Points' },
+  { key: 'portals', label: 'Portals' },
 ]
 
-function pointsOf(g: AccessGroup): AccessPoint[] {
-  return g.expand?.access_points || []
+function portalsOf(g: AccessGroup): Portal[] {
+  return g.expand?.portals || []
 }
 
 async function handleDelete(g: AccessGroup) {
@@ -72,7 +72,7 @@ onMounted(reload)
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
       <div>
         <h1 class="text-3xl font-bold">Access Groups</h1>
-        <p class="text-base-content/70 mt-1">A set of access points opened under one schedule (an "access level").</p>
+        <p class="text-base-content/70 mt-1">A set of portals opened under one schedule (an "access level").</p>
       </div>
       <router-link to="/access-groups/new" class="btn btn-primary w-full sm:w-auto">
         <span class="text-lg">+</span><span>New Access Group</span>
@@ -100,7 +100,7 @@ onMounted(reload)
       <div class="text-center py-12">
         <span class="text-6xl">🗝️</span>
         <h3 class="text-xl font-bold mt-4">No access groups yet</h3>
-        <p class="text-base-content/70 mt-2">Group access points under a schedule, then assign groups to roles.</p>
+        <p class="text-base-content/70 mt-2">Group portals under a schedule, then assign groups to roles.</p>
         <router-link to="/access-groups/new" class="btn btn-primary mt-4">Create Access Group</router-link>
       </div>
     </BaseCard>
@@ -123,20 +123,20 @@ onMounted(reload)
           <span v-else>-</span>
         </template>
 
-        <template #cell-access_points="{ item }">
-          <div v-if="pointsOf(item).length" class="flex flex-wrap gap-1">
-            <code v-for="p in pointsOf(item).slice(0, 3)" :key="p.id" class="badge badge-ghost badge-sm">{{ p.code }}</code>
-            <span v-if="pointsOf(item).length > 3" class="badge badge-ghost badge-sm">+{{ pointsOf(item).length - 3 }}</span>
+        <template #cell-portals="{ item }">
+          <div v-if="portalsOf(item).length" class="flex flex-wrap gap-1">
+            <code v-for="p in portalsOf(item).slice(0, 3)" :key="p.id" class="badge badge-ghost badge-sm">{{ p.code }}</code>
+            <span v-if="portalsOf(item).length > 3" class="badge badge-ghost badge-sm">+{{ portalsOf(item).length - 3 }}</span>
           </div>
-          <span v-else-if="(item.access_points || []).length" class="badge badge-ghost badge-sm">{{ (item.access_points || []).length }}</span>
+          <span v-else-if="(item.portals || []).length" class="badge badge-ghost badge-sm">{{ (item.portals || []).length }}</span>
           <span v-else class="text-base-content/40">-</span>
         </template>
-        <template #card-access_points="{ item }">
-          <div v-if="pointsOf(item).length" class="flex flex-wrap gap-1 justify-end">
-            <code v-for="p in pointsOf(item).slice(0, 2)" :key="p.id" class="badge badge-ghost badge-sm">{{ p.code }}</code>
-            <span v-if="pointsOf(item).length > 2" class="badge badge-ghost badge-sm">+{{ pointsOf(item).length - 2 }}</span>
+        <template #card-portals="{ item }">
+          <div v-if="portalsOf(item).length" class="flex flex-wrap gap-1 justify-end">
+            <code v-for="p in portalsOf(item).slice(0, 2)" :key="p.id" class="badge badge-ghost badge-sm">{{ p.code }}</code>
+            <span v-if="portalsOf(item).length > 2" class="badge badge-ghost badge-sm">+{{ portalsOf(item).length - 2 }}</span>
           </div>
-          <span v-else-if="(item.access_points || []).length" class="badge badge-ghost badge-sm">{{ (item.access_points || []).length }}</span>
+          <span v-else-if="(item.portals || []).length" class="badge badge-ghost badge-sm">{{ (item.portals || []).length }}</span>
           <span v-else>-</span>
         </template>
 

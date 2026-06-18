@@ -11,27 +11,36 @@ import (
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
+// Portal is a controller's view of one portal it drives: its code (the {thing}
+// subject segment) and its type (the {type} segment). The controller resolves
+// these from the PolicyStore after the initial sync, so it can build exact
+// {location}.{type}.{thing}.acc.tap subjects.
+type Portal struct {
+	Code string
+	Type string
+}
+
 // NATSReader is the v1 "reader": instead of OSDP/RS485 hardware, it turns NATS
 // messages into taps so presentations can be simulated with `nats pub`. It
-// subscribes per configured access point to acc.tap.{site}.{point}; the message
-// body is {"cred":"..."} (or a bare credential string).
+// subscribes per configured portal to {location}.{type}.{thing}.acc.tap; the
+// message body is {"cred":"..."} (or a bare credential string).
 type NATSReader struct {
 	log  *logger.Logger
 	ch   chan drivers.Tap
 	subs []*nats.Subscription
 }
 
-// NewNATSReader subscribes to the tap subject for each point.
-func NewNATSReader(nc *nats.Conn, site string, points []string, subs subjects.Subjects, log *logger.Logger) (*NATSReader, error) {
+// NewNATSReader subscribes to the tap subject for each portal.
+func NewNATSReader(nc *nats.Conn, location string, portals []Portal, subs subjects.Subjects, log *logger.Logger) (*NATSReader, error) {
 	r := &NATSReader{
 		log: log.With("component", "nats-reader"),
 		ch:  make(chan drivers.Tap, 64),
 	}
-	for _, point := range points {
-		subject := subs.Tap(site, point)
-		p := point // capture
+	for _, portal := range portals {
+		subject := subs.Tap(location, portal.Type, portal.Code)
+		code := portal.Code // capture
 		sub, err := nc.Subscribe(subject, func(msg *nats.Msg) {
-			r.ch <- drivers.Tap{Point: p, Credential: parseCred(msg.Data), At: time.Now().UTC()}
+			r.ch <- drivers.Tap{Portal: code, Credential: parseCred(msg.Data), At: time.Now().UTC()}
 		})
 		if err != nil {
 			r.stopSubs()

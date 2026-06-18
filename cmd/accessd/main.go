@@ -128,9 +128,9 @@ func main() {
 			return err
 		}
 		// The stream captures the whole event subtree; both its subject set and
-		// the audit consumer's filter come from the one subjects root.
-		subj := subjects.New(cfg.Subjects.Root)
-		if _, err := nc.EnsureStream(ctx, cfg.Events.Stream, subj.EventsWildcard()); err != nil {
+		// the audit consumer's filter come from the one subjects app token.
+		subj := subjects.New(cfg.Subjects.App)
+		if _, err := nc.EnsureStream(ctx, cfg.Events.Stream, subj.EventsWildcards()); err != nil {
 			return err
 		}
 
@@ -151,7 +151,7 @@ func main() {
 		log.Info("accessd serving",
 			"policyBucket", cfg.Policy.Bucket,
 			"eventsStream", cfg.Events.Stream,
-			"subjectsRoot", cfg.Subjects.Root,
+			"subjectsApp", cfg.Subjects.App,
 			"dataDir", cfg.Accessd.DataDir)
 		return e.Next()
 	})

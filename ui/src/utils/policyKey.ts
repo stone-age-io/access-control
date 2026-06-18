@@ -5,9 +5,9 @@
 // for cardholders, and the raw value for credentials.
 
 const PREFIX: Record<string, string> = {
-  sites: 'site.',
+  locations: 'location.',
   schedules: 'sched.',
-  access_points: 'point.',
+  portals: 'portal.',
   access_groups: 'group.',
   roles: 'role.',
   cardholders: 'user.',

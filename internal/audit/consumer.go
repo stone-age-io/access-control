@@ -41,10 +41,10 @@ func New(app core.App, js jetstream.JetStream, stream string, subj subjects.Subj
 // v1 audit).
 func (c *Consumer) Start(ctx context.Context) error {
 	cons, err := c.js.CreateOrUpdateConsumer(ctx, c.stream, jetstream.ConsumerConfig{
-		Durable:       durableName,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-		FilterSubject: c.subj.EventsWildcard(),
-		DeliverPolicy: jetstream.DeliverAllPolicy,
+		Durable:        durableName,
+		AckPolicy:      jetstream.AckExplicitPolicy,
+		FilterSubjects: c.subj.EventsWildcards(),
+		DeliverPolicy:  jetstream.DeliverAllPolicy,
 	})
 	if err != nil {
 		return fmt.Errorf("create audit consumer on stream %q: %w", c.stream, err)
@@ -90,7 +90,7 @@ func (c *Consumer) handle(msg jetstream.Msg) error {
 // recordFrom builds (but does not save) an events record from an event subject
 // and body. ok is false for an unrecognized subject. Split out for testing.
 func (c *Consumer) recordFrom(subject string, data []byte) (*core.Record, bool, error) {
-	site, point, kind, ok := c.subj.ParseEvent(subject)
+	location, ptype, portal, kind, ok := c.subj.ParseEvent(subject)
 	if !ok {
 		return nil, false, nil
 	}
@@ -105,8 +105,9 @@ func (c *Consumer) recordFrom(subject string, data []byte) (*core.Record, bool, 
 		return nil, false, err
 	}
 	rec := core.NewRecord(col)
-	rec.Set("site", site)
-	rec.Set("access_point", point)
+	rec.Set("location", location)
+	rec.Set("portal", portal)
+	rec.Set("type", ptype)
 	rec.Set("kind", kind)
 	rec.Set("credential", str(body["cred"]))
 	rec.Set("user", str(body["user"]))

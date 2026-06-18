@@ -28,16 +28,16 @@ func (r *MockReader) Close() { close(r.ch) }
 
 // MockLock records pulses and (optionally) logs them. Safe for concurrent use.
 type MockLock struct {
-	point string
-	log   *logger.Logger
+	portal string
+	log    *logger.Logger
 
 	mu     sync.Mutex
 	pulses []int
 }
 
-// NewMockLock creates a mock lock for an access point. log may be nil.
-func NewMockLock(point string, log *logger.Logger) *MockLock {
-	return &MockLock{point: point, log: log}
+// NewMockLock creates a mock lock for a portal. log may be nil.
+func NewMockLock(portal string, log *logger.Logger) *MockLock {
+	return &MockLock{portal: portal, log: log}
 }
 
 // Pulse implements LockDriver.
@@ -46,7 +46,7 @@ func (l *MockLock) Pulse(seconds int) error {
 	l.pulses = append(l.pulses, seconds)
 	l.mu.Unlock()
 	if l.log != nil {
-		l.log.Info("lock pulse", "point", l.point, "seconds", seconds)
+		l.log.Info("lock pulse", "portal", l.portal, "seconds", seconds)
 	}
 	return nil
 }

@@ -16,11 +16,11 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', name: 'Overview', component: () => import('@/views/OverviewView.vue'), meta: { title: 'Overview' } },
 
-      // Sites
-      { path: 'sites', name: 'Sites', component: () => import('@/views/sites/SiteListView.vue'), meta: { title: 'Sites' } },
-      { path: 'sites/new', name: 'SiteNew', component: () => import('@/views/sites/SiteFormView.vue'), meta: { title: 'New Site' } },
-      { path: 'sites/:id', name: 'Site', component: () => import('@/views/sites/SiteDetailView.vue'), meta: { title: 'Site' } },
-      { path: 'sites/:id/edit', name: 'SiteEdit', component: () => import('@/views/sites/SiteFormView.vue'), meta: { title: 'Edit Site' } },
+      // Locations
+      { path: 'locations', name: 'Locations', component: () => import('@/views/locations/LocationListView.vue'), meta: { title: 'Locations' } },
+      { path: 'locations/new', name: 'LocationNew', component: () => import('@/views/locations/LocationFormView.vue'), meta: { title: 'New Location' } },
+      { path: 'locations/:id', name: 'Location', component: () => import('@/views/locations/LocationDetailView.vue'), meta: { title: 'Location' } },
+      { path: 'locations/:id/edit', name: 'LocationEdit', component: () => import('@/views/locations/LocationFormView.vue'), meta: { title: 'Edit Location' } },
 
       // Schedules
       { path: 'schedules', name: 'Schedules', component: () => import('@/views/schedules/ScheduleListView.vue'), meta: { title: 'Schedules' } },
@@ -28,11 +28,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'schedules/:id', name: 'Schedule', component: () => import('@/views/schedules/ScheduleDetailView.vue'), meta: { title: 'Schedule' } },
       { path: 'schedules/:id/edit', name: 'ScheduleEdit', component: () => import('@/views/schedules/ScheduleFormView.vue'), meta: { title: 'Edit Schedule' } },
 
-      // Access points
-      { path: 'access-points', name: 'AccessPoints', component: () => import('@/views/access_points/AccessPointListView.vue'), meta: { title: 'Access Points' } },
-      { path: 'access-points/new', name: 'AccessPointNew', component: () => import('@/views/access_points/AccessPointFormView.vue'), meta: { title: 'New Access Point' } },
-      { path: 'access-points/:id', name: 'AccessPoint', component: () => import('@/views/access_points/AccessPointDetailView.vue'), meta: { title: 'Access Point' } },
-      { path: 'access-points/:id/edit', name: 'AccessPointEdit', component: () => import('@/views/access_points/AccessPointFormView.vue'), meta: { title: 'Edit Access Point' } },
+      // Portals
+      { path: 'portals', name: 'Portals', component: () => import('@/views/portals/PortalListView.vue'), meta: { title: 'Portals' } },
+      { path: 'portals/new', name: 'PortalNew', component: () => import('@/views/portals/PortalFormView.vue'), meta: { title: 'New Portal' } },
+      { path: 'portals/:id', name: 'Portal', component: () => import('@/views/portals/PortalDetailView.vue'), meta: { title: 'Portal' } },
+      { path: 'portals/:id/edit', name: 'PortalEdit', component: () => import('@/views/portals/PortalFormView.vue'), meta: { title: 'Edit Portal' } },
 
       // Access groups
       { path: 'access-groups', name: 'AccessGroups', component: () => import('@/views/access_groups/AccessGroupListView.vue'), meta: { title: 'Access Groups' } },

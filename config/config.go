@@ -106,11 +106,12 @@ type EventsConfig struct {
 	Stream string `json:"stream" yaml:"stream" mapstructure:"stream"`
 }
 
-// SubjectsConfig sets the root namespace every NATS subject hangs off (see
-// internal/subjects). accessd and every controller MUST use the same root, since
-// they publish and subscribe to each other's traffic. Defaults to "acc".
+// SubjectsConfig sets the app-discriminator segment every NATS subject carries
+// (see internal/subjects). accessd and every controller MUST use the same app
+// token, since they publish and subscribe to each other's traffic. Defaults to
+// "acc".
 type SubjectsConfig struct {
-	Root string `json:"root" yaml:"root" mapstructure:"root"`
+	App string `json:"app" yaml:"app" mapstructure:"app"`
 }
 
 // AccessdConfig is the central app's configuration. The PocketBase HTTP
@@ -121,12 +122,12 @@ type AccessdConfig struct {
 }
 
 // ControllerConfig is the edge controller's configuration. A controller holds
-// the whole-org policy but only drives the access points it is assigned.
+// the whole-org policy but only drives the portals it is assigned.
 type ControllerConfig struct {
-	// Site is the site code this controller belongs to (selects the timezone).
-	Site string `json:"site" yaml:"site" mapstructure:"site"`
-	// Points are the access-point codes this controller drives.
-	Points []string `json:"points" yaml:"points" mapstructure:"points"`
+	// Location is the location code this controller belongs to (selects the timezone).
+	Location string `json:"location" yaml:"location" mapstructure:"location"`
+	// Portals are the portal codes this controller drives.
+	Portals []string `json:"portals" yaml:"portals" mapstructure:"portals"`
 }
 
 // Load reads configuration from the given file path, layering in env vars
@@ -149,7 +150,7 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	v.SetEnvPrefix("SA") // e.g. SA_NATS_URLS, SA_CONTROLLER_SITE
+	v.SetEnvPrefix("SA") // e.g. SA_NATS_URLS, SA_CONTROLLER_LOCATION
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
@@ -161,9 +162,9 @@ func Load(path string) (*Config, error) {
 		"nats.credsFile", "nats.nkeySeedFile",
 		"logging.level",
 		"metrics.enabled", "metrics.address", "metrics.path",
-		"policy.bucket", "events.stream", "subjects.root",
+		"policy.bucket", "events.stream", "subjects.app",
 		"accessd.dataDir",
-		"controller.site", "controller.points",
+		"controller.location", "controller.portals",
 	} {
 		_ = v.BindEnv(key)
 	}
@@ -228,8 +229,8 @@ func setDefaults(cfg *Config) {
 	if cfg.Events.Stream == "" {
 		cfg.Events.Stream = DefaultEventsStream
 	}
-	if cfg.Subjects.Root == "" {
-		cfg.Subjects.Root = subjects.DefaultRoot
+	if cfg.Subjects.App == "" {
+		cfg.Subjects.App = subjects.DefaultApp
 	}
 	if cfg.Accessd.DataDir == "" {
 		cfg.Accessd.DataDir = DefaultDataDir
@@ -281,11 +282,11 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("policy.bucket cannot be empty")
 	}
 
-	// The root must be a single NATS token: subject parsing compares it against
-	// the first dot-separated segment, so a "." (or a wildcard / whitespace)
-	// would silently break command and event routing.
-	if cfg.Subjects.Root == "" || strings.ContainsAny(cfg.Subjects.Root, ". \t*>") {
-		return fmt.Errorf("subjects.root must be a single NATS token (no '.', '*', '>', or whitespace): %q", cfg.Subjects.Root)
+	// The app token must be a single NATS token: subject parsing compares it
+	// against a fixed segment, so a "." (or a wildcard / whitespace) would
+	// silently break command and event routing.
+	if cfg.Subjects.App == "" || strings.ContainsAny(cfg.Subjects.App, ". \t*>") {
+		return fmt.Errorf("subjects.app must be a single NATS token (no '.', '*', '>', or whitespace): %q", cfg.Subjects.App)
 	}
 	return nil
 }

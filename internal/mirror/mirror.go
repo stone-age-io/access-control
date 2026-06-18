@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -27,7 +28,7 @@ const opTimeout = 5 * time.Second
 // mirroredCollections are the policy collections whose changes are mirrored to
 // KV. The events collection is written by the audit consumer, not mirrored.
 var mirroredCollections = []string{
-	"sites", "schedules", "access_points", "access_groups",
+	"locations", "schedules", "portals", "access_groups",
 	"roles", "cardholders", "credentials",
 }
 
@@ -157,12 +158,12 @@ func (p *Publisher) del(key string) {
 // only the natural-key field, so it is safe to call on Original() for renames.
 func recordKey(r *core.Record) (string, error) {
 	switch name := r.Collection().Name; name {
-	case "sites":
-		return naturalKey(policykv.PrefixSite, r.GetString("code"))
+	case "locations":
+		return naturalKey(policykv.PrefixLocation, r.GetString("code"))
 	case "schedules":
 		return naturalKey(policykv.PrefixSched, r.GetString("code"))
-	case "access_points":
-		return naturalKey(policykv.PrefixPoint, r.GetString("code"))
+	case "portals":
+		return naturalKey(policykv.PrefixPortal, r.GetString("code"))
 	case "access_groups":
 		return naturalKey(policykv.PrefixGroup, r.GetString("code"))
 	case "roles":
@@ -193,8 +194,11 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 
 	var payload any
 	switch r.Collection().Name {
-	case "sites":
-		payload = policykv.Site{
+	case "locations":
+		if err := validToken("location code", r.GetString("code")); err != nil {
+			return "", nil, err
+		}
+		payload = policykv.Location{
 			Code:        r.GetString("code"),
 			Name:        r.GetString("name"),
 			Timezone:    r.GetString("timezone"),
@@ -205,21 +209,28 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			Code:    r.GetString("code"),
 			Windows: parseWindows(r),
 		}
-	case "access_points":
+	case "portals":
+		if err := validToken("portal code", r.GetString("code")); err != nil {
+			return "", nil, err
+		}
+		if err := validToken("portal type", r.GetString("type")); err != nil {
+			return "", nil, err
+		}
 		posture := r.GetString("posture")
 		if posture == "" {
 			posture = "secure" // standing default
 		}
-		payload = policykv.AccessPoint{
+		payload = policykv.Portal{
 			Code:         r.GetString("code"),
-			Site:         resolveCode(app, "sites", r.GetString("site")),
+			Type:         r.GetString("type"),
+			Location:     resolveCode(app, "locations", r.GetString("location")),
 			Posture:      posture,
 			PulseSeconds: r.GetInt("pulse_seconds"),
 		}
 	case "access_groups":
 		payload = policykv.AccessGroup{
 			Code:     r.GetString("code"),
-			Points:   resolveCodes(app, "access_points", r.GetStringSlice("access_points")),
+			Portals:  resolveCodes(app, "portals", r.GetStringSlice("portals")),
 			Schedule: resolveCode(app, "schedules", r.GetString("schedule")),
 		}
 	case "roles":
@@ -292,4 +303,28 @@ func defaultStr(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// reservedTokens are subject keywords a location/portal code or portal type must
+// not collide with, or positional subject parsing would misfire.
+var reservedTokens = map[string]bool{
+	"acc": true, "evt": true, "cmd": true, "tap": true, "fire": true,
+}
+
+// validToken rejects a value that cannot serve as a NATS subject segment: empty,
+// containing a separator/wildcard/whitespace, or a reserved keyword. Mirrors the
+// single-token rule enforced on subjects.app in config.validate. A record that
+// fails this is not mirrored (logged + skipped by the caller), which is fail-safe
+// — the portal/location simply never syncs, so the controller default-denies it.
+func validToken(what, v string) error {
+	if v == "" {
+		return fmt.Errorf("%s is empty", what)
+	}
+	if strings.ContainsAny(v, ". \t*>") {
+		return fmt.Errorf("%s %q must be a single NATS token (no '.', '*', '>', or whitespace)", what, v)
+	}
+	if reservedTokens[v] {
+		return fmt.Errorf("%s %q is a reserved subject keyword", what, v)
+	}
+	return nil
 }

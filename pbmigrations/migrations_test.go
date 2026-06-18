@@ -26,7 +26,7 @@ func TestCollectionsExist(t *testing.T) {
 	app := newApp(t)
 
 	for _, name := range []string{
-		"sites", "schedules", "access_points", "access_groups",
+		"locations", "schedules", "portals", "access_groups",
 		"roles", "cardholders", "credentials", "events",
 	} {
 		if _, err := app.FindCollectionByNameOrId(name); err != nil {
@@ -38,13 +38,13 @@ func TestCollectionsExist(t *testing.T) {
 func TestFixtureSeeded(t *testing.T) {
 	app := newApp(t)
 
-	// site hq carries the timezone.
-	site, err := app.FindFirstRecordByData("sites", "code", "hq")
+	// location hq carries the timezone.
+	location, err := app.FindFirstRecordByData("locations", "code", "hq")
 	if err != nil {
-		t.Fatalf("site hq not found: %v", err)
+		t.Fatalf("location hq not found: %v", err)
 	}
-	if got := site.GetString("timezone"); got != "America/New_York" {
-		t.Errorf("site timezone = %q, want America/New_York", got)
+	if got := location.GetString("timezone"); got != "America/New_York" {
+		t.Errorf("location timezone = %q, want America/New_York", got)
 	}
 
 	// credential CARD-001 resolves to cardholder alice (active).
@@ -76,29 +76,32 @@ func TestFixtureSeeded(t *testing.T) {
 		t.Errorf("lobby-group schedule = %q, want business-hours", got)
 	}
 
-	point, err := app.FindFirstRecordByData("access_points", "code", "lobby-main")
+	portal, err := app.FindFirstRecordByData("portals", "code", "lobby-main")
 	if err != nil {
-		t.Fatalf("access point lobby-main not found: %v", err)
+		t.Fatalf("portal lobby-main not found: %v", err)
 	}
-	pointIDs := group.GetStringSlice("access_points")
-	if len(pointIDs) != 1 || pointIDs[0] != point.Id {
-		t.Errorf("lobby-group access_points = %v, want [%s]", pointIDs, point.Id)
+	portalIDs := group.GetStringSlice("portals")
+	if len(portalIDs) != 1 || portalIDs[0] != portal.Id {
+		t.Errorf("lobby-group portals = %v, want [%s]", portalIDs, portal.Id)
 	}
-	if got := point.GetString("posture"); got != "secure" {
+	if got := portal.GetString("posture"); got != "secure" {
 		t.Errorf("lobby-main posture = %q, want secure", got)
+	}
+	if got := portal.GetString("type"); got != "door" {
+		t.Errorf("lobby-main type = %q, want door", got)
 	}
 }
 
-// TestFixtureIdempotent re-runs the fixture migration's seeding guard logic:
-// the migration no-ops when sites already exist, so a second RunAllMigrations
-// (implicit across two app boots sharing nothing) still yields exactly one hq.
-func TestFixtureSingleSite(t *testing.T) {
+// TestFixtureSingleLocation re-runs the fixture migration's seeding guard logic:
+// the migration no-ops when locations already exist, so a second
+// RunAllMigrations still yields exactly one hq.
+func TestFixtureSingleLocation(t *testing.T) {
 	app := newApp(t)
-	sites, err := app.FindAllRecords("sites")
+	locations, err := app.FindAllRecords("locations")
 	if err != nil {
-		t.Fatalf("FindAllRecords sites: %v", err)
+		t.Fatalf("FindAllRecords locations: %v", err)
 	}
-	if len(sites) != 1 {
-		t.Errorf("sites count = %d, want 1", len(sites))
+	if len(locations) != 1 {
+		t.Errorf("locations count = %d, want 1", len(locations))
 	}
 }

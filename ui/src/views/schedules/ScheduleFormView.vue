@@ -202,7 +202,7 @@ onMounted(() => {
         <RailCard title="About schedules" icon="🗓️">
           <p class="text-xs opacity-60 leading-relaxed">
             Reusable weekly time windows. Access is open during any window; each window is evaluated in its
-            site's local time. An end at or before the start crosses midnight.
+            location's local time. An end at or before the start crosses midnight.
           </p>
         </RailCard>
       </template>

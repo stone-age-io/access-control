@@ -1,0 +1,1 @@
+var e={locations:`location.`,schedules:`sched.`,portals:`portal.`,access_groups:`group.`,roles:`role.`,cardholders:`user.`,credentials:`cred.`};function t(t,n){let r=e[t];if(!r)return``;let i=``;return i=t===`cardholders`?n.id||``:t===`credentials`?n.value||``:n.code||``,i?r+i:``}export{t};
