@@ -73,14 +73,14 @@ policy:
 # ----------------------------------------------------------------------------
 # Events — the JetStream audit stream the controllers publish to and accessd
 # consumes into the PocketBase events collection. The stream's subject set is
-# derived from the {app}.evt subtree (see subjects.app below), not set here.
+# derived from the {app}.*.…evt subtree (see subjects.app below), not set here.
 # ----------------------------------------------------------------------------
 events:
   stream: "ACC_EVENTS"
 
 # ----------------------------------------------------------------------------
-# Subjects — the app-discriminator segment every NATS subject carries
-# ({location}.{type}.{thing}.{app}.tap/.cmd/.evt …). accessd and EVERY
+# Subjects — the app-discriminator segment every NATS subject leads with
+# ({app}.{location}.{type}.{thing}.tap/.cmd/.evt …). accessd and EVERY
 # controller must use the same app token. Change it only to isolate a deployment
 # on a shared NATS account. Must be a single NATS token (no '.', '*', '>', or
 # whitespace).

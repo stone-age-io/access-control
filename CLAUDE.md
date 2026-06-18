@@ -16,7 +16,7 @@ Two Go binaries plus a Vue 3 management UI:
   hardware (mocked in v1), and emits access events to JetStream.
 
 v1 status: **software substrate, no hardware.** Reader/lock/FAI are interfaces (`internal/drivers`) with
-mock implementations. Taps are simulated by publishing to `{location}.{type}.{thing}.acc.tap`.
+mock implementations. Taps are simulated by publishing to `acc.{location}.{type}.{thing}.tap`.
 
 ## Build & run
 
@@ -69,7 +69,7 @@ operator edits PocketBase ─┐
                            ├─► internal/mirror ──► NATS KV (ACC_POLICY) ──► controller PolicyStore (in-mem maps)
 migrations seed fixture ───┘    (one key/record)        watch                       │
                                                                                     ▼  policy.Decide (local)
-events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream ◄── *.acc.evt.> ◄── Runtime (tap loop)
+events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream ◄── acc.*.…evt.> ◄── Runtime (tap loop)
    (rebuildable read model)   consumer                                              pulses lock on allow
 ```
 
@@ -89,22 +89,25 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
 
 ### NATS subjects
 
-Platform-aligned: a **portal** is a Thing addressed `{location}.{type}.{thing}`, and `acc` is an
-app-discriminator segment placed *before the verb*. `{type}` is the portal kind (door/turnstile/elevator/
-gate/logical), a single NATS token.
+Every subject **leads with the app token `acc`**: the access app owns the `acc.>` subtree and a **portal** is a
+Thing addressed underneath it as `acc.{location}.{type}.{thing}`, with the verb trailing. `{type}` is the portal
+kind (door/turnstile/elevator/gate/logical), a single NATS token. The leading literal `acc` is load-bearing — on
+a shared NATS account, a stream subject that *led with a wildcard* (e.g. `*.*.*.acc.evt.>`) overlaps any sibling
+stream rooted at a literal first token (`things.>`, `cameras.>`, `kiosk.*.event.>`, …), and JetStream rejects
+overlapping stream subjects (err 10065). Leading with `acc` keeps our subject space disjoint from theirs.
 
-- `{location}.{type}.{thing}.acc.tap` — credential presentation (v1: mock reader publishes here)
-- `{location}.{type}.{thing}.acc.evt.{kind}` (`tap`/`state`/`alarm`) and `{location}.acc.evt.fire` (location-scoped) — audit events → ACC_EVENTS
-- `{location}.{type}.{thing}.acc.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget)
+- `acc.{location}.{type}.{thing}.tap` — credential presentation (v1: mock reader publishes here)
+- `acc.{location}.{type}.{thing}.evt.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS
+- `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget)
 
 **All subject construction and parsing lives in `internal/subjects`** (one `Subjects` value carrying the `acc`
 app token from `subjects.app` config, default `acc`, threaded through every constructor) — never hand-format
-subject strings elsewhere. The audit stream captures two patterns of **different fixed arity** — `*.acc.evt.fire`
-(4-token fire) and `*.*.*.acc.evt.>` (6+-token portal events) — both deriving from that app token, so they can't
-drift from what controllers publish and can't capture a foreign Thing's events. (The fire pattern is fixed-arity,
-no trailing `>`, so it can't overlap the portal pattern — JetStream rejects overlapping stream subjects.) **accessd and every controller
-must share the same `subjects.app`** (a mismatch silently severs policy/commands/events). `docs/protocol.md` is
-the full wire reference (subjects, message shapes, KV key scheme, decision reason codes).
+subject strings elsewhere. The audit stream captures two patterns of **different fixed arity** — `acc.*.evt.fire`
+(4-token fire) and `acc.*.*.*.evt.>` (6+-token portal events) — both rooted at that literal app token, so they
+overlap neither each other nor a sibling app's stream, and can't capture a foreign Thing's events. (The fire
+pattern is fixed-arity, no trailing `>`, so it can't expand to overlap the portal pattern.) **accessd and every
+controller must share the same `subjects.app`** (a mismatch silently severs policy/commands/events).
+`docs/protocol.md` is the full wire reference (subjects, message shapes, KV key scheme, decision reason codes).
 
 Commands (`internal/controller/commands.go`) install **runtime posture overrides** that are operational state,
 never written back to PocketBase. `posture: "clear"` reverts to the standing value. The controller grows **no

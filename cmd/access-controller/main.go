@@ -4,7 +4,7 @@
 // in v1), and emits access events to JetStream.
 //
 // v1 drivers are mocks: taps are simulated by publishing to
-// {location}.{type}.{thing}.acc.tap and the lock just logs its pulse.
+// {app}.{location}.{type}.{thing}.tap and the lock just logs its pulse.
 package main
 
 import (
@@ -130,7 +130,7 @@ func main() {
 	}
 
 	// Tap loop with mock drivers. Taps are simulated by publishing to
-	// {location}.{type}.{thing}.acc.tap; the lock just logs its pulse.
+	// {app}.{location}.{type}.{thing}.tap; the lock just logs its pulse.
 	reader, err := controller.NewNATSReader(nc.NC, cfg.Controller.Location, portals, subj, log)
 	if err != nil {
 		log.Fatal("failed to start reader", "error", err)

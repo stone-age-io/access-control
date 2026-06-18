@@ -17,8 +17,8 @@ nats:
 
   # Provision a SEPARATE NATS identity for each controller on the platform
   # (least privilege: a controller only needs to watch ACC_POLICY, publish
-  # {location}.{type}.{thing}.acc.evt.> and subscribe to the matching
-  # acc.cmd/acc.tap subjects). Save its creds file outside the repo
+  # acc.{location}.{type}.{thing}.evt.> and subscribe to the matching
+  # acc.*.cmd/acc.*.tap subjects). Save its creds file outside the repo
   # (*.creds is gitignored).
   credsFile: "config/controller.creds"
   #   nkeySeedFile: "config/controller.nk"

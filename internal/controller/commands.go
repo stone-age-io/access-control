@@ -14,9 +14,9 @@ import (
 // CommandHandler subscribes to the control-plane inputs for a location over core
 // NATS and drives the Runtime:
 //
-//	{location}.{type}.{thing}.acc.cmd.posture {posture, actor, reason, until?}
-//	{location}.{type}.{thing}.acc.cmd.unlock  {seconds, actor, reason}
-//	{location}.acc.evt.fire                   {active}
+//	{app}.{location}.{type}.{thing}.cmd.posture {posture, actor, reason, until?}
+//	{app}.{location}.{type}.{thing}.cmd.unlock  {seconds, actor, reason}
+//	{app}.{location}.evt.fire                   {active}
 //
 // posture installs/clears a runtime override (posture "clear" reverts to the
 // standing value); unlock momentarily pulses the lock; fire toggles alarm

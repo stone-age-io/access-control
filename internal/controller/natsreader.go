@@ -14,7 +14,7 @@ import (
 // Portal is a controller's view of one portal it drives: its code (the {thing}
 // subject segment) and its type (the {type} segment). The controller resolves
 // these from the PolicyStore after the initial sync, so it can build exact
-// {location}.{type}.{thing}.acc.tap subjects.
+// {app}.{location}.{type}.{thing}.tap subjects.
 type Portal struct {
 	Code string
 	Type string
@@ -22,7 +22,7 @@ type Portal struct {
 
 // NATSReader is the v1 "reader": instead of OSDP/RS485 hardware, it turns NATS
 // messages into taps so presentations can be simulated with `nats pub`. It
-// subscribes per configured portal to {location}.{type}.{thing}.acc.tap; the
+// subscribes per configured portal to {app}.{location}.{type}.{thing}.tap; the
 // message body is {"cred":"..."} (or a bare credential string).
 type NATSReader struct {
 	log  *logger.Logger

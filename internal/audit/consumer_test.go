@@ -27,7 +27,7 @@ func TestRecordFromTap(t *testing.T) {
 	c, app := newConsumer(t)
 	data := []byte(`{"cred":"CARD-001","user":"u_alice","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z"}`)
 
-	rec, ok, err := c.recordFrom("hq.door.lobby-main.acc.evt.tap", data)
+	rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
 	if err != nil || !ok {
 		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
 	}
@@ -54,7 +54,7 @@ func TestRecordFromTap(t *testing.T) {
 
 func TestRecordFromFire(t *testing.T) {
 	c, _ := newConsumer(t)
-	rec, ok, err := c.recordFrom("hq.acc.evt.fire", []byte(`{"active":true}`))
+	rec, ok, err := c.recordFrom("acc.hq.evt.fire", []byte(`{"active":true}`))
 	if err != nil || !ok {
 		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
 	}
@@ -67,7 +67,7 @@ func TestRecordFromFire(t *testing.T) {
 
 func TestRecordFromUnrecognizedSubject(t *testing.T) {
 	c, _ := newConsumer(t)
-	if _, ok, err := c.recordFrom("hq.acc.evt", []byte(`{}`)); ok || err != nil {
+	if _, ok, err := c.recordFrom("acc.hq.evt", []byte(`{}`)); ok || err != nil {
 		t.Errorf("recordFrom(too short) = ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
 }

@@ -15,15 +15,20 @@ in [`internal/policykv`](../internal/policykv/wire.go).
 
 ## Subject namespace
 
-Subjects follow the Stone-Age.io platform convention: a **portal** (a controllable
-opening or logical access target) is a Thing addressed
-`{location}.{type}.{thing}`, and **`acc`** is an app-discriminator segment placed
-*before the verb* (`acc.tap`, `acc.cmd.*`, `acc.evt.*`). The `acc` token is set by
-`subjects.app` in config (or `SA_SUBJECTS_APP`), default `acc`. `accessd` and all
-controllers **must use the same app token** — they publish and subscribe to each
-other's traffic, so a mismatch silently severs policy/commands/events. Change it
-only to isolate a deployment on a shared NATS account; it must be a single NATS
-token (no `.`, `*`, `>`, or whitespace).
+Every subject **leads with the app token `acc`**: the access app owns the
+`acc.>` subtree, and a **portal** (a controllable opening or logical access
+target) is a Thing addressed underneath it as `acc.{location}.{type}.{thing}`,
+with the verb trailing (`.tap`, `.cmd.*`, `.evt.*`). Leading with a literal app
+token is what keeps `ACC_EVENTS`'s subjects disjoint from every sibling app's
+stream on a shared NATS account — JetStream forbids overlapping stream subjects,
+and a subject that *led with a wildcard* (e.g. `*.*.*.acc.evt.>`) would intersect
+any stream rooted at a literal first token (`things.>`, `cameras.>`,
+`kiosk.*.event.>`, …). The `acc` token is set by `subjects.app` in config (or
+`SA_SUBJECTS_APP`), default `acc`. `accessd` and all controllers **must use the
+same app token** — they publish and subscribe to each other's traffic, so a
+mismatch silently severs policy/commands/events. Change it only to isolate a
+deployment on a shared NATS account; it must be a single NATS token (no `.`, `*`,
+`>`, or whitespace).
 
 `{location}`, `{type}`, and `{thing}` are each a single NATS token and the record
 **codes** (e.g. `hq`, `door`, `lobby-main`), never PocketBase ids. The mirror
@@ -34,30 +39,31 @@ collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
 
 | Subject | Dir* | Transport | Body |
 |---|---|---|---|
-| `{location}.{type}.{thing}.acc.tap` | → ctrl | core NATS | `{"cred":"..."}` or a bare credential string |
-| `{location}.{type}.{thing}.acc.cmd.posture` | → ctrl | core NATS | `{"posture":"…","actor":"…","reason":"…","until":"…"}` |
-| `{location}.{type}.{thing}.acc.cmd.unlock` | → ctrl | core NATS | `{"seconds":N,"actor":"…","reason":"…"}` |
-| `{location}.acc.evt.fire` | → ctrl | core NATS | `{"active":bool}` |
-| `{location}.{type}.{thing}.acc.evt.tap` | ctrl → | core NATS → JetStream | `{"cred","user","allow","reason","ts"}` |
-| `{location}.{type}.{thing}.acc.evt.state` | ctrl → | core NATS → JetStream | `{"posture","actor?","reason?","ts"}` |
-| `{location}.{type}.{thing}.acc.evt.alarm` | ctrl → | core NATS → JetStream | `{"type","ts"}` |
+| `acc.{location}.{type}.{thing}.tap` | → ctrl | core NATS | `{"cred":"..."}` or a bare credential string |
+| `acc.{location}.{type}.{thing}.cmd.posture` | → ctrl | core NATS | `{"posture":"…","actor":"…","reason":"…","until":"…"}` |
+| `acc.{location}.{type}.{thing}.cmd.unlock` | → ctrl | core NATS | `{"seconds":N,"actor":"…","reason":"…"}` |
+| `acc.{location}.evt.fire` | → ctrl | core NATS | `{"active":bool}` |
+| `acc.{location}.{type}.{thing}.evt.tap` | ctrl → | core NATS → JetStream | `{"cred","user","allow","reason","ts"}` |
+| `acc.{location}.{type}.{thing}.evt.state` | ctrl → | core NATS → JetStream | `{"posture","actor?","reason?","ts"}` |
+| `acc.{location}.{type}.{thing}.evt.alarm` | ctrl → | core NATS → JetStream | `{"type","ts"}` |
 
 \* → ctrl = controller subscribes; ctrl → = controller publishes.
 
 Controllers subscribe per location with wildcards: taps via
-`{location}.*.*.acc.tap` and commands via `{location}.*.*.acc.cmd.posture` /
-`{location}.*.*.acc.cmd.unlock`. The audit surface is the `acc.evt` subtree,
+`acc.{location}.*.*.tap` and commands via `acc.{location}.*.*.cmd.posture` /
+`acc.{location}.*.*.cmd.unlock`. The audit surface is the `acc.*.…evt` subtree,
 captured by `ACC_EVENTS` and projected into the `events` collection via **two
 stream subjects of different fixed arity** (JetStream forbids overlapping subjects,
 so the short one must not use a trailing `>`):
 
-- `*.acc.evt.fire` — the 4-token location-scoped fire (`{location}.acc.evt.fire`)
-- `*.*.*.acc.evt.>` — the 6+-token portal events (`{location}.{type}.{thing}.acc.evt.{kind}`)
+- `acc.*.evt.fire` — the 4-token location-scoped fire (`acc.{location}.evt.fire`)
+- `acc.*.*.*.evt.>` — the 6+-token portal events (`acc.{location}.{type}.{thing}.evt.{kind}`)
 
 A 4-token subject can never match the ≥6-token portal pattern, so the two are
-disjoint; both pin a literal `acc.evt`, so neither captures a foreign Thing's
-events (e.g. `warehouse-a.camera.cam-042.evt.motion` has no `acc` segment). All
-bodies are JSON; `ts` is RFC 3339 UTC.
+disjoint with each other; both lead with the literal `acc`, so the set overlaps
+no sibling stream rooted at another literal (`things.>`, `cameras.>`,
+`kiosk.*.event.>`, …) on a shared account. All bodies are JSON; `ts` is RFC 3339
+UTC.
 
 ### Command details
 
@@ -73,12 +79,12 @@ bodies are JSON; `ts` is RFC 3339 UTC.
   controller **suppresses alarm emission** for that location (forced/held-open
   events would be false alarms during evacuation). It never changes posture and
   never unlocks — hardware owns egress. It is location-scoped (not per-portal) and
-  lives on the `acc.evt` namespace, not `acc.cmd`: it is both a control input the
+  lives on the `evt` namespace, not `cmd`: it is both a control input the
   controller subscribes to *and* an audited event the stream captures
   (`kind="fire"`).
 
 > **v1 note:** the reader/lock/FAI are mocks. Taps are simulated by publishing to
-> `{location}.{type}.{thing}.acc.tap`; the lock just logs its pulse; there is no
+> `acc.{location}.{type}.{thing}.tap`; the lock just logs its pulse; there is no
 > real alarm source yet (the `alarm` subject is the gate real detection will flow
 > through).
 
@@ -152,4 +158,4 @@ consumer (`acc-audit`) delivers from the start of the stream and is
 | `credential`, `user`, `allow`, `reason`, `ts` | corresponding body fields |
 | `payload` | the full event body (JSON) |
 
-For `{location}.acc.evt.fire`, `portal` and `type` are empty and `kind` is `fire`.
+For `acc.{location}.evt.fire`, `portal` and `type` are empty and `kind` is `fire`.

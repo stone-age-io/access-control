@@ -91,8 +91,8 @@ func TestRuntimeGrantPulses(t *testing.T) {
 	if len(taps) != 1 || !taps[0].Allow || taps[0].Reason != policy.ReasonAllowGrant || taps[0].User != "alice" {
 		t.Errorf("tap events = %+v, want one allow_grant for alice", taps)
 	}
-	if !emit.hasSubject("hq.door.lobby-main.acc.evt.tap") {
-		t.Errorf("missing hq.door.lobby-main.acc.evt.tap subject")
+	if !emit.hasSubject("acc.hq.door.lobby-main.evt.tap") {
+		t.Errorf("missing acc.hq.door.lobby-main.evt.tap subject")
 	}
 }
 
@@ -133,7 +133,7 @@ func TestRuntimePostureOverrideUnlocked(t *testing.T) {
 	if taps := emit.taps(); len(taps) != 1 || !taps[0].Allow || taps[0].Reason != policy.ReasonAllowPostureUnlocked {
 		t.Errorf("tap events = %+v, want one allow_posture_unlocked", taps)
 	}
-	if !emit.hasSubject("hq.door.lobby-main.acc.evt.state") {
+	if !emit.hasSubject("acc.hq.door.lobby-main.evt.state") {
 		t.Errorf("expected a state event on posture override")
 	}
 }
