@@ -99,9 +99,10 @@ gate/logical), a single NATS token.
 
 **All subject construction and parsing lives in `internal/subjects`** (one `Subjects` value carrying the `acc`
 app token from `subjects.app` config, default `acc`, threaded through every constructor) — never hand-format
-subject strings elsewhere. The audit stream captures two **token-count-disjoint** patterns — `*.acc.evt.>`
-(4-token fire) and `*.*.*.acc.evt.>` (6-token portal events) — both deriving from that app token, so they can't
-drift from what controllers publish and can't capture a foreign Thing's events. **accessd and every controller
+subject strings elsewhere. The audit stream captures two patterns of **different fixed arity** — `*.acc.evt.fire`
+(4-token fire) and `*.*.*.acc.evt.>` (6+-token portal events) — both deriving from that app token, so they can't
+drift from what controllers publish and can't capture a foreign Thing's events. (The fire pattern is fixed-arity,
+no trailing `>`, so it can't overlap the portal pattern — JetStream rejects overlapping stream subjects.) **accessd and every controller
 must share the same `subjects.app`** (a mismatch silently severs policy/commands/events). `docs/protocol.md` is
 the full wire reference (subjects, message shapes, KV key scheme, decision reason codes).
 

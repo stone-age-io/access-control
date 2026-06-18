@@ -27,9 +27,10 @@
 //	{location}.{type}.{thing}.{app}.evt.alarm    forced / held-open alarm
 //
 // The {app}.evt subtree is the audit surface; EventsWildcards() captures it via
-// two token-count-disjoint patterns (location-scoped fire is 4 tokens; portal
-// events are 6), both pinning a literal {app}.evt so they can't match a foreign
-// Thing's events.
+// two patterns of different fixed arity (location-scoped fire at 4 tokens; portal
+// events at 6+), both pinning a literal {app}.evt. The arities never coincide, so
+// the patterns don't overlap (JetStream forbids overlapping stream subjects), and
+// neither matches a foreign Thing's events.
 package subjects
 
 import (
@@ -121,16 +122,20 @@ func (s Subjects) EventAlarm(location, ptype, thing string) string {
 }
 
 // EventsWildcards is the ACC_EVENTS stream's subject set and the audit consumer's
-// filter. Two token-count-disjoint patterns, both pinning a literal {app}.evt:
+// filter. Two patterns of DIFFERENT fixed arity so they cannot overlap (JetStream
+// rejects a stream/consumer whose subjects overlap):
 //
-//	{location}.{app}.evt.>           location-scoped fire (4 tokens)
-//	{location}.{type}.{thing}.{app}.evt.>   portal events (>=6 tokens)
+//	{location}.{app}.evt.fire             location-scoped fire (exactly 4 tokens)
+//	{location}.{type}.{thing}.{app}.evt.> portal events (>=6 tokens)
 //
-// Neither matches a foreign Thing event (e.g. warehouse-a.camera.cam-042.evt.motion
-// has no {app} segment before evt).
+// The fire pattern is fixed-arity (literal `fire`, no trailing `>`) on purpose: a
+// `>` there would let it expand to 6+ tokens and overlap the portal pattern. A
+// 4-token subject can never satisfy the >=6-token portal pattern, so the two are
+// disjoint. Both pin a literal {app}.evt, so neither matches a foreign Thing event
+// (e.g. warehouse-a.camera.cam-042.evt.motion has no {app} segment before evt).
 func (s Subjects) EventsWildcards() []string {
 	return []string{
-		fmt.Sprintf("*.%s.evt.>", s.App()),
+		fmt.Sprintf("*.%s.evt.fire", s.App()),
 		fmt.Sprintf("*.*.*.%s.evt.>", s.App()),
 	}
 }

@@ -28,7 +28,7 @@ func TestBuild(t *testing.T) {
 }
 
 func TestEventsWildcards(t *testing.T) {
-	want := []string{"*.acc.evt.>", "*.*.*.acc.evt.>"}
+	want := []string{"*.acc.evt.fire", "*.*.*.acc.evt.>"}
 	got := Default().EventsWildcards()
 	if len(got) != len(want) {
 		t.Fatalf("EventsWildcards() = %v, want %v", got, want)
@@ -42,8 +42,8 @@ func TestEventsWildcards(t *testing.T) {
 
 // The zero value behaves as the default app, and a custom app threads through.
 func TestApp(t *testing.T) {
-	if got := (Subjects{}).EventsWildcards()[0]; got != "*.acc.evt.>" {
-		t.Errorf("zero value EventsWildcards()[0] = %q, want *.acc.evt.>", got)
+	if got := (Subjects{}).EventsWildcards()[0]; got != "*.acc.evt.fire" {
+		t.Errorf("zero value EventsWildcards()[0] = %q, want *.acc.evt.fire", got)
 	}
 	if got := New("pacs").EventTap("hq", "door", "d1"); got != "hq.door.d1.pacs.evt.tap" {
 		t.Errorf("custom app EventTap = %q, want hq.door.d1.pacs.evt.tap", got)

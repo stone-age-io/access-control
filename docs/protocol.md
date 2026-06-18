@@ -48,14 +48,16 @@ Controllers subscribe per location with wildcards: taps via
 `{location}.*.*.acc.tap` and commands via `{location}.*.*.acc.cmd.posture` /
 `{location}.*.*.acc.cmd.unlock`. The audit surface is the `acc.evt` subtree,
 captured by `ACC_EVENTS` and projected into the `events` collection via **two
-token-count-disjoint** stream subjects:
+stream subjects of different fixed arity** (JetStream forbids overlapping subjects,
+so the short one must not use a trailing `>`):
 
-- `*.acc.evt.>` — the 4-token location-scoped fire (`{location}.acc.evt.fire`)
-- `*.*.*.acc.evt.>` — the 6-token portal events (`{location}.{type}.{thing}.acc.evt.{kind}`)
+- `*.acc.evt.fire` — the 4-token location-scoped fire (`{location}.acc.evt.fire`)
+- `*.*.*.acc.evt.>` — the 6+-token portal events (`{location}.{type}.{thing}.acc.evt.{kind}`)
 
-Both pin a literal `acc.evt`, so neither captures a foreign Thing's events (e.g.
-`warehouse-a.camera.cam-042.evt.motion` has no `acc` segment). All bodies are
-JSON; `ts` is RFC 3339 UTC.
+A 4-token subject can never match the ≥6-token portal pattern, so the two are
+disjoint; both pin a literal `acc.evt`, so neither captures a foreign Thing's
+events (e.g. `warehouse-a.camera.cam-042.evt.motion` has no `acc` segment). All
+bodies are JSON; `ts` is RFC 3339 UTC.
 
 ### Command details
 
