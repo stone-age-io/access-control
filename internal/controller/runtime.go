@@ -30,13 +30,20 @@ type Runtime struct {
 	fire      map[string]bool   // location -> fire-alarm-input active (suppresses alarms)
 }
 
-// NewRuntime wires the tap loop. locks maps portal code to its lock driver.
+// NewRuntime wires the tap loop. locks maps portal code to its lock driver; it
+// may be nil/empty when locks are armed later via SetLock (the portal reconciler
+// does this as portals appear in policy). The map is copied, so the caller keeps
+// ownership of theirs.
 func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver, locks map[string]drivers.LockDriver, emit Emitter, subs subjects.Subjects, log *logger.Logger, m *metrics.Metrics) *Runtime {
+	owned := make(map[string]drivers.LockDriver, len(locks))
+	for code, lock := range locks {
+		owned[code] = lock
+	}
 	return &Runtime{
 		location:  location,
 		store:     store,
 		reader:    reader,
-		locks:     locks,
+		locks:     owned,
 		emit:      emit,
 		subs:      subs,
 		log:       log.With("component", "runtime"),
@@ -44,6 +51,32 @@ func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver
 		overrides: make(map[string]string),
 		fire:      make(map[string]bool),
 	}
+}
+
+// SetLock arms (or replaces) the lock driver for a portal. Called by the portal
+// reconciler when a portal appears in or changes type within policy.
+func (r *Runtime) SetLock(portal string, lock drivers.LockDriver) {
+	r.mu.Lock()
+	r.locks[portal] = lock
+	r.mu.Unlock()
+}
+
+// DeleteLock disarms the lock driver for a portal. Called by the reconciler when
+// a portal is unassigned or removed from policy.
+func (r *Runtime) DeleteLock(portal string) {
+	r.mu.Lock()
+	delete(r.locks, portal)
+	r.mu.Unlock()
+}
+
+// lockFor returns the lock driver for a portal under the read lock. The tap loop
+// and command handlers run concurrently with the reconciler mutating r.locks, so
+// every read of the map goes through here.
+func (r *Runtime) lockFor(portal string) (drivers.LockDriver, bool) {
+	r.mu.RLock()
+	lock, ok := r.locks[portal]
+	r.mu.RUnlock()
+	return lock, ok
 }
 
 // Run consumes taps until the context is cancelled or the reader channel closes.
@@ -91,7 +124,7 @@ func (r *Runtime) handleTap(tap drivers.Tap) {
 		"allow", d.Allow, "reason", d.Reason, "user", d.User)
 
 	if d.Allow {
-		if lock, ok := r.locks[tap.Portal]; ok {
+		if lock, ok := r.lockFor(tap.Portal); ok {
 			if err := lock.Pulse(d.Pulse); err != nil {
 				r.log.Error("lock pulse failed", "portal", tap.Portal, "error", err)
 			}
@@ -131,10 +164,25 @@ func (r *Runtime) portalAddr(portal string) (location, ptype string) {
 	return location, ptype
 }
 
+// drives reports whether this controller physically drives the given portal (it
+// has a lock for it). Command subscriptions are location-wildcarded, so a
+// controller hears commands for every portal at its location, including ones
+// other controllers drive; acting on those would double-emit state events and
+// stray overrides. Commands for portals we don't drive are silently ignored.
+func (r *Runtime) drives(portal string) bool {
+	_, ok := r.lockFor(portal)
+	return ok
+}
+
 // SetPosture installs a runtime posture override for a portal and emits a state
 // event. Used by the command handler. The override is operational state and is
-// never written back to PocketBase.
+// never written back to PocketBase. Ignored for portals this controller does
+// not drive (another controller at the location owns them).
 func (r *Runtime) SetPosture(portal, posture, actor, reason string, at time.Time) {
+	if !r.drives(portal) {
+		r.log.Debug("ignoring posture command for portal not driven here", "portal", portal)
+		return
+	}
 	r.mu.Lock()
 	r.overrides[portal] = posture
 	r.mu.Unlock()
@@ -142,8 +190,13 @@ func (r *Runtime) SetPosture(portal, posture, actor, reason string, at time.Time
 }
 
 // ClearPosture removes a runtime override, reverting to the standing posture,
-// and emits a state event reflecting the now-effective posture.
+// and emits a state event reflecting the now-effective posture. Ignored for
+// portals this controller does not drive.
 func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
+	if !r.drives(portal) {
+		r.log.Debug("ignoring posture-clear command for portal not driven here", "portal", portal)
+		return
+	}
 	r.mu.Lock()
 	delete(r.overrides, portal)
 	r.mu.Unlock()
@@ -154,16 +207,16 @@ func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
 // distinct from a standing posture change). A non-positive seconds falls back to
 // the portal's configured pulse.
 func (r *Runtime) Unlock(portal string, seconds int, actor, reason string) {
+	if !r.drives(portal) {
+		r.log.Debug("ignoring unlock command for portal not driven here", "portal", portal)
+		return
+	}
 	if seconds <= 0 {
 		if ap, ok := r.store.Portal(portal); ok {
 			seconds = ap.PulseSeconds
 		}
 	}
-	lock, ok := r.locks[portal]
-	if !ok {
-		r.log.Warn("unlock command but no lock driver for portal", "portal", portal)
-		return
-	}
+	lock, _ := r.lockFor(portal) // drives() guaranteed presence above
 	if err := lock.Pulse(seconds); err != nil {
 		r.log.Error("command unlock pulse failed", "portal", portal, "error", err)
 		return

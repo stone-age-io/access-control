@@ -71,6 +71,8 @@ func Connect(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onR
 }
 
 // EnsureKVBucket returns the named KV bucket, creating it if it does not exist.
+// Only accessd (the policy writer/owner) should call this — it needs stream
+// create/update rights on the bucket. Read-only consumers use KVBucket.
 func (c *Conn) EnsureKVBucket(ctx context.Context, bucket string) (jetstream.KeyValue, error) {
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
@@ -83,6 +85,22 @@ func (c *Conn) EnsureKVBucket(ctx context.Context, bucket string) (jetstream.Key
 		return nil, fmt.Errorf("failed to ensure KV bucket %q: %w", bucket, err)
 	}
 	c.log.Info("KV bucket ready", "bucket", bucket)
+	return kv, nil
+}
+
+// KVBucket binds to an existing KV bucket read-only (no create/update), the
+// least-privilege path for a controller: it only watches policy, so its NATS
+// identity needn't carry stream-management rights. accessd is the sole creator
+// of the bucket, so a not-found error here means accessd has not yet served.
+func (c *Conn) KVBucket(ctx context.Context, bucket string) (jetstream.KeyValue, error) {
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+
+	kv, err := c.JS.KeyValue(ctx, bucket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open KV bucket %q (accessd creates it on first serve — ensure accessd has run): %w", bucket, err)
+	}
+	c.log.Info("KV bucket opened (read-only)", "bucket", bucket)
 	return kv, nil
 }
 

@@ -19,6 +19,9 @@ type Metrics struct {
 	// Access decisions (controller).
 	decisionsTotal *prometheus.CounterVec // labels: allow, reason
 
+	// Taps dropped because the runtime could not keep up (controller).
+	tapsDroppedTotal prometheus.Counter
+
 	// Policy KV mirror (accessd publisher) and watch (controller).
 	kvAppliesTotal *prometheus.CounterVec // labels: op (put/delete)
 	kvWatchState   prometheus.Gauge       // 1 = synced, 0 = resyncing/disconnected
@@ -47,6 +50,12 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 				Help: "Total access decisions by outcome and reason code",
 			},
 			[]string{"allow", "reason"},
+		),
+		tapsDroppedTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "taps_dropped_total",
+				Help: "Total taps dropped because the runtime tap queue was full",
+			},
 		),
 		kvAppliesTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -103,6 +112,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 
 	collectors := []prometheus.Collector{
 		m.decisionsTotal,
+		m.tapsDroppedTotal,
 		m.kvAppliesTotal,
 		m.kvWatchState,
 		m.eventsPublishedTotal,
@@ -138,6 +148,14 @@ func (m *Metrics) IncDecision(allow bool, reason string) {
 		allowStr = "true"
 	}
 	m.decisionsTotal.WithLabelValues(allowStr, reason).Inc()
+}
+
+// IncTapDropped records one tap dropped due to a full runtime tap queue.
+func (m *Metrics) IncTapDropped() {
+	if m == nil {
+		return
+	}
+	m.tapsDroppedTotal.Inc()
 }
 
 // IncKVApply records one policy KV operation (op = "put" or "delete").

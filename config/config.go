@@ -160,8 +160,11 @@ func Load(path string) (*Config, error) {
 	for _, key := range []string{
 		"nats.urls", "nats.username", "nats.password", "nats.token",
 		"nats.credsFile", "nats.nkeySeedFile",
-		"logging.level",
-		"metrics.enabled", "metrics.address", "metrics.path",
+		"nats.maxReconnects", "nats.reconnectWait",
+		"nats.tls.enable", "nats.tls.certFile", "nats.tls.keyFile",
+		"nats.tls.caFile", "nats.tls.insecure",
+		"logging.level", "logging.encoding", "logging.outputPath",
+		"metrics.enabled", "metrics.address", "metrics.path", "metrics.updateInterval",
 		"policy.bucket", "events.stream", "subjects.app",
 		"accessd.dataDir",
 		"controller.location", "controller.portals",

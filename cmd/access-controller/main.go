@@ -85,66 +85,43 @@ func main() {
 	}
 	defer func() { _ = nc.Close() }()
 
-	kv, err := nc.EnsureKVBucket(ctx, cfg.Policy.Bucket)
+	// Read-only bind: the controller only watches policy, so its NATS identity
+	// needs no stream-management rights. accessd owns/creates the bucket.
+	kv, err := nc.KVBucket(ctx, cfg.Policy.Bucket)
 	if err != nil {
-		log.Fatal("failed to ensure policy KV bucket", "error", err)
+		log.Fatal("failed to open policy KV bucket", "error", err)
 	}
 
 	// PolicyStore watches ACC_POLICY into in-memory maps and decides locally.
 	store := controller.NewPolicyStore(kv, log, m)
 	resync = store.Resync
+
+	if len(cfg.Controller.Portals) == 0 {
+		log.Warn("no portals configured; tap loop will be idle", "hint", "set controller.portals")
+	}
+
+	// The reader starts with no subscriptions and the runtime with no locks; the
+	// portal manager arms each as it appears in policy and disarms it when it
+	// leaves. Portal types/existence live in the system of record and can change
+	// after boot, so arming is watch-driven rather than resolved once at startup.
+	reader := controller.NewNATSReader(nc.NC, cfg.Controller.Location, subj, log, m)
+	defer reader.Stop()
+
+	rt := controller.NewRuntime(cfg.Controller.Location, store, reader, nil, controller.NewNATSEmitter(nc.NC), subj, log, m)
+
+	mkLock := func(code string) drivers.LockDriver { return drivers.NewMockLock(code, log) }
+	mgr := controller.NewPortalManager(cfg.Controller.Portals, cfg.Controller.Location, store, reader, rt, mkLock, log)
+	store.SetOnChange(mgr.Notify) // must be set before Watch
+
 	if err := store.Watch(ctx); err != nil {
 		log.Fatal("failed to start policy watcher", "error", err)
 	}
 	defer store.Stop()
 
-	// Default-deny until the initial sync completes; bound it so a broken link
-	// surfaces as an error instead of hanging forever.
-	readyCtx, cancelReady := context.WithTimeout(ctx, 30*time.Second)
-	err = store.WaitReady(readyCtx)
-	cancelReady()
-	if err != nil {
-		log.Fatal("policy initial sync did not complete", "error", err)
-	}
-	log.Info("policy synced; controller ready",
-		"policyBucket", cfg.Policy.Bucket,
-		"subjectsApp", cfg.Subjects.App,
-		"portals", cfg.Controller.Portals)
+	mgr.Start(ctx)
+	defer mgr.Stop()
 
-	// Resolve each configured portal's type from the synced policy so the reader
-	// and emitter can build exact {location}.{type}.{thing} subjects. A portal
-	// unknown to policy (or with no type) is skipped + logged — it default-denies
-	// by omission rather than arming a reader we can't address.
-	if len(cfg.Controller.Portals) == 0 {
-		log.Warn("no portals configured; tap loop will be idle", "hint", "set controller.portals")
-	}
-	portals := make([]controller.Portal, 0, len(cfg.Controller.Portals))
-	for _, code := range cfg.Controller.Portals {
-		ap, ok := store.Portal(code)
-		if !ok || ap.Type == "" {
-			log.Error("configured portal is unknown or has no type; skipping",
-				"portal", code, "hint", "create the portal in accessd with a type")
-			continue
-		}
-		portals = append(portals, controller.Portal{Code: code, Type: ap.Type})
-	}
-
-	// Tap loop with mock drivers. Taps are simulated by publishing to
-	// {app}.{location}.{type}.{thing}.tap; the lock just logs its pulse.
-	reader, err := controller.NewNATSReader(nc.NC, cfg.Controller.Location, portals, subj, log)
-	if err != nil {
-		log.Fatal("failed to start reader", "error", err)
-	}
-	defer reader.Stop()
-
-	locks := make(map[string]drivers.LockDriver, len(portals))
-	for _, p := range portals {
-		locks[p.Code] = drivers.NewMockLock(p.Code, log)
-	}
-
-	rt := controller.NewRuntime(cfg.Controller.Location, store, reader, locks, controller.NewNATSEmitter(nc.NC), subj, log, m)
 	go func() { _ = rt.Run(ctx) }()
-	log.Info("tap loop running", "location", cfg.Controller.Location, "portals", len(portals))
 
 	// Command handler: posture/unlock commands + location fire-alarm-input signal.
 	cmds := controller.NewCommandHandler(cfg.Controller.Location, rt, subj, log)
@@ -152,6 +129,22 @@ func main() {
 		log.Fatal("failed to start command handler", "error", err)
 	}
 	defer cmds.Stop()
+
+	log.Info("controller started; default-deny until policy syncs",
+		"policyBucket", cfg.Policy.Bucket,
+		"subjectsApp", cfg.Subjects.App,
+		"location", cfg.Controller.Location,
+		"portals", cfg.Controller.Portals)
+
+	// Note when the initial sync lands, without blocking startup or crashing if
+	// the hub is slow/unreachable: the watcher and reconciler keep retrying, and
+	// the controller safely denies until policy arrives, then converges.
+	go func() {
+		if err := store.WaitReady(ctx); err != nil {
+			return // context cancelled during shutdown
+		}
+		log.Info("policy synced; controller live")
+	}()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

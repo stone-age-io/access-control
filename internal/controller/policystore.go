@@ -53,6 +53,8 @@ type PolicyStore struct {
 	locations map[string]locationEntry
 	graph     policy.Policy
 
+	onChange func() // fired (off the lock) after each applied change and each sync
+
 	ready     chan struct{}
 	readyOnce sync.Once
 	wg        sync.WaitGroup
@@ -108,6 +110,21 @@ func (s *PolicyStore) Portal(code string) (policy.Portal, bool) {
 	defer s.mu.RUnlock()
 	ap, ok := s.graph.Portals[code]
 	return ap, ok
+}
+
+// SetOnChange registers a callback fired (off the store lock) after each applied
+// KV change and after each sync-complete sentinel — including the re-sync that
+// follows a reconnect, since WatchAll re-delivers every key. The portal
+// reconciler uses it to keep its armed set in step with policy. Must be called
+// before Watch (the callback is read from the watcher goroutine).
+func (s *PolicyStore) SetOnChange(fn func()) { s.onChange = fn }
+
+// notifyChange invokes the onChange callback if one is registered. Callers must
+// hold no store lock (the callback reads store state).
+func (s *PolicyStore) notifyChange() {
+	if s.onChange != nil {
+		s.onChange()
+	}
 }
 
 // Watch starts the KV watcher (once). It returns immediately; the watcher runs
@@ -253,18 +270,22 @@ func (s *PolicyStore) consumeUpdates(ctx context.Context, watcher jetstream.KeyW
 				return false
 			}
 			if entry == nil {
-				// Initial sync complete: all existing keys delivered.
+				// Sync complete: all current keys (re)delivered. Fires on boot and
+				// again after every reconnect re-sync, so the reconciler reconverges.
 				s.readyOnce.Do(func() { close(s.ready) })
 				s.m.SetKVWatchState(true)
 				s.log.Info("policy KV initial sync complete")
+				s.notifyChange()
 				continue
 			}
 
 			switch entry.Operation() {
 			case jetstream.KeyValuePut:
 				s.apply(entry.Key(), entry.Value())
+				s.notifyChange()
 			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
 				s.remove(entry.Key())
+				s.notifyChange()
 			}
 		}
 	}

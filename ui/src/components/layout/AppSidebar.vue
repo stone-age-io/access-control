@@ -75,7 +75,7 @@ async function handleLogout() {
             <BrandLogo :size="36" />
           </div>
           <span v-show="!effectiveCompact" class="font-bold text-lg tracking-tight whitespace-nowrap overflow-hidden">
-            Stone Access
+            Access Control
           </span>
         </router-link>
 

@@ -138,6 +138,58 @@ func TestRuntimePostureOverrideUnlocked(t *testing.T) {
 	}
 }
 
+// Locks are armed/disarmed at runtime by the portal reconciler. A grant before a
+// lock is armed decides allow but can't pulse; once SetLock arms it, the same tap
+// pulses; DeleteLock disarms it again.
+func TestRuntimeDynamicLockArming(t *testing.T) {
+	store := seeded(t)
+	emit := &fakeEmitter{}
+	rt := NewRuntime("hq", store, drivers.NewMockReader(8), nil, emit,
+		subjects.Default(), logger.NewNopLogger(), nil)
+
+	if rt.drives("lobby-main") {
+		t.Fatal("drives lobby-main before any lock armed")
+	}
+
+	lock := drivers.NewMockLock("lobby-main", nil)
+	rt.SetLock("lobby-main", lock)
+	if !rt.drives("lobby-main") {
+		t.Fatal("does not drive lobby-main after SetLock")
+	}
+
+	rt.handleTap(drivers.Tap{Portal: "lobby-main", Credential: "CARD-001", At: ny(t, 2026, 1, 5, 9, 0)})
+	if got := lock.Pulses(); len(got) != 1 || got[0] != 5 {
+		t.Errorf("pulses after arming = %v, want [5]", got)
+	}
+
+	rt.DeleteLock("lobby-main")
+	if rt.drives("lobby-main") {
+		t.Error("still drives lobby-main after DeleteLock")
+	}
+}
+
+// A controller hears location-wildcarded commands for portals other controllers
+// drive; it must ignore them — no override stored, no state event emitted (which
+// would duplicate the owning controller's audit row).
+func TestRuntimeIgnoresCommandsForUndrivenPortal(t *testing.T) {
+	rt, _, _, emit := runtimeFor(t) // drives only lobby-main
+	at := ny(t, 2026, 1, 5, 8, 0)
+
+	rt.SetPosture("side-gate", policy.PostureLockdown, "guard", "incident", at)
+	rt.ClearPosture("side-gate", "guard", "all clear", at)
+	rt.Unlock("side-gate", 5, "guard", "buzz in")
+
+	if len(emit.events) != 0 {
+		t.Errorf("emitted %d events for an undriven portal, want 0: %+v", len(emit.events), emit.events)
+	}
+	rt.mu.RLock()
+	_, has := rt.overrides["side-gate"]
+	rt.mu.RUnlock()
+	if has {
+		t.Errorf("stored an override for an undriven portal")
+	}
+}
+
 func TestRuntimeLockdownOverride(t *testing.T) {
 	rt, reader, lock, emit := runtimeFor(t)
 	rt.SetPosture("lobby-main", policy.PostureLockdown, "guard", "incident", ny(t, 2026, 1, 5, 8, 0))

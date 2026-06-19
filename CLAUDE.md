@@ -83,7 +83,16 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
 - **PolicyStore** (`internal/controller/policystore.go`) watches `WatchAll`, parses into maps behind an RWMutex,
   resolves each location's timezone once on apply (hot path never calls `LoadLocation`). Self-heals across NATS
   reconnects: `Resync` (wired to the reconnect handler) stops the watcher so `runWatch` re-creates it
-  (`WatchAll` re-delivers every key = full re-sync). Controller blocks on `WaitReady` (default-deny) before arming.
+  (`WatchAll` re-delivers every key = full re-sync). On each applied change and each sync sentinel the store
+  fires `SetOnChange`, which drives the controller's **watch-driven arming**.
+- **PortalManager** (`internal/controller/portalmanager.go`) keeps the controller's armed readers/locks in step
+  with policy. The set of portal *codes* a controller drives is local config (which doors this box is wired to),
+  but each portal's type/existence comes from the policy graph and can change after boot, so arming is reconciled
+  on every policy change (coalesced, off the watch goroutine) rather than resolved once at startup: a portal that
+  appears, is retyped, or is removed is armed/re-armed/disarmed without a restart. The controller boots
+  **default-deny** (armed for nothing) instead of blocking or crashing when policy is slow/unreachable, and
+  converges as policy arrives. The controller binds the policy KV **read-only** (`natsx.KVBucket`); accessd owns
+  bucket creation.
 - **Audit** (`internal/audit`) — JetStream is the system of record for events; the PocketBase `events`
   collection is a rebuildable projection. Durable consumer, at-least-once (a redelivery may dup a row in v1).
 
