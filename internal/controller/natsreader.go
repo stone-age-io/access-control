@@ -14,12 +14,14 @@ import (
 )
 
 // Portal is a controller's view of one portal it drives: its code (the {thing}
-// subject segment) and its type (the {type} segment). The controller resolves
-// these from the PolicyStore, so it can build exact
-// {app}.{location}.{type}.{thing}.tap subjects.
+// subject segment), its type (the {type} segment), and its location (the
+// {location} segment). The controller resolves these from the PolicyStore, so it
+// can build exact {app}.{location}.{type}.{thing}.tap subjects. Location comes
+// from the portal record (binding is central), not the controller's own config.
 type Portal struct {
-	Code string
-	Type string
+	Code     string
+	Type     string
+	Location string
 }
 
 // NATSReader is the v1 "reader": instead of OSDP/RS485 hardware, it turns NATS
@@ -71,7 +73,11 @@ func (r *NATSReader) Arm(p Portal) error {
 		return nil
 	}
 
-	subject := r.subj.Tap(r.location, p.Type, p.Code)
+	location := p.Location
+	if location == "" {
+		location = r.location // fall back to the controller's home location
+	}
+	subject := r.subj.Tap(location, p.Type, p.Code)
 	code := p.Code // capture
 	sub, err := r.nc.Subscribe(subject, func(msg *nats.Msg) {
 		tap := drivers.Tap{Portal: code, Credential: parseCred(msg.Data), At: time.Now().UTC()}

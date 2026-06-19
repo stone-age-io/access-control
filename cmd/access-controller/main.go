@@ -20,6 +20,8 @@ import (
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/controller"
 	"github.com/stone-age-io/access-control/internal/drivers"
+	"github.com/stone-age-io/access-control/internal/drivers/gpio"
+	"github.com/stone-age-io/access-control/internal/drivers/hardware"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/natsx"
@@ -42,7 +44,7 @@ func main() {
 		boot.Fatal("failed to create logger", "error", err)
 	}
 	defer func() { _ = log.Sync() }()
-	log = log.With("app", "access-controller", "location", cfg.Controller.Location)
+	log = log.With("app", "access-controller", "controller", cfg.Controller.Code, "location", cfg.Controller.Location)
 
 	m, err := metrics.NewMetrics(prometheus.NewRegistry())
 	if err != nil {
@@ -96,8 +98,8 @@ func main() {
 	store := controller.NewPolicyStore(kv, log, m)
 	resync = store.Resync
 
-	if len(cfg.Controller.Portals) == 0 {
-		log.Warn("no portals configured; tap loop will be idle", "hint", "set controller.portals")
+	if cfg.Controller.Code == "" {
+		log.Warn("no controller code configured; no portals will be armed", "hint", "set controller.code to a controllers record")
 	}
 
 	// The reader starts with no subscriptions and the runtime with no locks; the
@@ -107,10 +109,39 @@ func main() {
 	reader := controller.NewNATSReader(nc.NC, cfg.Controller.Location, subj, log, m)
 	defer reader.Stop()
 
-	rt := controller.NewRuntime(cfg.Controller.Location, store, reader, nil, controller.NewNATSEmitter(nc.NC), subj, log, m)
+	// Portal hardware backend. mock (default) drives no physical I/O — taps are
+	// simulated over NATS and there are no door inputs. gpio drives real relays and
+	// DPS/REX lines via the controller model's hardware profile, and is also the
+	// runtime's door-input source. The backend resolves each portal's logical
+	// relay/input indices itself, as portals are armed/disarmed by the reconciler.
+	var (
+		portalHW  controller.PortalHardware
+		doorInput drivers.DoorInput // nil for mock (no door monitoring)
+	)
+	switch cfg.Controller.Driver {
+	case "gpio":
+		profile, ok := hardware.ProfileFor(cfg.Controller.Model)
+		if !ok {
+			log.Fatal("unknown controller model for gpio driver",
+				"model", cfg.Controller.Model, "known", hardware.Models())
+		}
+		gpioHW, err := gpio.New(profile, log)
+		if err != nil {
+			log.Fatal("failed to initialize gpio driver", "error", err)
+		}
+		defer func() { _ = gpioHW.Close() }()
+		portalHW = gpioHW
+		doorInput = gpioHW
+		log.Info("portal hardware driver: gpio", "model", cfg.Controller.Model)
+	default: // "mock" (validated by config)
+		portalHW = drivers.NewMockHardware(log)
+		log.Info("portal hardware driver: mock (no physical I/O)")
+	}
 
-	mkLock := func(code string) drivers.LockDriver { return drivers.NewMockLock(code, log) }
-	mgr := controller.NewPortalManager(cfg.Controller.Portals, cfg.Controller.Location, store, reader, rt, mkLock, log)
+	emit := controller.NewNATSEmitter(nc.NC)
+	rt := controller.NewRuntime(cfg.Controller.Location, store, reader, doorInput, nil, emit, subj, log, m)
+
+	mgr := controller.NewPortalManager(cfg.Controller.Code, cfg.Controller.Location, store, reader, rt, portalHW, log)
 	store.SetOnChange(mgr.Notify) // must be set before Watch
 
 	if err := store.Watch(ctx); err != nil {
@@ -130,11 +161,18 @@ func main() {
 	}
 	defer cmds.Stop()
 
+	// Liveness heartbeat: accessd marks this box online/offline from it. Rides
+	// core NATS on the ctrl-scoped subject (outside the audit stream). A no-op
+	// when no controller code is configured.
+	hb := controller.NewHeartbeat(emit, subj, cfg.Controller.Code, cfg.Controller.Location, cfg.Controller.HeartbeatInterval, log, m)
+	hb.Start(ctx)
+	defer hb.Stop()
+
 	log.Info("controller started; default-deny until policy syncs",
 		"policyBucket", cfg.Policy.Bucket,
 		"subjectsApp", cfg.Subjects.App,
 		"location", cfg.Controller.Location,
-		"portals", cfg.Controller.Portals)
+		"controllerCode", cfg.Controller.Code)
 
 	// Note when the initial sync lands, without blocking startup or crashing if
 	// the hub is slow/unreachable: the watcher and reconciler keep retrying, and

@@ -21,7 +21,8 @@ func seeded(t *testing.T) *PolicyStore {
 	records := []struct{ key, val string }{
 		{"location.hq", `{"code":"hq","timezone":"America/New_York","faiSuppress":true}`},
 		{"sched.business-hours", `{"code":"business-hours","windows":[{"days":[1,2,3,4,5],"start":"08:00","end":"17:00"}]}`},
-		{"portal.lobby-main", `{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5}`},
+		{"controller.ctrl-hq-1", `{"code":"ctrl-hq-1","name":"HQ Controller 1","location":"hq","model":"kincony-server-mini"}`},
+		{"portal.lobby-main", `{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","lockRelay":1,"dpsInput":1,"rexInput":2,"heldOpenSeconds":30}`},
 		{"group.lobby-group", `{"code":"lobby-group","portals":["lobby-main"],"schedule":"business-hours"}`},
 		{"role.staff", `{"code":"staff","groups":["lobby-group"]}`},
 		{"user.alice", `{"id":"alice","status":"active","roles":["staff"]}`},
@@ -115,5 +116,51 @@ func TestStorePortalLookup(t *testing.T) {
 	}
 	if _, ok := s.Portal("nope"); ok {
 		t.Errorf("Portal(nope) ok=true, want false")
+	}
+}
+
+// TestStoreBindingAndController verifies the controller-side hardware view parses
+// alongside the pure graph: the binding carries the relay/input indices and the
+// controller record carries the model.
+func TestStoreBindingAndController(t *testing.T) {
+	s := seeded(t)
+
+	b, ok := s.Binding("lobby-main")
+	if !ok || b.Controller != "ctrl-hq-1" || b.LockRelay != 1 || b.DpsInput != 1 || b.RexInput != 2 || b.HeldOpenSeconds != 30 {
+		t.Errorf("Binding(lobby-main) = %+v ok=%v, want controller=ctrl-hq-1 relay=1 dps=1 rex=2 held=30", b, ok)
+	}
+
+	c, ok := s.Controller("ctrl-hq-1")
+	if !ok || c.Location != "hq" || c.Model != "kincony-server-mini" {
+		t.Errorf("Controller(ctrl-hq-1) = %+v ok=%v, want location=hq model=kincony-server-mini", c, ok)
+	}
+}
+
+// TestStorePortalsForController filters by the controller relation and reflects
+// reassignment and removal.
+func TestStorePortalsForController(t *testing.T) {
+	s := seeded(t)
+
+	got := s.PortalsForController("ctrl-hq-1")
+	if len(got) != 1 || got[0].Code != "lobby-main" {
+		t.Fatalf("PortalsForController(ctrl-hq-1) = %+v, want [lobby-main]", got)
+	}
+	if n := len(s.PortalsForController("ctrl-other")); n != 0 {
+		t.Errorf("PortalsForController(ctrl-other) returned %d portals, want 0", n)
+	}
+
+	// Reassign lobby-main to another controller: it leaves ctrl-hq-1's set.
+	s.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","controller":"ctrl-hq-2"}`))
+	if n := len(s.PortalsForController("ctrl-hq-1")); n != 0 {
+		t.Errorf("after reassignment, PortalsForController(ctrl-hq-1) returned %d, want 0", n)
+	}
+	if got := s.PortalsForController("ctrl-hq-2"); len(got) != 1 || got[0].Code != "lobby-main" {
+		t.Errorf("after reassignment, PortalsForController(ctrl-hq-2) = %+v, want [lobby-main]", got)
+	}
+
+	// Removing the portal drops the binding entirely.
+	s.remove("portal.lobby-main")
+	if n := len(s.PortalsForController("ctrl-hq-2")); n != 0 {
+		t.Errorf("after removal, PortalsForController(ctrl-hq-2) returned %d, want 0", n)
 	}
 }

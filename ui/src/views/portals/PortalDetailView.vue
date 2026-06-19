@@ -30,7 +30,7 @@ async function load() {
   loading.value = true
   try {
     const [p, g] = await Promise.all([
-      pb.collection('portals').getOne<Portal>(recordId, { expand: 'location' }),
+      pb.collection('portals').getOne<Portal>(recordId, { expand: 'location,controller' }),
       pb.collection('access_groups').getFullList<AccessGroup>({ filter: `portals ~ "${recordId}"`, sort: 'code' }),
     ])
     record.value = p
@@ -102,6 +102,21 @@ onMounted(load)
           <span class="badge badge-sm badge-ghost">{{ record.posture || 'secure' }}</span>
         </DataField>
         <DataField label="Pulse">{{ record.pulse_seconds }} s</DataField>
+      </div>
+    </BaseCard>
+
+    <BaseCard title="Controller &amp; hardware">
+      <div class="grid grid-cols-2 gap-x-6 gap-y-4">
+        <DataField label="Controller">
+          <router-link v-if="record.expand?.controller" :to="`/controllers/${record.expand.controller.id}`" class="link link-primary">
+            {{ record.expand.controller.code }}
+          </router-link>
+          <span v-else class="opacity-40">Unassigned</span>
+        </DataField>
+        <DataField label="Held-open">{{ record.held_open_seconds }} s</DataField>
+        <DataField label="Lock relay">{{ record.lock_relay }}</DataField>
+        <DataField label="DPS input">{{ record.dps_input }}</DataField>
+        <DataField label="REX input">{{ record.rex_input }}</DataField>
       </div>
     </BaseCard>
 

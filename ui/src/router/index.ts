@@ -34,6 +34,12 @@ const routes: RouteRecordRaw[] = [
       { path: 'portals/:id', name: 'Portal', component: () => import('@/views/portals/PortalDetailView.vue'), meta: { title: 'Portal' } },
       { path: 'portals/:id/edit', name: 'PortalEdit', component: () => import('@/views/portals/PortalFormView.vue'), meta: { title: 'Edit Portal' } },
 
+      // Controllers
+      { path: 'controllers', name: 'Controllers', component: () => import('@/views/controllers/ControllerListView.vue'), meta: { title: 'Controllers' } },
+      { path: 'controllers/new', name: 'ControllerNew', component: () => import('@/views/controllers/ControllerFormView.vue'), meta: { title: 'New Controller' } },
+      { path: 'controllers/:id', name: 'Controller', component: () => import('@/views/controllers/ControllerDetailView.vue'), meta: { title: 'Controller' } },
+      { path: 'controllers/:id/edit', name: 'ControllerEdit', component: () => import('@/views/controllers/ControllerFormView.vue'), meta: { title: 'Edit Controller' } },
+
       // Access groups
       { path: 'access-groups', name: 'AccessGroups', component: () => import('@/views/access_groups/AccessGroupListView.vue'), meta: { title: 'Access Groups' } },
       { path: 'access-groups/new', name: 'AccessGroupNew', component: () => import('@/views/access_groups/AccessGroupFormView.vue'), meta: { title: 'New Access Group' } },

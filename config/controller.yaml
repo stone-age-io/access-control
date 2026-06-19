@@ -69,11 +69,28 @@ subjects:
   app: "acc"
 
 # ----------------------------------------------------------------------------
-# Controller identity — which location this controller belongs to (selects the
-# timezone) and which portals it physically drives. The controller still holds
-# the whole-org policy but only arms readers/locks for these portals.
+# Controller identity. `code` must match a `controllers` record in accessd; this
+# box arms readers/locks for the portals whose `controller` relation points at
+# it (which doors it drives, and their relay/input bindings, live in policy, not
+# here). `location` selects the timezone and scopes the command/fire subscriptions.
 # ----------------------------------------------------------------------------
 controller:
+  code: "ctrl-hq-1"
   location: "hq"
-  portals:
-    - "lobby-main"
+  # Liveness heartbeat cadence. The controller publishes to
+  # acc.{location}.ctrl.{code}.heartbeat (core NATS, outside the audit stream) so
+  # accessd can show this box online/offline. Grant this subject in the
+  # controller's NATS publish permissions alongside the evt.> portal events.
+  heartbeatInterval: 15s
+
+  # Portal hardware backend:
+  #   mock — simulated (default). No physical I/O: taps arrive over NATS and there
+  #          is no door monitoring. Use for dev or a logical-only controller.
+  #   gpio — drive real relays and DPS/REX inputs via the Linux GPIO character
+  #          device. Requires `model` below. Linux/arm64 edge hardware only.
+  driver: "mock"
+  # Hardware model — selects the GPIO profile mapping a portal's logical relay/
+  # input indices to physical lines. Required when driver is "gpio"; must match a
+  # registered model (kincony-server-mini | kincony-pi5r8) and the controllers
+  # record. Relay/input wiring polarity is encoded in the profile, not here.
+  # model: "kincony-server-mini"

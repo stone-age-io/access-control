@@ -64,7 +64,7 @@ func runtimeFor(t *testing.T) (*Runtime, *drivers.MockReader, *drivers.MockLock,
 	reader := drivers.NewMockReader(8)
 	lock := drivers.NewMockLock("lobby-main", nil)
 	emit := &fakeEmitter{}
-	rt := NewRuntime("hq", store, reader,
+	rt := NewRuntime("hq", store, reader, nil,
 		map[string]drivers.LockDriver{"lobby-main": lock}, emit,
 		subjects.Default(), logger.NewNopLogger(), nil)
 	return rt, reader, lock, emit
@@ -144,7 +144,7 @@ func TestRuntimePostureOverrideUnlocked(t *testing.T) {
 func TestRuntimeDynamicLockArming(t *testing.T) {
 	store := seeded(t)
 	emit := &fakeEmitter{}
-	rt := NewRuntime("hq", store, drivers.NewMockReader(8), nil, emit,
+	rt := NewRuntime("hq", store, drivers.NewMockReader(8), nil, nil, emit,
 		subjects.Default(), logger.NewNopLogger(), nil)
 
 	if rt.drives("lobby-main") {

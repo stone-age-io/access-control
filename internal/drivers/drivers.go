@@ -1,7 +1,9 @@
-// Package drivers is the hardware-abstraction boundary for the edge controller.
-// v1 ships interfaces plus mock implementations; real OSDP/RS485 reader and
-// GPIO relay/FAI drivers (KinCony CM5) slot in behind these later without
-// touching the tap loop or the decision core.
+// Package drivers is the hardware-abstraction boundary for the edge controller:
+// the tap loop and the decision core depend only on these interfaces. It ships
+// mock implementations (this package) and a real GPIO lock/door-input backend
+// (internal/drivers/gpio, keyed by a model profile in internal/drivers/hardware).
+// The reader stays simulated over NATS — a real OSDP/RS485 ReaderDriver slots in
+// behind ReaderDriver later without touching the loop or the decision core.
 package drivers
 
 import "time"
@@ -25,6 +27,32 @@ type ReaderDriver interface {
 // value means "use the driver's default"; the mock just records it.
 type LockDriver interface {
 	Pulse(seconds int) error
+}
+
+// Input kinds for InputEvent.Kind.
+const (
+	InputDPS = "dps" // door-position switch (open/closed)
+	InputREX = "rex" // request-to-exit (egress press)
+)
+
+// InputEvent is one digital-input transition for a portal. Kind selects which
+// signal changed: a door-position switch (DPS), whose Closed reports the contact
+// state, or a request-to-exit (REX), whose Active reports the press. At is when
+// the transition occurred (UTC); the driver stamps it so tests stay deterministic.
+type InputEvent struct {
+	Portal string
+	Kind   string
+	Closed bool // DPS: true = door closed
+	Active bool // REX: true = egress requested
+	At     time.Time
+}
+
+// DoorInput emits door-monitoring transitions (DPS/REX) used for forced and
+// held-open detection. The returned channel is closed when the source stops. A
+// controller without door monitoring wired has a nil DoorInput and simply never
+// sees these events.
+type DoorInput interface {
+	Inputs() <-chan InputEvent
 }
 
 // FAIInput reports a location's fire-alarm-input state. Active is true while the

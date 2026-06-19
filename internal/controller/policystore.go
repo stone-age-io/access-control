@@ -39,6 +39,18 @@ type locationEntry struct {
 	loc      *time.Location
 }
 
+// Binding is the controller-side hardware view of a portal: which edge box drives
+// it and the *logical* relay/input indices on that box. Kept separate from
+// policy.Portal so the pure decision graph stays free of hardware concerns. The
+// model template (M3) maps these indices to physical lines.
+type Binding struct {
+	Controller      string
+	LockRelay       int
+	DpsInput        int
+	RexInput        int
+	HeldOpenSeconds int
+}
+
 // PolicyStore holds the whole-org policy graph in plain maps behind an RWMutex
 // and keeps it in sync with the ACC_POLICY KV bucket. Door-tap rates are low,
 // so a read lock on the decision path is cheaper and simpler than lock-free
@@ -49,9 +61,11 @@ type PolicyStore struct {
 	log *logger.Logger
 	m   *metrics.Metrics
 
-	mu        sync.RWMutex
-	locations map[string]locationEntry
-	graph     policy.Policy
+	mu          sync.RWMutex
+	locations   map[string]locationEntry
+	graph       policy.Policy
+	controllers map[string]policykv.Controller // controller code -> controller (for model/location)
+	bindings    map[string]Binding             // portal code -> hardware binding
 
 	onChange func() // fired (off the lock) after each applied change and each sync
 
@@ -71,10 +85,12 @@ type PolicyStore struct {
 // caller ensures the bucket exists).
 func NewPolicyStore(kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metrics) *PolicyStore {
 	return &PolicyStore{
-		kv:        kv,
-		log:       log.With("component", "policystore"),
-		m:         m,
-		locations: make(map[string]locationEntry),
+		kv:          kv,
+		log:         log.With("component", "policystore"),
+		m:           m,
+		locations:   make(map[string]locationEntry),
+		controllers: make(map[string]policykv.Controller),
+		bindings:    make(map[string]Binding),
 		graph: policy.Policy{
 			Schedules: make(map[string]policy.Schedule),
 			Portals:   make(map[string]policy.Portal),
@@ -110,6 +126,44 @@ func (s *PolicyStore) Portal(code string) (policy.Portal, bool) {
 	defer s.mu.RUnlock()
 	ap, ok := s.graph.Portals[code]
 	return ap, ok
+}
+
+// PortalsForController returns the portals bound to the given controller code.
+// The portal reconciler uses it to decide which readers/locks this box arms;
+// binding lives in policy (central), so reassigning a portal to another box takes
+// effect without a controller restart. Returns a fresh slice each call.
+func (s *PolicyStore) PortalsForController(controllerCode string) []policy.Portal {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []policy.Portal
+	for code, b := range s.bindings {
+		if b.Controller != controllerCode {
+			continue
+		}
+		if ap, ok := s.graph.Portals[code]; ok {
+			out = append(out, ap)
+		}
+	}
+	return out
+}
+
+// Binding returns a portal's hardware binding (relay/input indices) and whether
+// it is known. The runtime/drivers use it to resolve which physical lines to
+// drive (via the controller's model template).
+func (s *PolicyStore) Binding(code string) (Binding, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, ok := s.bindings[code]
+	return b, ok
+}
+
+// Controller returns a controller record (for its model/location) and whether it
+// is known.
+func (s *PolicyStore) Controller(code string) (policykv.Controller, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.controllers[code]
+	return c, ok
 }
 
 // SetOnChange registers a callback fired (off the store lock) after each applied
@@ -326,6 +380,18 @@ func (s *PolicyStore) apply(key string, value []byte) {
 			Code: w.Code, Type: w.Type, Location: w.Location,
 			Posture: w.Posture, PulseSeconds: w.PulseSeconds,
 		}
+		s.bindings[w.Code] = Binding{
+			Controller: w.Controller, LockRelay: w.LockRelay,
+			DpsInput: w.DpsInput, RexInput: w.RexInput,
+			HeldOpenSeconds: w.HeldOpenSeconds,
+		}
+
+	case strings.HasPrefix(key, policykv.PrefixController):
+		var w policykv.Controller
+		if !s.unmarshal(key, value, &w) {
+			return
+		}
+		s.controllers[w.Code] = w
 
 	case strings.HasPrefix(key, policykv.PrefixGroup):
 		var w policykv.AccessGroup
@@ -375,7 +441,11 @@ func (s *PolicyStore) remove(key string) {
 	case strings.HasPrefix(key, policykv.PrefixSched):
 		delete(s.graph.Schedules, strings.TrimPrefix(key, policykv.PrefixSched))
 	case strings.HasPrefix(key, policykv.PrefixPortal):
-		delete(s.graph.Portals, strings.TrimPrefix(key, policykv.PrefixPortal))
+		code := strings.TrimPrefix(key, policykv.PrefixPortal)
+		delete(s.graph.Portals, code)
+		delete(s.bindings, code)
+	case strings.HasPrefix(key, policykv.PrefixController):
+		delete(s.controllers, strings.TrimPrefix(key, policykv.PrefixController))
 	case strings.HasPrefix(key, policykv.PrefixGroup):
 		delete(s.graph.Groups, strings.TrimPrefix(key, policykv.PrefixGroup))
 	case strings.HasPrefix(key, policykv.PrefixRole):

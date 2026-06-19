@@ -10,17 +10,23 @@ graph (`internal/policy`), not a rules engine. The central app (`accessd`) is th
 system of record (PocketBase) and mirrors policy to NATS KV one key per record;
 edge controllers (`access-controller`) watch that keyspace and decide locally.
 
-> v1 status: **software substrate, no hardware.** Reader/lock/FAI are interfaces
-> with mock implementations. See the build plan for scope and deferred work.
+> v1 status: the **reader is simulated** (taps arrive over NATS; a real OSDP/
+> Wiegand driver slots in later), but the **lock and door inputs have real GPIO
+> drivers** (`internal/drivers/gpio`, KinCony Server-Mini) alongside the mocks,
+> selectable per controller. Door monitoring (forced / held-open) and controller
+> heartbeat/health are implemented.
 
 ## Layout
 
 ```
-cmd/accessd/            central: PocketBase + KV mirror publisher + audit consumer + command issuer
-cmd/access-controller/  edge: policy watcher + pure decision + drivers + command handler
+cmd/accessd/            central: PocketBase + KV mirror publisher + audit consumer + controller-health monitor
+cmd/access-controller/  edge: policy watcher + pure decision + drivers + door monitoring + heartbeat
 internal/policy/        the pure core: Policy types, Decide(), windowOpen()
-internal/controller/    PolicyStore (KV watch → maps), tap loop, command handler
-internal/drivers/       ReaderDriver / LockDriver / FAIInput interfaces + mocks
+internal/controller/    PolicyStore (KV watch → maps), tap loop, door state machine, portal/lock arming, commands, heartbeat
+internal/drivers/       ReaderDriver / LockDriver / DoorInput / FAIInput interfaces + mocks (MockHardware)
+internal/drivers/hardware/  per-model hardware Profile: logical relay/input index → physical line
+internal/drivers/gpio/  GPIO lock + door-input backend (go-gpiocdev, no cgo; Linux only)
+internal/health/        accessd-side heartbeat subscriber → controllers.last_seen/status
 internal/audit/         JetStream consumer → PocketBase events collection
 internal/natsx/         NATS connection + KV helpers
 internal/webui/         the compiled management UI, //go:embed-ed into accessd
@@ -30,8 +36,9 @@ ui/                     Vue 3 + Vite management UI source (PocketBase-backed CRU
 
 ## Web UI
 
-`accessd` serves a Vue 3 management console (sites, schedules, access points,
-groups, roles, cardholders, credentials, an events timeline) at `/`. It is
+`accessd` serves a Vue 3 management console (locations, schedules, portals,
+controllers, access groups, roles, cardholders, credentials, an events timeline)
+at `/`. It is
 compiled into `internal/webui/public` and **`//go:embed`-ed into the accessd
 binary** — there is no `pb_public` directory to ship; the binary is
 self-contained.

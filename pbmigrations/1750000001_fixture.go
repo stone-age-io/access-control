@@ -57,9 +57,19 @@ func init() {
 			return err
 		}
 
+		controller, err := save("controllers", map[string]any{
+			"code": "ctrl-hq-1", "name": "HQ Controller 1",
+			"location": location.Id, "model": "kincony-server-mini",
+		})
+		if err != nil {
+			return err
+		}
+
 		portal, err := save("portals", map[string]any{
 			"code": "lobby-main", "type": "door", "location": location.Id,
 			"name": "Lobby Main Entrance", "posture": "secure", "pulse_seconds": 5,
+			"controller": controller.Id,
+			"lock_relay": 1, "dps_input": 1, "rex_input": 2, "held_open_seconds": 30,
 		})
 		if err != nil {
 			return err
@@ -109,6 +119,7 @@ func init() {
 		_ = removeByFilter("roles", "code", "staff")
 		_ = removeByFilter("access_groups", "code", "lobby-group")
 		_ = removeByFilter("portals", "code", "lobby-main")
+		_ = removeByFilter("controllers", "code", "ctrl-hq-1")
 		_ = removeByFilter("schedules", "code", "business-hours")
 		_ = removeByFilter("locations", "code", "hq")
 		return nil

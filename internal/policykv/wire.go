@@ -11,13 +11,14 @@ package policykv
 // Key prefixes. One KV key per record: "<prefix><natural-key>", e.g.
 // "cred.CARD-001", "user.<pbid>", "portal.lobby-main".
 const (
-	PrefixLocation = "location."
-	PrefixSched    = "sched."
-	PrefixPortal   = "portal."
-	PrefixGroup    = "group."
-	PrefixRole     = "role."
-	PrefixUser     = "user."
-	PrefixCred     = "cred."
+	PrefixLocation   = "location."
+	PrefixSched      = "sched."
+	PrefixPortal     = "portal."
+	PrefixGroup      = "group."
+	PrefixRole       = "role."
+	PrefixUser       = "user."
+	PrefixCred       = "cred."
+	PrefixController = "controller."
 )
 
 // Location carries the timezone (the controller resolves it once per evaluation)
@@ -45,12 +46,33 @@ type Schedule struct {
 
 // Portal references its location by code; Type is the portal kind (also the
 // {type} subject segment, a single NATS token); Posture is the standing default.
+//
+// Controller is the code of the edge box that drives this portal (empty if
+// unassigned); LockRelay/DpsInput/RexInput are *logical* hardware indices on
+// that box (the box's model template maps them to physical lines); HeldOpenSeconds
+// is the door-open-too-long threshold. These hardware fields are consumed only by
+// the controller's PortalManager/runtime, never by the pure policy.Decide.
 type Portal struct {
-	Code         string `json:"code"`
-	Type         string `json:"type"`
-	Location     string `json:"location"`
-	Posture      string `json:"posture"`
-	PulseSeconds int    `json:"pulseSeconds"`
+	Code            string `json:"code"`
+	Type            string `json:"type"`
+	Location        string `json:"location"`
+	Posture         string `json:"posture"`
+	PulseSeconds    int    `json:"pulseSeconds"`
+	Controller      string `json:"controller,omitempty"`
+	LockRelay       int    `json:"lockRelay,omitempty"`
+	DpsInput        int    `json:"dpsInput,omitempty"`
+	RexInput        int    `json:"rexInput,omitempty"`
+	HeldOpenSeconds int    `json:"heldOpenSeconds,omitempty"`
+}
+
+// Controller is an edge box. It references its location by code; Model selects
+// the hardware template. last_seen/status are not mirrored (accessd writes them
+// from heartbeats), so they are absent here.
+type Controller struct {
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	Location string `json:"location"`
+	Model    string `json:"model"`
 }
 
 // AccessGroup grants a set of portals (by code) under one schedule (by code).

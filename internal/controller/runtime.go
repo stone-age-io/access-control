@@ -11,14 +11,48 @@ import (
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
+// Alarm types carried in an alarm event's payload "type" field. Stable strings:
+// they flow verbatim into events and the UI, like decision reason codes.
+const (
+	AlarmForced    = "forced"     // door opened without a grant or REX
+	AlarmHeld      = "held"       // door held open past its DOTL threshold
+	AlarmHeldClear = "held_clear" // a held-open door closed
+)
+
+// Door-monitoring timing. Vars (not consts) so tests can shorten them — same
+// pattern as the KV watch backoff in policystore.go.
+var (
+	// accessGrace is how long after a grant or REX an open counts as authorized
+	// rather than forced (time to actually push the door after the strike fires).
+	accessGrace = 10 * time.Second
+	// heldOpenUnit multiplies a portal's held_open_seconds into a duration.
+	heldOpenUnit = time.Second
+)
+
+// doorMonitor is the per-portal door-state machine: current contact state, the
+// windows during which an open is authorized, and the live door-open-too-long
+// (DOTL) timer. Guarded by Runtime.mu — the tap/input loop and the DOTL timer
+// goroutine both touch it.
+type doorMonitor struct {
+	open       bool
+	grantUntil time.Time
+	rexUntil   time.Time
+	timer      *time.Timer
+	held       bool // a held-open alarm is currently active (for the clear)
+}
+
 // Runtime is the edge controller's event loop. It is purely event-driven: it
-// reacts to taps, commands, and fire signals with no polling ticker. For each
-// tap it resolves the effective posture, decides locally, emits one tap event,
-// and pulses the lock on allow.
+// reacts to taps, door inputs, commands, and fire signals. For each tap it
+// resolves the effective posture, decides locally, emits one tap event, and
+// pulses the lock on allow. Door inputs drive forced/held-open detection.
+//
+// It grows no polling ticker; the one exception is the per-door DOTL timer
+// (held-open detection), which is hardware-local timing, not policy.
 type Runtime struct {
 	location string
 	store    *PolicyStore
 	reader   drivers.ReaderDriver
+	input    drivers.DoorInput
 	locks    map[string]drivers.LockDriver
 	emit     Emitter
 	subs     subjects.Subjects
@@ -26,15 +60,17 @@ type Runtime struct {
 	m        *metrics.Metrics
 
 	mu        sync.RWMutex
-	overrides map[string]string // portal -> runtime posture override (command-driven)
-	fire      map[string]bool   // location -> fire-alarm-input active (suppresses alarms)
+	overrides map[string]string       // portal -> runtime posture override (command-driven)
+	fire      map[string]bool         // location -> fire-alarm-input active (suppresses alarms)
+	monitors  map[string]*doorMonitor // portal -> door-state machine
 }
 
 // NewRuntime wires the tap loop. locks maps portal code to its lock driver; it
 // may be nil/empty when locks are armed later via SetLock (the portal reconciler
 // does this as portals appear in policy). The map is copied, so the caller keeps
-// ownership of theirs.
-func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver, locks map[string]drivers.LockDriver, emit Emitter, subs subjects.Subjects, log *logger.Logger, m *metrics.Metrics) *Runtime {
+// ownership of theirs. input is the door-monitoring source (DPS/REX); it may be
+// nil on a controller without door monitoring wired.
+func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver, input drivers.DoorInput, locks map[string]drivers.LockDriver, emit Emitter, subs subjects.Subjects, log *logger.Logger, m *metrics.Metrics) *Runtime {
 	owned := make(map[string]drivers.LockDriver, len(locks))
 	for code, lock := range locks {
 		owned[code] = lock
@@ -43,6 +79,7 @@ func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver
 		location:  location,
 		store:     store,
 		reader:    reader,
+		input:     input,
 		locks:     owned,
 		emit:      emit,
 		subs:      subs,
@@ -50,6 +87,7 @@ func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver
 		m:         m,
 		overrides: make(map[string]string),
 		fire:      make(map[string]bool),
+		monitors:  make(map[string]*doorMonitor),
 	}
 }
 
@@ -62,10 +100,17 @@ func (r *Runtime) SetLock(portal string, lock drivers.LockDriver) {
 }
 
 // DeleteLock disarms the lock driver for a portal. Called by the reconciler when
-// a portal is unassigned or removed from policy.
+// a portal is unassigned or removed from policy. It also tears down the portal's
+// door monitor (and its DOTL timer), tying monitor lifecycle to arming.
 func (r *Runtime) DeleteLock(portal string) {
 	r.mu.Lock()
 	delete(r.locks, portal)
+	if m := r.monitors[portal]; m != nil {
+		if m.timer != nil {
+			m.timer.Stop()
+		}
+		delete(r.monitors, portal)
+	}
 	r.mu.Unlock()
 }
 
@@ -79,9 +124,14 @@ func (r *Runtime) lockFor(portal string) (drivers.LockDriver, bool) {
 	return lock, ok
 }
 
-// Run consumes taps until the context is cancelled or the reader channel closes.
+// Run consumes taps and door inputs until the context is cancelled or the reader
+// channel closes. A nil DoorInput yields a nil channel, which is never selected.
 func (r *Runtime) Run(ctx context.Context) error {
 	taps := r.reader.Taps()
+	var inputs <-chan drivers.InputEvent
+	if r.input != nil {
+		inputs = r.input.Inputs()
+	}
 	r.log.Info("tap loop started", "location", r.location)
 	for {
 		select {
@@ -93,6 +143,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 				return nil
 			}
 			r.handleTap(tap)
+		case ev, ok := <-inputs:
+			if !ok {
+				inputs = nil // input source closed; stop selecting it
+				continue
+			}
+			r.handleInput(ev)
 		}
 	}
 }
@@ -124,6 +180,9 @@ func (r *Runtime) handleTap(tap drivers.Tap) {
 		"allow", d.Allow, "reason", d.Reason, "user", d.User)
 
 	if d.Allow {
+		// Open the grant window so the imminent door-open reads as authorized,
+		// not forced.
+		r.noteGrant(tap.Portal, tap.At)
 		if lock, ok := r.lockFor(tap.Portal); ok {
 			if err := lock.Pulse(d.Pulse); err != nil {
 				r.log.Error("lock pulse failed", "portal", tap.Portal, "error", err)
@@ -132,6 +191,118 @@ func (r *Runtime) handleTap(tap drivers.Tap) {
 			r.log.Warn("granted but no lock driver for portal", "portal", tap.Portal)
 		}
 	}
+}
+
+// handleInput processes one door-monitoring transition (DPS/REX). Runs on the
+// run loop goroutine.
+func (r *Runtime) handleInput(ev drivers.InputEvent) {
+	switch ev.Kind {
+	case drivers.InputDPS:
+		r.handleDPS(ev.Portal, ev.Closed, ev.At)
+	case drivers.InputREX:
+		if ev.Active {
+			r.noteREX(ev.Portal, ev.At)
+		}
+	default:
+		r.log.Warn("unknown door input kind; ignoring", "portal", ev.Portal, "kind", ev.Kind)
+	}
+}
+
+// handleDPS folds a door-position transition into the monitor. A closed→open
+// with no active grant/REX is forced; an authorized open arms the DOTL timer;
+// open→close stops it and clears any held-open alarm. The decision is taken under
+// the lock, but events are emitted after releasing it (EmitAlarm takes the read
+// lock, and RWMutex is not reentrant).
+func (r *Runtime) handleDPS(portal string, closed bool, at time.Time) {
+	newOpen := !closed
+	var emitForced, emitHeldClear bool
+
+	r.mu.Lock()
+	m := r.monitorFor(portal)
+	if newOpen == m.open {
+		r.mu.Unlock()
+		return // no transition (duplicate / debounce)
+	}
+	m.open = newOpen
+	if newOpen {
+		if at.Before(m.grantUntil) || at.Before(m.rexUntil) {
+			r.scheduleDOTL(portal, m) // authorized: watch for held-open
+		} else {
+			emitForced = true
+		}
+	} else {
+		if m.timer != nil {
+			m.timer.Stop()
+			m.timer = nil
+		}
+		emitHeldClear = m.held
+		m.held = false
+	}
+	r.mu.Unlock()
+
+	if emitForced {
+		r.EmitAlarm(portal, AlarmForced, at)
+	}
+	if emitHeldClear {
+		r.EmitAlarm(portal, AlarmHeldClear, at)
+	}
+}
+
+// scheduleDOTL arms the door-open-too-long timer from the portal's binding. Must
+// be called holding r.mu. A non-positive held_open_seconds disables held-open
+// detection for the portal.
+func (r *Runtime) scheduleDOTL(portal string, m *doorMonitor) {
+	if m.timer != nil {
+		m.timer.Stop()
+		m.timer = nil
+	}
+	b, ok := r.store.Binding(portal)
+	if !ok || b.HeldOpenSeconds <= 0 {
+		return
+	}
+	d := time.Duration(b.HeldOpenSeconds) * heldOpenUnit
+	m.timer = time.AfterFunc(d, func() { r.onDOTL(portal) })
+}
+
+// onDOTL fires when a door has been open past its threshold. Emits a held-open
+// alarm once per open episode, only if the door is still open. Runs on the timer
+// goroutine.
+func (r *Runtime) onDOTL(portal string) {
+	r.mu.Lock()
+	m := r.monitors[portal]
+	if m == nil || !m.open || m.held {
+		r.mu.Unlock()
+		return
+	}
+	m.held = true
+	r.mu.Unlock()
+	r.EmitAlarm(portal, AlarmHeld, time.Now().UTC())
+}
+
+// noteGrant opens the authorized-open window after a grant or commanded unlock.
+func (r *Runtime) noteGrant(portal string, at time.Time) {
+	r.mu.Lock()
+	r.monitorFor(portal).grantUntil = at.Add(accessGrace)
+	r.mu.Unlock()
+}
+
+// noteREX opens the authorized-open window after a request-to-exit press, so an
+// egress doesn't read as forced.
+func (r *Runtime) noteREX(portal string, at time.Time) {
+	r.mu.Lock()
+	r.monitorFor(portal).rexUntil = at.Add(accessGrace)
+	r.mu.Unlock()
+}
+
+// monitorFor returns the portal's door monitor, creating it on first use. Must be
+// called holding r.mu.
+func (r *Runtime) monitorFor(portal string) *doorMonitor {
+	m := r.monitors[portal]
+	if m == nil {
+		m = &doorMonitor{}
+		r.monitors[portal] = m
+	}
+	return m
 }
 
 // postureFor returns the effective posture for a portal: a runtime command
@@ -221,6 +392,8 @@ func (r *Runtime) Unlock(portal string, seconds int, actor, reason string) {
 		r.log.Error("command unlock pulse failed", "portal", portal, "error", err)
 		return
 	}
+	// A commanded unlock is an authorized open, like a grant.
+	r.noteGrant(portal, time.Now().UTC())
 	r.log.Info("command unlock", "portal", portal, "seconds", seconds, "actor", actor, "reason", reason)
 }
 

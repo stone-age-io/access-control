@@ -7,6 +7,7 @@
 const PREFIX: Record<string, string> = {
   locations: 'location.',
   schedules: 'sched.',
+  controllers: 'controller.',
   portals: 'portal.',
   access_groups: 'group.',
   roles: 'role.',

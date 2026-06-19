@@ -18,6 +18,8 @@ export type CredentialStatus = 'active' | 'revoked' | 'suspended'
 export type CredentialType = 'nkey' | 'wiegand' | 'pin' | 'mobile'
 export type PortalType = 'door' | 'turnstile' | 'elevator' | 'gate' | 'logical'
 export type EventKind = 'tap' | 'state' | 'alarm' | 'fire' | 'command'
+export type ControllerModel = 'kincony-server-mini' | 'kincony-pi5r8'
+export type ControllerStatus = 'online' | 'offline'
 
 /** A building/campus; owns the timezone. */
 export interface Location extends BaseRecord {
@@ -45,6 +47,18 @@ export interface Schedule extends BaseRecord {
   windows: ScheduleWindow[]
 }
 
+/** An edge box (e.g. a KinCony Server-Mini) that drives the portals assigned to it. */
+export interface Controller extends BaseRecord {
+  code: string
+  name: string
+  location: string
+  model: ControllerModel | ''
+  /** Liveness, written by accessd from heartbeats (M4); not mirrored to KV. */
+  last_seen: string
+  status: ControllerStatus | ''
+  expand?: { location?: Location }
+}
+
 /** A controllable opening (door/gate/turnstile/elevator/logical). */
 export interface Portal extends BaseRecord {
   code: string
@@ -53,7 +67,15 @@ export interface Portal extends BaseRecord {
   name: string
   posture: Posture | ''
   pulse_seconds: number
-  expand?: { location?: Location }
+  /** The edge box that drives this portal (empty if unassigned). */
+  controller: string
+  /** Logical hardware indices on that box; the model template maps them to lines. */
+  lock_relay: number
+  dps_input: number
+  rex_input: number
+  /** Door-open-too-long threshold (seconds). */
+  held_open_seconds: number
+  expand?: { location?: Location; controller?: Controller }
 }
 
 /** A set of portals under one schedule (an "access level"). */

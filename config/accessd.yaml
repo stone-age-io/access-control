@@ -96,3 +96,8 @@ accessd:
   # gitignored. The management UI is //go:embed-ed into the binary (from
   # internal/webui/public), not served from disk — there is no pb_public.
   dataDir: "./pb_data"
+  # How long without a heartbeat before a controller is shown offline. accessd
+  # subscribes to acc.*.ctrl.*.heartbeat (core NATS) and updates the controllers
+  # record directly. Keep this a few controller heartbeatIntervals so one dropped
+  # heartbeat does not flap a box offline.
+  controllerOfflineAfter: 45s

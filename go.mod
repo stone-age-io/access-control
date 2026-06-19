@@ -8,6 +8,7 @@ require (
 	github.com/pocketbase/pocketbase v0.39.4
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/viper v1.21.0
+	github.com/warthog618/go-gpiocdev v0.9.1
 	go.uber.org/zap v1.27.1
 	go.uber.org/zap/exp v0.3.0
 )

@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/audit"
+	"github.com/stone-age-io/access-control/internal/health"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/mirror"
@@ -75,6 +76,7 @@ func main() {
 		metricsSrv *http.Server
 		collector  *metrics.Collector
 		auditC     *audit.Consumer
+		healthMon  *health.Monitor
 	)
 
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -148,6 +150,14 @@ func main() {
 			return err
 		}
 
+		// Controller health: core-NATS heartbeat subscriber → controllers
+		// last_seen/status (a direct record update, not an events row). Owns its
+		// own lifetime; stopped in OnTerminate.
+		healthMon = health.New(e.App, nc.NC, subj, cfg.Accessd.ControllerOfflineAfter, log, m)
+		if err := healthMon.Start(); err != nil {
+			return err
+		}
+
 		log.Info("accessd serving",
 			"policyBucket", cfg.Policy.Bucket,
 			"eventsStream", cfg.Events.Stream,
@@ -158,6 +168,9 @@ func main() {
 
 	pb.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		log.Info("accessd terminating")
+		if healthMon != nil {
+			healthMon.Stop()
+		}
 		if auditC != nil {
 			auditC.Stop()
 		}

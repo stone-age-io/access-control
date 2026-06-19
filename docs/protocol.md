@@ -46,6 +46,7 @@ collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
 | `acc.{location}.{type}.{thing}.evt.tap` | ctrl → | core NATS → JetStream | `{"cred","user","allow","reason","ts"}` |
 | `acc.{location}.{type}.{thing}.evt.state` | ctrl → | core NATS → JetStream | `{"posture","actor?","reason?","ts"}` |
 | `acc.{location}.{type}.{thing}.evt.alarm` | ctrl → | core NATS → JetStream | `{"type","ts"}` |
+| `acc.{location}.ctrl.{code}.heartbeat` | ctrl → accessd | core NATS (**not** JetStream) | `{"code","location","ts"}` |
 
 \* → ctrl = controller subscribes; ctrl → = controller publishes.
 
@@ -65,6 +66,19 @@ no sibling stream rooted at another literal (`things.>`, `cameras.>`,
 `kiosk.*.event.>`, …) on a shared account. All bodies are JSON; `ts` is RFC 3339
 UTC.
 
+A **controller** is addressed under the reserved `acc.{location}.ctrl.{code}`
+namespace (`ctrl` is not a portal type). Its **heartbeat** sits deliberately
+*outside* the `.evt` subtree — a 5-token subject with no `evt`, so it matches
+neither audit pattern and is **never captured by `ACC_EVENTS`**. accessd
+subscribes to `acc.*.ctrl.*.heartbeat` over core NATS and writes the controller's
+`last_seen`/`status` directly on the `controllers` record (not an `events` row,
+which would flood the audit log). A controller publishes one heartbeat on start
+and then every `controller.heartbeatInterval` (default 15s); accessd marks a
+controller `offline` once it has been silent longer than
+`accessd.controllerOfflineAfter` (default 45s). The publish ticker is one of the
+controller's two deliberate exceptions to its no-ticker rule (the other is the
+held-open DOTL timer).
+
 ### Command details
 
 - **posture** — installs a runtime posture override for the portal. Valid values:
@@ -83,10 +97,32 @@ UTC.
   controller subscribes to *and* an audited event the stream captures
   (`kind="fire"`).
 
-> **v1 note:** the reader/lock/FAI are mocks. Taps are simulated by publishing to
-> `acc.{location}.{type}.{thing}.tap`; the lock just logs its pulse; there is no
-> real alarm source yet (the `alarm` subject is the gate real detection will flow
-> through).
+### Door monitoring & alarms
+
+The controller runs a per-portal door-state machine fed by two digital inputs —
+a **door-position switch** (DPS, `dpsInput`) and an optional **request-to-exit**
+(REX, `rexInput`). It emits `evt.alarm` events whose `type` is a stable string
+(like a reason code), carried as `{"type","ts"}`:
+
+| `type` | Meaning |
+|---|---|
+| `forced` | door opened with no recent grant or REX — a break-in |
+| `held` | an authorized-open door stayed open past `heldOpenSeconds` (DOTL) |
+| `held_clear` | a previously-held door closed |
+
+A grant (an `allow` tap or an `unlock` command) and a REX press each open a short
+window during which a door-open reads as *authorized* (no `forced`), arming the
+held-open timer instead; the DOTL timer is the controller's second deliberate
+no-ticker exception. While a location's **fire** input is active, all alarm
+emission is suppressed (forced/held during evacuation would be false alarms). The
+DOTL timer and the held-open threshold are hardware-local timing, not policy.
+
+> **v1 status:** the **reader is still simulated** — taps arrive by publishing to
+> `acc.{location}.{type}.{thing}.tap` (the legacy/integration path; a real OSDP/
+> Wiegand `ReaderDriver` slots in later). The **lock and door inputs have real
+> drivers**: `controller.driver: mock` (default — no physical I/O, no door
+> monitoring) or `gpio` (relays + DPS/REX over the Linux GPIO character device,
+> via the `controller.model` hardware profile; Linux/arm64 edge hardware).
 
 ## Policy KV (bucket `ACC_POLICY`)
 
@@ -99,7 +135,8 @@ sole writer; controllers are read-only watchers.
 |---|---|
 | `location.{code}` | `{"code","name","timezone","faiSuppress"}` |
 | `sched.{code}` | `{"code","windows":[{"days":[1..7],"start":"HH:MM","end":"HH:MM"}]}` |
-| `portal.{code}` | `{"code","type","location","posture","pulseSeconds"}` |
+| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?}` |
+| `controller.{code}` | `{"code","name","location","model"}` |
 | `group.{code}` | `{"code","portals":["<portal code>"],"schedule":"<sched code>"}` |
 | `role.{code}` | `{"code","groups":["<group code>"]}` |
 | `user.{pbid}` | `{"id","status","roles":["<role code>"]}` |
@@ -111,6 +148,16 @@ the controller. `days` are ISO weekdays (1=Mon … 7=Sun); `start`/`end` are loc
 wall-clock `HH:MM` (`24:00` allowed as end-of-day); `end <= start` means the
 window crosses midnight. `user.{pbid}` and `cred.{value}.user` are the only places
 a PocketBase id appears — the cardholder id is the credential→user join key.
+
+A portal's hardware binding (the `?`-marked fields, omitted when unset) is **central
+state**, carried in policy so a box is stateless and swappable: `controller` is the
+code of the edge box that drives the portal; `lockRelay`/`dpsInput`/`rexInput` are
+*logical* relay/input indices on that box; `heldOpenSeconds` is the held-open (DOTL)
+threshold. The box maps the logical indices to physical lines via its `model`'s
+hardware profile (`internal/drivers/hardware`); the indices and `controller`/`model`
+are consumed only by the controller's PortalManager/runtime, never by the pure
+`policy.Decide`. `controllers.last_seen`/`status` are **not** mirrored — accessd
+writes them from heartbeats (see above), so they are absent from the KV value.
 
 Eventual consistency is fail-safe: an unknown credential, a reference to a
 not-yet-synced role/group/schedule, a malformed value, or no policy at all all

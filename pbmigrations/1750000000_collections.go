@@ -44,6 +44,39 @@ func init() {
 			return err
 		}
 
+		// --- controllers: an edge box (e.g. a KinCony Server-Mini) that drives the
+		// portals assigned to it. The box's identity is just its code; which portals
+		// it drives, and the logical relay/input indices for each, live on the portal
+		// records (see the `controller` relation below). `model` selects the hardware
+		// template that maps those logical indices to physical GPIO/expander lines.
+		// last_seen/status are written by accessd from controller heartbeats. ---
+		controllers := core.NewBaseCollection("controllers")
+		controllers.Fields.Add(&core.TextField{Name: "code", Required: true})
+		controllers.Fields.Add(&core.TextField{Name: "name"})
+		controllers.Fields.Add(&core.RelationField{
+			Name:         "location",
+			CollectionId: locations.Id,
+			Required:     true,
+			MaxSelect:    1,
+		})
+		controllers.Fields.Add(&core.SelectField{
+			Name:      "model",
+			Values:    []string{"kincony-server-mini", "kincony-pi5r8"},
+			MaxSelect: 1,
+		})
+		// last_seen/status: liveness, written by accessd from heartbeats (not mirrored).
+		controllers.Fields.Add(&core.DateField{Name: "last_seen"})
+		controllers.Fields.Add(&core.SelectField{
+			Name:      "status",
+			Values:    []string{"online", "offline"},
+			MaxSelect: 1,
+		})
+		addTimestamps(controllers)
+		controllers.AddIndex("idx_controllers_code", true, "code", "")
+		if err := app.Save(controllers); err != nil {
+			return err
+		}
+
 		// --- portals: a controllable opening (door/gate/turnstile/elevator) or a
 		// logical access target. Each portal is a platform Thing addressed
 		// {location}.{type}.{code} on the bus, so `type` is a first-class field
@@ -72,6 +105,19 @@ func init() {
 			MaxSelect: 1,
 		})
 		portals.Fields.Add(&core.NumberField{Name: "pulse_seconds", OnlyInt: true})
+		// controller: which edge box drives this portal. Optional — a logical portal
+		// or a not-yet-installed door may be unassigned (the controller simply won't
+		// arm it). The remaining fields are *logical* hardware indices on that box,
+		// resolved to physical lines by the controller's model template.
+		portals.Fields.Add(&core.RelationField{
+			Name:         "controller",
+			CollectionId: controllers.Id,
+			MaxSelect:    1,
+		})
+		portals.Fields.Add(&core.NumberField{Name: "lock_relay", OnlyInt: true})        // relay output index
+		portals.Fields.Add(&core.NumberField{Name: "dps_input", OnlyInt: true})         // door-position-switch input index
+		portals.Fields.Add(&core.NumberField{Name: "rex_input", OnlyInt: true})         // request-to-exit input index
+		portals.Fields.Add(&core.NumberField{Name: "held_open_seconds", OnlyInt: true}) // DOTL threshold
 		addTimestamps(portals)
 		portals.AddIndex("idx_portals_code", true, "code", "")
 		if err := app.Save(portals); err != nil {
@@ -191,7 +237,7 @@ func init() {
 		// Down: delete in reverse dependency order.
 		for _, name := range []string{
 			"events", "credentials", "cardholders", "roles",
-			"access_groups", "portals", "schedules", "locations",
+			"access_groups", "portals", "controllers", "schedules", "locations",
 		} {
 			c, err := app.FindCollectionByNameOrId(name)
 			if err != nil {

@@ -28,7 +28,7 @@ const opTimeout = 5 * time.Second
 // mirroredCollections are the policy collections whose changes are mirrored to
 // KV. The events collection is written by the audit consumer, not mirrored.
 var mirroredCollections = []string{
-	"locations", "schedules", "portals", "access_groups",
+	"locations", "schedules", "controllers", "portals", "access_groups",
 	"roles", "cardholders", "credentials",
 }
 
@@ -164,6 +164,8 @@ func recordKey(r *core.Record) (string, error) {
 		return naturalKey(policykv.PrefixSched, r.GetString("code"))
 	case "portals":
 		return naturalKey(policykv.PrefixPortal, r.GetString("code"))
+	case "controllers":
+		return naturalKey(policykv.PrefixController, r.GetString("code"))
 	case "access_groups":
 		return naturalKey(policykv.PrefixGroup, r.GetString("code"))
 	case "roles":
@@ -221,11 +223,26 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			posture = "secure" // standing default
 		}
 		payload = policykv.Portal{
-			Code:         r.GetString("code"),
-			Type:         r.GetString("type"),
-			Location:     resolveCode(app, "locations", r.GetString("location")),
-			Posture:      posture,
-			PulseSeconds: r.GetInt("pulse_seconds"),
+			Code:            r.GetString("code"),
+			Type:            r.GetString("type"),
+			Location:        resolveCode(app, "locations", r.GetString("location")),
+			Posture:         posture,
+			PulseSeconds:    r.GetInt("pulse_seconds"),
+			Controller:      resolveCode(app, "controllers", r.GetString("controller")),
+			LockRelay:       r.GetInt("lock_relay"),
+			DpsInput:        r.GetInt("dps_input"),
+			RexInput:        r.GetInt("rex_input"),
+			HeldOpenSeconds: r.GetInt("held_open_seconds"),
+		}
+	case "controllers":
+		if err := validToken("controller code", r.GetString("code")); err != nil {
+			return "", nil, err
+		}
+		payload = policykv.Controller{
+			Code:     r.GetString("code"),
+			Name:     r.GetString("name"),
+			Location: resolveCode(app, "locations", r.GetString("location")),
+			Model:    r.GetString("model"),
 		}
 	case "access_groups":
 		payload = policykv.AccessGroup{

@@ -119,15 +119,34 @@ type SubjectsConfig struct {
 type AccessdConfig struct {
 	// DataDir is the embedded PocketBase data directory.
 	DataDir string `json:"dataDir" yaml:"dataDir" mapstructure:"dataDir"`
+	// ControllerOfflineAfter is how long accessd tolerates silence from a
+	// controller before marking it offline. Should exceed a controller's
+	// HeartbeatInterval by a few intervals. Defaults to 45s.
+	ControllerOfflineAfter time.Duration `json:"controllerOfflineAfter" yaml:"controllerOfflineAfter" mapstructure:"controllerOfflineAfter"`
 }
 
-// ControllerConfig is the edge controller's configuration. A controller holds
-// the whole-org policy but only drives the portals it is assigned.
+// ControllerConfig is the edge controller's configuration — just its identity.
+// A controller holds the whole-org policy but only drives the portals assigned to
+// it (the `controller` relation on portal records), so which doors it drives and
+// their hardware bindings come from policy, not local config.
 type ControllerConfig struct {
-	// Location is the location code this controller belongs to (selects the timezone).
+	// Code is this controller's stable code, matching a `controllers` record. The
+	// controller arms the portals whose `controller` relation points at this code.
+	Code string `json:"code" yaml:"code" mapstructure:"code"`
+	// Location is the location code this controller belongs to (selects the
+	// timezone and scopes the location-wide command/fire subscriptions).
 	Location string `json:"location" yaml:"location" mapstructure:"location"`
-	// Portals are the portal codes this controller drives.
-	Portals []string `json:"portals" yaml:"portals" mapstructure:"portals"`
+	// HeartbeatInterval is how often this controller publishes a liveness
+	// heartbeat to accessd. The publish ticker is a deliberate exception to the
+	// controller's no-ticker rule, scoped to health reporting. Defaults to 15s.
+	HeartbeatInterval time.Duration `json:"heartbeatInterval" yaml:"heartbeatInterval" mapstructure:"heartbeatInterval"`
+	// Driver selects the portal hardware backend: "mock" (default — simulated, no
+	// hardware) or "gpio" (real relays/inputs via the Linux GPIO character device).
+	Driver string `json:"driver" yaml:"driver" mapstructure:"driver"`
+	// Model is the controller hardware model, selecting the GPIO hardware profile
+	// (logical relay/input index → physical line). Required when Driver is "gpio";
+	// must match a model the hardware registry knows and the controllers record.
+	Model string `json:"model" yaml:"model" mapstructure:"model"`
 }
 
 // Load reads configuration from the given file path, layering in env vars
@@ -166,8 +185,9 @@ func Load(path string) (*Config, error) {
 		"logging.level", "logging.encoding", "logging.outputPath",
 		"metrics.enabled", "metrics.address", "metrics.path", "metrics.updateInterval",
 		"policy.bucket", "events.stream", "subjects.app",
-		"accessd.dataDir",
-		"controller.location", "controller.portals",
+		"accessd.dataDir", "accessd.controllerOfflineAfter",
+		"controller.code", "controller.location", "controller.heartbeatInterval",
+		"controller.driver", "controller.model",
 	} {
 		_ = v.BindEnv(key)
 	}
@@ -238,6 +258,17 @@ func setDefaults(cfg *Config) {
 	if cfg.Accessd.DataDir == "" {
 		cfg.Accessd.DataDir = DefaultDataDir
 	}
+	// Liveness cadence/threshold. The offline window is three heartbeat intervals
+	// so a single dropped heartbeat never flaps a controller offline.
+	if cfg.Controller.HeartbeatInterval == 0 {
+		cfg.Controller.HeartbeatInterval = 15 * time.Second
+	}
+	if cfg.Accessd.ControllerOfflineAfter == 0 {
+		cfg.Accessd.ControllerOfflineAfter = 45 * time.Second
+	}
+	if cfg.Controller.Driver == "" {
+		cfg.Controller.Driver = "mock"
+	}
 }
 
 func validate(cfg *Config) error {
@@ -290,6 +321,18 @@ func validate(cfg *Config) error {
 	// silently break command and event routing.
 	if cfg.Subjects.App == "" || strings.ContainsAny(cfg.Subjects.App, ". \t*>") {
 		return fmt.Errorf("subjects.app must be a single NATS token (no '.', '*', '>', or whitespace): %q", cfg.Subjects.App)
+	}
+
+	// Controller hardware driver. The default ("mock") is set in setDefaults; only
+	// "gpio" needs a model, which must name a profile the hardware registry knows.
+	switch cfg.Controller.Driver {
+	case "", "mock":
+	case "gpio":
+		if cfg.Controller.Model == "" {
+			return fmt.Errorf("controller.model is required when controller.driver is \"gpio\"")
+		}
+	default:
+		return fmt.Errorf("invalid controller.driver %q (want \"mock\" or \"gpio\")", cfg.Controller.Driver)
 	}
 	return nil
 }

@@ -29,11 +29,18 @@
 //	{app}.{location}.{type}.{thing}.evt.tap      decision outcome
 //	{app}.{location}.{type}.{thing}.evt.state    effective-posture change
 //	{app}.{location}.{type}.{thing}.evt.alarm    forced / held-open alarm
+//	{app}.{location}.ctrl.{code}.heartbeat       controller liveness (NOT audited)
 //
 // The {app}.*.…evt subtree is the audit surface; EventsWildcards() captures it
 // via two patterns of different fixed arity (location-scoped fire at 4 tokens;
 // portal events at 6+), both rooted at the literal {app} so they overlap neither
 // each other nor a sibling app's stream.
+//
+// A controller is addressed under the reserved {app}.{location}.ctrl.{code}
+// namespace (ctrl is not a portal type). Its heartbeat sits deliberately OUTSIDE
+// the .evt subtree (5 tokens, no evt) so the events stream's {app}.*.*.*.evt.>
+// pattern cannot capture it — heartbeats update the controllers record directly,
+// not the audit log. Like commands, it rides core NATS, fire-and-forget.
 package subjects
 
 import (
@@ -124,6 +131,23 @@ func (s Subjects) EventAlarm(location, ptype, thing string) string {
 	return fmt.Sprintf("%s.%s.%s.%s.evt.alarm", s.App(), location, ptype, thing)
 }
 
+// --- controller health (heartbeat) ---
+
+// Heartbeat is the subject a controller publishes periodic liveness to:
+// {app}.{location}.ctrl.{code}.heartbeat. It is controller-scoped (not a portal
+// event) and lives outside the .evt subtree on purpose, so the events stream
+// never captures it; accessd subscribes over core NATS and updates the
+// controllers record's last_seen/status directly.
+func (s Subjects) Heartbeat(location, code string) string {
+	return fmt.Sprintf("%s.%s.ctrl.%s.heartbeat", s.App(), location, code)
+}
+
+// HeartbeatWildcard is accessd's subscription for every controller's heartbeat,
+// across all locations and codes.
+func (s Subjects) HeartbeatWildcard() string {
+	return fmt.Sprintf("%s.*.ctrl.*.heartbeat", s.App())
+}
+
 // EventsWildcards is the ACC_EVENTS stream's subject set and the audit consumer's
 // filter. Two patterns of DIFFERENT fixed arity so they cannot overlap each
 // other, both rooted at the literal {app} so they cannot overlap a sibling app's
@@ -168,6 +192,17 @@ func (s Subjects) ParseEvent(subject string) (location, ptype, thing, kind strin
 	default:
 		return "", "", "", "", false
 	}
+}
+
+// ParseHeartbeat extracts the location and controller code from a heartbeat
+// subject {app}.{location}.ctrl.{code}.heartbeat. ok is false for anything that
+// is not a well-formed heartbeat subject (wrong app, wrong shape, not ctrl-scoped).
+func (s Subjects) ParseHeartbeat(subject string) (location, code string, ok bool) {
+	parts := strings.Split(subject, ".")
+	if len(parts) != 5 || parts[0] != s.App() || parts[2] != "ctrl" || parts[4] != "heartbeat" {
+		return "", "", false
+	}
+	return parts[1], parts[3], true
 }
 
 // ParseCommand splits a command subject {app}.{location}.{type}.{thing}.cmd.{action}.

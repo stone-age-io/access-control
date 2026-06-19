@@ -30,6 +30,10 @@ type Metrics struct {
 	eventsPublishedTotal *prometheus.CounterVec // labels: kind
 	auditWritesTotal     *prometheus.CounterVec // labels: status (ok/error)
 
+	// Controller heartbeats: sent by the controller, received by accessd.
+	heartbeatsSentTotal     prometheus.Counter     // controller
+	heartbeatsReceivedTotal *prometheus.CounterVec // labels: status (ok/unknown/error) (accessd)
+
 	// NATS connection state (shared).
 	natsConnectionStatus prometheus.Gauge
 	natsReconnects       prometheus.Counter
@@ -84,6 +88,19 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 			},
 			[]string{"status"},
 		),
+		heartbeatsSentTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "controller_heartbeats_sent_total",
+				Help: "Total liveness heartbeats published by this controller",
+			},
+		),
+		heartbeatsReceivedTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "controller_heartbeats_received_total",
+				Help: "Total controller heartbeats accessd processed by status (ok/unknown/error)",
+			},
+			[]string{"status"},
+		),
 		natsConnectionStatus: prometheus.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "nats_connection_status",
@@ -117,6 +134,8 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.kvWatchState,
 		m.eventsPublishedTotal,
 		m.auditWritesTotal,
+		m.heartbeatsSentTotal,
+		m.heartbeatsReceivedTotal,
 		m.natsConnectionStatus,
 		m.natsReconnects,
 		m.goroutines,
@@ -192,6 +211,23 @@ func (m *Metrics) IncAuditWrite(status string) {
 		return
 	}
 	m.auditWritesTotal.WithLabelValues(status).Inc()
+}
+
+// IncHeartbeatSent records one liveness heartbeat published by the controller.
+func (m *Metrics) IncHeartbeatSent() {
+	if m == nil {
+		return
+	}
+	m.heartbeatsSentTotal.Inc()
+}
+
+// IncHeartbeatReceived records one heartbeat accessd processed (status =
+// "ok"/"unknown"/"error").
+func (m *Metrics) IncHeartbeatReceived(status string) {
+	if m == nil {
+		return
+	}
+	m.heartbeatsReceivedTotal.WithLabelValues(status).Inc()
 }
 
 // SetNATSConnectionStatus sets the NATS connection gauge.

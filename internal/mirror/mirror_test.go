@@ -96,6 +96,32 @@ func TestKeyAndValue_PortalFieldsAndDefaults(t *testing.T) {
 	if got.Location != "hq" || got.Type != "door" || got.Posture != "secure" || got.PulseSeconds != 5 {
 		t.Errorf("portal = %+v, want location=hq type=door posture=secure pulse=5", got)
 	}
+	// Hardware binding: controller relation resolves to a code, indices pass through.
+	if got.Controller != "ctrl-hq-1" || got.LockRelay != 1 || got.DpsInput != 1 || got.RexInput != 2 || got.HeldOpenSeconds != 30 {
+		t.Errorf("portal binding = %+v, want controller=ctrl-hq-1 relay=1 dps=1 rex=2 held=30", got)
+	}
+}
+
+// A controller record keys under controller.<code> and resolves its location to
+// a code.
+func TestKeyAndValue_Controller(t *testing.T) {
+	app := newApp(t)
+	ctrl := find(t, app, "controllers", "code", "ctrl-hq-1")
+
+	key, val, err := keyAndValue(app, ctrl)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	if key != "controller.ctrl-hq-1" {
+		t.Errorf("key = %q, want controller.ctrl-hq-1", key)
+	}
+	var got policykv.Controller
+	if err := json.Unmarshal(val, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Code != "ctrl-hq-1" || got.Location != "hq" || got.Model != "kincony-server-mini" {
+		t.Errorf("controller = %+v, want code=ctrl-hq-1 location=hq model=kincony-server-mini", got)
+	}
 }
 
 func TestKeyAndValue_ScheduleWindows(t *testing.T) {

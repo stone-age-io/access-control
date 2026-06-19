@@ -9,14 +9,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Two Go binaries plus a Vue 3 management UI:
 
 - **`accessd`** (`cmd/accessd`) — central system of record. Embeds PocketBase (control plane + schema),
-  mirrors the policy graph to NATS KV (one key per record), and runs the JetStream audit consumer.
-  Serves the embedded UI at `/`.
+  mirrors the policy graph to NATS KV (one key per record), runs the JetStream audit consumer, and runs the
+  controller-health monitor (heartbeats → `controllers.last_seen`/`status`). Serves the embedded UI at `/`.
 - **`access-controller`** (`cmd/access-controller`) — edge runtime. Watches the KV keyspace into in-memory
-  maps, decides credential presentations **locally** with the pure `policy.Decide`, drives reader/lock
-  hardware (mocked in v1), and emits access events to JetStream.
+  maps, decides credential presentations **locally** with the pure `policy.Decide`, drives reader/lock/door-input
+  hardware, runs a per-door forced/held-open state machine, emits access events to JetStream, and publishes a
+  liveness heartbeat.
 
-v1 status: **software substrate, no hardware.** Reader/lock/FAI are interfaces (`internal/drivers`) with
-mock implementations. Taps are simulated by publishing to `acc.{location}.{type}.{thing}.tap`.
+v1 status: the **reader is simulated** — taps arrive by publishing to `acc.{location}.{type}.{thing}.tap` (a real
+OSDP/Wiegand `ReaderDriver` slots in later). The **lock and door inputs have real drivers**: `internal/drivers`
+holds the interfaces + mocks; `internal/drivers/gpio` is a no-cgo GPIO backend (KinCony Server-Mini) keyed by a
+per-model profile in `internal/drivers/hardware`. A controller picks `mock` (default) or `gpio` via
+`controller.driver`.
 
 ## Build & run
 
@@ -85,16 +89,25 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   reconnects: `Resync` (wired to the reconnect handler) stops the watcher so `runWatch` re-creates it
   (`WatchAll` re-delivers every key = full re-sync). On each applied change and each sync sentinel the store
   fires `SetOnChange`, which drives the controller's **watch-driven arming**.
-- **PortalManager** (`internal/controller/portalmanager.go`) keeps the controller's armed readers/locks in step
-  with policy. The set of portal *codes* a controller drives is local config (which doors this box is wired to),
-  but each portal's type/existence comes from the policy graph and can change after boot, so arming is reconciled
-  on every policy change (coalesced, off the watch goroutine) rather than resolved once at startup: a portal that
-  appears, is retyped, or is removed is armed/re-armed/disarmed without a restart. The controller boots
-  **default-deny** (armed for nothing) instead of blocking or crashing when policy is slow/unreachable, and
-  converges as policy arrives. The controller binds the policy KV **read-only** (`natsx.KVBucket`); accessd owns
-  bucket creation.
+- **PortalManager** (`internal/controller/portalmanager.go`) keeps the controller's armed portals in step with
+  policy. Binding is **central**: the set this box drives is every portal whose `controller` relation points at
+  this controller's `code` (`PolicyStore.PortalsForController`), so reassigning a portal to another box, retyping
+  it, or removing it takes effect without touching the box — local config shrinks to identity (`controller.code`).
+  Arming reconciles on every policy change (coalesced, off the watch goroutine): for each portal it arms the
+  reader subscription, the lock, and the DPS/REX inputs via a `PortalHardware` backend (`drivers.MockHardware`
+  or the GPIO driver), and disarms the lot when the portal leaves. The controller boots **default-deny** (armed
+  for nothing) instead of blocking or crashing when policy is slow/unreachable, and converges as policy arrives.
+  It binds the policy KV **read-only** (`natsx.KVBucket`); accessd owns bucket creation.
+- **Door monitoring** (`internal/controller/runtime.go`) — a per-door state machine over DPS/REX inputs emits
+  `evt.alarm` events (`type`: `forced`/`held`/`held_clear`). A grant or REX opens a short authorized-open window
+  (no `forced`) and arms the held-open (DOTL) timer; a location's fire input suppresses all alarm emission. The
+  hardware binding (logical relay/input indices, held-open threshold) rides policy on the portal record, never
+  the pure `policy.Decide`; the box maps logical indices to physical lines via its `model` profile.
 - **Audit** (`internal/audit`) — JetStream is the system of record for events; the PocketBase `events`
   collection is a rebuildable projection. Durable consumer, at-least-once (a redelivery may dup a row in v1).
+- **Controller health** (`internal/health`, accessd-side) — a core-NATS subscriber to the heartbeat subject
+  updates `controllers.last_seen`/`status` with a **direct record update, not an events row**, plus a staleness
+  sweep that marks a silent box offline. Heartbeats are deliberately kept out of the audit stream.
 
 ### NATS subjects
 
@@ -105,9 +118,12 @@ a shared NATS account, a stream subject that *led with a wildcard* (e.g. `*.*.*.
 stream rooted at a literal first token (`things.>`, `cameras.>`, `kiosk.*.event.>`, …), and JetStream rejects
 overlapping stream subjects (err 10065). Leading with `acc` keeps our subject space disjoint from theirs.
 
-- `acc.{location}.{type}.{thing}.tap` — credential presentation (v1: mock reader publishes here)
+- `acc.{location}.{type}.{thing}.tap` — credential presentation (v1: simulated reader publishes here)
 - `acc.{location}.{type}.{thing}.evt.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS
 - `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget)
+- `acc.{location}.ctrl.{code}.heartbeat` — controller liveness. A controller is addressed under the reserved
+  `ctrl` namespace (not a portal type); the heartbeat sits **outside** the `.evt` subtree (5 tokens, no `evt`) on
+  purpose, so ACC_EVENTS never captures it — accessd updates the `controllers` record directly instead.
 
 **All subject construction and parsing lives in `internal/subjects`** (one `Subjects` value carrying the `acc`
 app token from `subjects.app` config, default `acc`, threaded through every constructor) — never hand-format
@@ -120,8 +136,10 @@ controller must share the same `subjects.app`** (a mismatch silently severs poli
 
 Commands (`internal/controller/commands.go`) install **runtime posture overrides** that are operational state,
 never written back to PocketBase. `posture: "clear"` reverts to the standing value. The controller grows **no
-ticker** — `until` (timed reversion) and the standing posture both come from outside; reversion is an external
-scheduler publishing a follow-up command. Fire input suppresses alarm emission (hardware owns egress).
+policy ticker** — `until` (timed reversion) and the standing posture both come from outside; reversion is an
+external scheduler publishing a follow-up command. The only timers are two deliberate, hardware-scoped exceptions:
+the per-door held-open (DOTL) timer and the liveness heartbeat. Fire input suppresses alarm emission (hardware
+owns egress).
 
 ### Schema is code
 
@@ -138,10 +156,16 @@ env apply. `accessd` reads `$SA_CONFIG` (default `config/accessd.yaml`); `access
 flag (default `config/controller.yaml`). Exactly one NATS auth method may be set (creds file / nkey / token /
 user-pass); `*.creds` and `config/local*.yaml` are gitignored — never commit credentials.
 
+A controller's config is just its identity and hardware selection: `controller.code` (which portals it drives,
+matched against the policy graph), `controller.location` (timezone + command/fire subscription scope),
+`controller.driver` (`mock`|`gpio`), `controller.model` (required for `gpio`; selects the hardware profile), and
+`controller.heartbeatInterval`. accessd's `accessd.controllerOfflineAfter` sets how long a silent controller stays
+"online" before the health sweep marks it offline.
+
 ## Conventions
 
 - Module path `github.com/stone-age-io/access-control`, Go 1.26. Structured logging via `zap` wrapper
-  (`internal/logger`); Prometheus metrics (`internal/metrics`) on a side port (accessd `:2115`, controller `:2114`).
+  (`internal/logger`); Prometheus metrics (`internal/metrics`) on a side port (accessd `:2113`, controller `:2114`).
 - **Fail-safe everywhere**: dangling references, malformed values, not-yet-synced records, parse errors — all
   resolve to deny or "keep previous value," never to a grant or a crash.
 - Decision **reason codes** (`policy.go`) are stable strings that flow verbatim into events and the UI — treat

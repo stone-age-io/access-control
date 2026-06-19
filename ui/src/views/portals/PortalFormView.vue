@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
-import type { Portal, Location, Posture, PortalType } from '@/types/pocketbase'
+import type { Portal, Location, Controller, Posture, PortalType } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
@@ -26,9 +26,15 @@ const form = ref({
   location: '',
   posture: 'secure' as Posture,
   pulse_seconds: 5,
+  controller: '',
+  lock_relay: 0,
+  dps_input: 0,
+  rex_input: 0,
+  held_open_seconds: 30,
 })
 
 const locations = ref<Location[]>([])
+const controllers = ref<Controller[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
 
@@ -36,9 +42,14 @@ const kvKey = computed(() => policyKey('portals', { code: form.value.code.trim()
 
 async function loadOptions() {
   try {
-    locations.value = await pb.collection('locations').getFullList<Location>({ sort: 'code' })
+    const [locs, ctrls] = await Promise.all([
+      pb.collection('locations').getFullList<Location>({ sort: 'code' }),
+      pb.collection('controllers').getFullList<Controller>({ sort: 'code' }),
+    ])
+    locations.value = locs
+    controllers.value = ctrls
   } catch (err: any) {
-    toast.error(err?.message || 'Failed to load locations')
+    toast.error(err?.message || 'Failed to load options')
   }
 }
 
@@ -54,6 +65,11 @@ async function loadRecord() {
       location: p.location || '',
       posture: (p.posture || 'secure') as Posture,
       pulse_seconds: p.pulse_seconds || 5,
+      controller: p.controller || '',
+      lock_relay: p.lock_relay || 0,
+      dps_input: p.dps_input || 0,
+      rex_input: p.rex_input || 0,
+      held_open_seconds: p.held_open_seconds || 0,
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load portal')
@@ -77,6 +93,11 @@ async function handleSubmit() {
       location: form.value.location,
       posture: form.value.posture,
       pulse_seconds: Number(form.value.pulse_seconds) || 0,
+      controller: form.value.controller,
+      lock_relay: Number(form.value.lock_relay) || 0,
+      dps_input: Number(form.value.dps_input) || 0,
+      rex_input: Number(form.value.rex_input) || 0,
+      held_open_seconds: Number(form.value.held_open_seconds) || 0,
     }
     if (isEdit.value) {
       await pb.collection('portals').update(recordId!, data)
@@ -156,6 +177,44 @@ onMounted(async () => {
               <label class="label"><span class="label-text-alt">How long the lock releases on a grant.</span></label>
             </div>
           </div>
+        </div>
+      </BaseCard>
+
+      <BaseCard title="Controller &amp; hardware">
+        <div class="space-y-4">
+          <div class="form-control">
+            <label class="label"><span class="label-text">Controller</span></label>
+            <select v-model="form.controller" class="select select-bordered">
+              <option value="">Unassigned</option>
+              <option v-for="c in controllers" :key="c.id" :value="c.id">{{ c.code }} — {{ c.name || c.code }}</option>
+            </select>
+            <label class="label">
+              <span class="label-text-alt">The edge box that drives this portal. Unassigned portals (e.g. logical) are not armed by any box.</span>
+            </label>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="form-control">
+              <label class="label"><span class="label-text">Lock relay</span></label>
+              <input v-model.number="form.lock_relay" type="number" min="0" class="input input-bordered" />
+            </div>
+            <div class="form-control">
+              <label class="label"><span class="label-text">DPS input</span></label>
+              <input v-model.number="form.dps_input" type="number" min="0" class="input input-bordered" />
+            </div>
+            <div class="form-control">
+              <label class="label"><span class="label-text">REX input</span></label>
+              <input v-model.number="form.rex_input" type="number" min="0" class="input input-bordered" />
+            </div>
+            <div class="form-control">
+              <label class="label"><span class="label-text">Held-open (s)</span></label>
+              <input v-model.number="form.held_open_seconds" type="number" min="0" class="input input-bordered" />
+            </div>
+          </div>
+          <p class="text-xs opacity-50">
+            Logical relay/input indices on the controller; its model template maps them to physical lines.
+            Door-position (DPS) and request-to-exit (REX) drive forced/held-open detection. Ignored for logical portals.
+          </p>
         </div>
       </BaseCard>
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/logger"
+	"github.com/stone-age-io/access-control/internal/policy"
 )
 
 // portalArmer is the reader surface the reconciler drives: arm/disarm one
@@ -15,17 +16,29 @@ type portalArmer interface {
 	Disarm(code string)
 }
 
+// PortalHardware arms and releases the physical I/O for one portal: its lock
+// relay (returned as the LockDriver the tap loop pulses) and its DPS/REX input
+// lines (which a hardware backend routes into the runtime's DoorInput). The mock
+// backend (drivers.MockHardware) hands back a mock lock and no inputs; the GPIO
+// backend (internal/drivers/gpio) resolves the logical relay/input indices
+// through the controller model's hardware profile to physical lines.
+type PortalHardware interface {
+	Arm(code string, lockRelay, dpsInput, rexInput int) (drivers.LockDriver, error)
+	Disarm(code string)
+}
+
 // PortalManager keeps the controller's *armed* portals — the readers and locks
-// it has actually wired up — in step with policy. The set of portal codes a
-// controller is responsible for is still local config (which doors this box is
-// physically wired to), but each portal's type and existence come from the
-// policy graph, which can change after boot: a portal may be created in accessd
-// later, retyped, or removed. Rather than resolve once at startup and freeze,
-// the manager reconciles on every policy change (via PolicyStore.SetOnChange):
+// it has actually wired up — in step with policy. Which portals this box drives
+// comes from policy too: the desired set is every portal whose `controller`
+// relation points at this controller's code (PolicyStore.PortalsForController).
+// That set, and each portal's type, can change after boot — a portal may be
+// created, retyped, reassigned to another box, or removed — so rather than
+// resolve once at startup and freeze, the manager reconciles on every policy
+// change (via PolicyStore.SetOnChange):
 //
-//   - configured portal now resolvable (exists, has a type) and not armed -> arm
-//   - armed portal's type changed                                         -> re-arm
-//   - armed portal no longer resolvable                                   -> disarm
+//   - portal newly assigned here, resolvable (has a type), not armed -> arm
+//   - armed portal's type changed                                    -> re-arm
+//   - armed portal reassigned elsewhere / removed                    -> disarm
 //
 // This is also what lets the controller boot before policy is available: it
 // comes up armed for nothing (default-deny, safe) and arms each portal as policy
@@ -36,12 +49,12 @@ type portalArmer interface {
 // reconcile, and reconciliation runs on its own goroutine — never on the watch
 // goroutine, which must not block on NATS subscribe/unsubscribe calls.
 type PortalManager struct {
-	codes    []string // configured portal codes this controller drives
-	location string   // controller home location (for the mismatch warning)
+	code     string // this controller's code; arms portals bound to it
+	location string // controller home location (for the mismatch warning)
 	store    *PolicyStore
 	armer    portalArmer
 	rt       *Runtime
-	mkLock   func(code string) drivers.LockDriver
+	hw       PortalHardware
 	log      *logger.Logger
 
 	dirty  chan struct{}
@@ -49,25 +62,24 @@ type PortalManager struct {
 	wg     sync.WaitGroup
 
 	// Goroutine-confined to the reconcile loop; no lock needed.
-	armed   map[string]string // code -> armed type
-	missing map[string]bool   // code -> already warned it's absent from policy
+	armed map[string]string // code -> armed type
 }
 
-// NewPortalManager builds a reconciler for the given configured portal codes.
-// mkLock manufactures a portal's lock driver when it is armed (the mock lock in
-// v1; real GPIO later).
-func NewPortalManager(codes []string, location string, store *PolicyStore, armer portalArmer, rt *Runtime, mkLock func(code string) drivers.LockDriver, log *logger.Logger) *PortalManager {
+// NewPortalManager builds a reconciler for the controller with the given code; it
+// arms the portals bound to that code in policy. hw arms a portal's physical I/O
+// (lock relay + DPS/REX inputs) when the portal is armed — the mock backend in
+// dev, the GPIO backend on real hardware.
+func NewPortalManager(code, location string, store *PolicyStore, armer portalArmer, rt *Runtime, hw PortalHardware, log *logger.Logger) *PortalManager {
 	return &PortalManager{
-		codes:    codes,
+		code:     code,
 		location: location,
 		store:    store,
 		armer:    armer,
 		rt:       rt,
-		mkLock:   mkLock,
+		hw:       hw,
 		log:      log.With("component", "portal-manager"),
 		dirty:    make(chan struct{}, 1),
 		armed:    make(map[string]string),
-		missing:  make(map[string]bool),
 	}
 }
 
@@ -110,58 +122,75 @@ func (pm *PortalManager) Stop() {
 	pm.wg.Wait()
 }
 
-// reconcile walks the configured portals and arms/disarms each to match policy.
-// Runs only on the reconcile goroutine, so armed/missing need no locking.
+// reconcile arms/disarms portals to match the set bound to this controller in
+// policy. Runs only on the reconcile goroutine, so armed needs no locking.
 func (pm *PortalManager) reconcile() {
-	for _, code := range pm.codes {
-		ap, ok := pm.store.Portal(code)
-		resolvable := ok && ap.Type != ""
+	// Desired set: portals assigned to this controller that have resolved a type.
+	// With no controller code configured, drive nothing — never match the
+	// unassigned portals (whose controller is also "").
+	desired := make(map[string]policy.Portal)
+	if pm.code != "" {
+		for _, ap := range pm.store.PortalsForController(pm.code) {
+			if ap.Type == "" {
+				continue // not yet resolvable; arm once it gains a type
+			}
+			desired[ap.Code] = ap
+		}
+	}
+
+	// Disarm anything armed that is no longer assigned here (reassigned/removed).
+	// Deleting from pm.armed mid-range is safe; disarm does the delete.
+	for code := range pm.armed {
+		if _, ok := desired[code]; !ok {
+			pm.log.Info("portal no longer assigned to this controller; disarming", "portal", code)
+			pm.disarm(code)
+		}
+	}
+
+	// Arm new portals; re-arm any whose type changed.
+	for code, ap := range desired {
 		curType, isArmed := pm.armed[code]
 
-		if !resolvable {
-			if isArmed {
-				pm.log.Warn("portal no longer in policy; disarming", "portal", code)
-				pm.disarm(code)
-			} else if !pm.missing[code] {
-				pm.missing[code] = true
-				pm.log.Warn("configured portal not in policy; not armed (will arm when it appears)",
-					"portal", code, "hint", "create the portal in accessd with a type")
-			}
-			continue
-		}
-		delete(pm.missing, code)
-
 		if ap.Location != "" && ap.Location != pm.location {
-			// Taps and commands are addressed on the controller's home location;
-			// a portal placed elsewhere in policy won't line up. Surface it rather
-			// than silently arm a reader on the wrong subject tree.
+			// Commands and the fire signal are subscribed on the controller's home
+			// location; a portal placed elsewhere won't receive them. Surface it.
 			pm.log.Warn("portal location differs from controller location",
 				"portal", code, "portalLocation", ap.Location, "controllerLocation", pm.location)
 		}
 
 		switch {
 		case !isArmed:
-			pm.arm(code, ap.Type)
+			pm.arm(ap)
 		case curType != ap.Type:
 			pm.log.Info("portal type changed; re-arming", "portal", code, "from", curType, "to", ap.Type)
 			pm.disarm(code)
-			pm.arm(code, ap.Type)
+			pm.arm(ap)
 		}
 	}
 }
 
-func (pm *PortalManager) arm(code, ptype string) {
-	if err := pm.armer.Arm(Portal{Code: code, Type: ptype}); err != nil {
+func (pm *PortalManager) arm(ap policy.Portal) {
+	// Arm physical I/O first (it can fail — a GPIO line may be missing/busy). The
+	// hardware backend resolves the portal's logical relay/input indices itself.
+	b, _ := pm.store.Binding(ap.Code)
+	lock, err := pm.hw.Arm(ap.Code, b.LockRelay, b.DpsInput, b.RexInput)
+	if err != nil {
 		// Leave it unarmed and unrecorded; the next change re-attempts.
-		pm.log.Error("failed to arm portal; will retry on next policy change", "portal", code, "error", err)
+		pm.log.Error("failed to arm portal hardware; will retry on next policy change", "portal", ap.Code, "error", err)
 		return
 	}
-	pm.rt.SetLock(code, pm.mkLock(code))
-	pm.armed[code] = ptype
+	if err := pm.armer.Arm(Portal{Code: ap.Code, Type: ap.Type, Location: ap.Location}); err != nil {
+		pm.hw.Disarm(ap.Code) // roll back the hardware we just armed
+		pm.log.Error("failed to arm portal reader; will retry on next policy change", "portal", ap.Code, "error", err)
+		return
+	}
+	pm.rt.SetLock(ap.Code, lock)
+	pm.armed[ap.Code] = ap.Type
 }
 
 func (pm *PortalManager) disarm(code string) {
 	pm.armer.Disarm(code)
 	pm.rt.DeleteLock(code)
+	pm.hw.Disarm(code)
 	delete(pm.armed, code)
 }
