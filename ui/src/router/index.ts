@@ -64,6 +64,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'credentials/:id', name: 'Credential', component: () => import('@/views/credentials/CredentialDetailView.vue'), meta: { title: 'Credential' } },
       { path: 'credentials/:id/edit', name: 'CredentialEdit', component: () => import('@/views/credentials/CredentialFormView.vue'), meta: { title: 'Edit Credential' } },
 
+      // Import (bulk-create cardholders + credentials from CSV)
+      { path: 'import', name: 'Import', component: () => import('@/views/import/ImportView.vue'), meta: { title: 'Import' } },
+
       // Events (read-only audit timeline)
       { path: 'events', name: 'Events', component: () => import('@/views/events/EventListView.vue'), meta: { title: 'Events' } },
     ],

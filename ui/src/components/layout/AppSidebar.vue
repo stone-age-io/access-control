@@ -26,6 +26,7 @@ const sections: NavSection[] = [
       { label: 'Credentials', icon: '🎫', path: '/credentials', child: true },
       { label: 'Roles', icon: '🛡️', path: '/roles' },
       { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
+      { label: 'Import', icon: '📥', path: '/import' },
     ],
   },
   {

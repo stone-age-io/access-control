@@ -1,1 +1,0 @@
-const l={locations:"location.",schedules:"sched.",controllers:"controller.",portals:"portal.",access_groups:"group.",roles:"role.",cardholders:"user.",credentials:"cred."};function t(r,s){const o=l[r];if(!o)return"";let e="";return r==="cardholders"?e=s.id||"":r==="credentials"?e=s.value||"":e=s.code||"",e?o+e:""}export{t as p};
