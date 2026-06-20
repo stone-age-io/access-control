@@ -1,8 +1,10 @@
 package pbmigrations_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
 	// Side-effect import registers the schema + fixture migrations so the test
@@ -28,10 +30,59 @@ func TestCollectionsExist(t *testing.T) {
 	for _, name := range []string{
 		"locations", "schedules", "portals", "access_groups",
 		"roles", "cardholders", "credentials", "events", "holidays",
+		"audit_logs",
 	} {
 		if _, err := app.FindCollectionByNameOrId(name); err != nil {
 			t.Errorf("collection %q not found: %v", name, err)
 		}
+	}
+}
+
+// TestOperatorAuthTier checks migration 1750000009: the users.role field, the
+// locked-down users rules, and the role-based collection rule matrix.
+func TestOperatorAuthTier(t *testing.T) {
+	app := newApp(t)
+
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("users collection: %v", err)
+	}
+	if users.Fields.GetByName("role") == nil {
+		t.Error("users.role field missing")
+	}
+	// Default open-signup ("") must be locked to admin-only.
+	if users.CreateRule == nil || *users.CreateRule == "" {
+		t.Errorf("users.CreateRule = %v, want admin-only (not open signup)", users.CreateRule)
+	}
+
+	// rule asserts a collection's named rule is non-nil and contains substr.
+	rule := func(name, which string, get func(*core.Collection) *string, substr string) {
+		c, err := app.FindCollectionByNameOrId(name)
+		if err != nil {
+			t.Fatalf("%s collection: %v", name, err)
+		}
+		r := get(c)
+		if r == nil || !strings.Contains(*r, substr) {
+			t.Errorf("%s.%s = %v, want it to contain %q", name, which, r, substr)
+		}
+	}
+
+	// Daily-ops: credentials writable by operator or admin.
+	rule("credentials", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"operator"`)
+	// Topology: controllers writable by admin only.
+	rule("controllers", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"admin"`)
+	// All operators can read the policy graph.
+	rule("portals", "ListRule", func(c *core.Collection) *string { return c.ListRule }, `@request.auth.id`)
+	// audit_logs readable by admins only.
+	rule("audit_logs", "ListRule", func(c *core.Collection) *string { return c.ListRule }, `"admin"`)
+
+	// Machine projections: nobody writes via the API (superuser/system only).
+	events, err := app.FindCollectionByNameOrId("events")
+	if err != nil {
+		t.Fatalf("events collection: %v", err)
+	}
+	if events.CreateRule != nil {
+		t.Errorf("events.CreateRule = %v, want nil (superuser-only)", *events.CreateRule)
 	}
 }
 

@@ -1,12 +1,13 @@
-// Package commandapi is accessd's operator command bridge: superuser-only HTTP
-// routes that translate a UI action into a control-plane NATS command. The
+// Package commandapi is accessd's operator command bridge: authenticated HTTP
+// routes (operator/admin role) that translate a UI action into a control-plane
+// NATS command. The
 // controller subscribes to these commands (core NATS, fire-and-forget); accessd
 // only publishes. There is no reply — the command is accepted optimistically
 // (202) and the truth reconciles asynchronously via the point_status projection
 // (the ACC_STATUS device shadow).
 //
 // Subjects are built solely via internal/subjects, never hand-formatted. The
-// actor stamped on every command is the authenticated superuser's email, so the
+// actor stamped on every command is the authenticated user's email, so the
 // resulting audit row (the controller emits one for grant and posture) attributes
 // the action.
 package commandapi
@@ -20,6 +21,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/stone-age-io/access-control/internal/authz"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/policy"
 	"github.com/stone-age-io/access-control/internal/subjects"
@@ -33,17 +35,21 @@ type bridge struct {
 }
 
 // Register wires the command routes onto the serve event's router. Each route
-// requires superuser auth (consistent with the collections' nil access rules —
-// the UI authenticates as a superuser).
+// requires an authenticated user; issuing a door command is an operational write,
+// so a per-handler role check (authz.RequireRole) admits operators and admins
+// (and superusers, the break-glass account) but rejects viewers.
 func Register(se *core.ServeEvent, nc *nats.Conn, subj subjects.Subjects, log *logger.Logger) {
 	b := &bridge{app: se.App, nc: nc, subj: subj, log: log.With("component", "commandapi")}
-	se.Router.POST("/api/portals/{id}/grant", b.grant).Bind(apis.RequireSuperuserAuth())
-	se.Router.POST("/api/portals/{id}/posture", b.posture).Bind(apis.RequireSuperuserAuth())
-	se.Router.POST("/api/aux-outputs/{id}/output", b.output).Bind(apis.RequireSuperuserAuth())
+	se.Router.POST("/api/portals/{id}/grant", b.grant).Bind(apis.RequireAuth())
+	se.Router.POST("/api/portals/{id}/posture", b.posture).Bind(apis.RequireAuth())
+	se.Router.POST("/api/aux-outputs/{id}/output", b.output).Bind(apis.RequireAuth())
 }
 
 // grant publishes a momentary grant (cmd.grant) for a portal.
 func (b *bridge) grant(e *core.RequestEvent) error {
+	if err := authz.RequireRole(e, authz.RoleOperator, authz.RoleAdmin); err != nil {
+		return err
+	}
 	loc, ptype, code, err := b.portalAddr(e.Request.PathValue("id"))
 	if err != nil {
 		return e.NotFoundError("portal not found", err)
@@ -68,6 +74,9 @@ func (b *bridge) grant(e *core.RequestEvent) error {
 
 // posture installs or clears a runtime posture override (cmd.posture) for a portal.
 func (b *bridge) posture(e *core.RequestEvent) error {
+	if err := authz.RequireRole(e, authz.RoleOperator, authz.RoleAdmin); err != nil {
+		return err
+	}
 	loc, ptype, code, err := b.portalAddr(e.Request.PathValue("id"))
 	if err != nil {
 		return e.NotFoundError("portal not found", err)
@@ -95,6 +104,9 @@ func (b *bridge) posture(e *core.RequestEvent) error {
 
 // output drives a named aux output relay (cmd.output) on/off/pulse.
 func (b *bridge) output(e *core.RequestEvent) error {
+	if err := authz.RequireRole(e, authz.RoleOperator, authz.RoleAdmin); err != nil {
+		return err
+	}
 	loc, code, err := b.auxOutputAddr(e.Request.PathValue("id"))
 	if err != nil {
 		return e.NotFoundError("aux output not found", err)
@@ -167,8 +179,8 @@ func (b *bridge) publish(subject string, payload map[string]any) error {
 	return b.nc.Publish(subject, data)
 }
 
-// actor returns the authenticated superuser's email (the route requires superuser
-// auth, so e.Auth is set).
+// actor returns the authenticated user's email (the route requires auth, so
+// e.Auth is set).
 func actor(e *core.RequestEvent) string {
 	if e.Auth != nil {
 		return e.Auth.Email()
