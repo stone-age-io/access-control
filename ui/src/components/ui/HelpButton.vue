@@ -2,7 +2,7 @@
 /**
  * Inline help trigger — desktop only. Sits next to the page actions
  * (Edit/Delete on detail views, "New X" on lists). Self-hides when the
- * current route has no help entry. Mobile uses HelpFab instead.
+ * current route has no help entry. Mobile uses the AppHeader help icon instead.
  */
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'

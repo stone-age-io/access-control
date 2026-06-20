@@ -274,12 +274,6 @@ onMounted(async () => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">portal.&lt;code&gt;</code>
           <p class="text-xs opacity-50">The controller looks up this portal by this key when a credential is presented.</p>
         </RailCard>
-        <RailCard title="About portals" icon="🚪">
-          <p class="text-xs opacity-60 leading-relaxed">
-            A controllable opening — door, gate, turnstile, elevator, or logical. Its standing posture is the default;
-            a controller command can override it at runtime.
-          </p>
-        </RailCard>
       </template>
 
       <template #footer>

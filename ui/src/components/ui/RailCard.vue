@@ -7,7 +7,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="card bg-base-100 shadow-md border border-base-300/60">
+  <div class="card bg-base-100 border border-base-300 shadow-sm">
     <div class="card-body p-4 gap-3">
       <h3
         v-if="title"

@@ -1,8 +1,9 @@
 import { ref } from 'vue'
 
-// Global open state — the panel lives once in MainLayout; triggers (HelpButton,
-// HelpFab) live wherever the page renders them. Content is resolved from the
-// active route at render time (see help/registry.ts), so this only tracks open/closed.
+// Global open state — the panel lives once in MainLayout; triggers (the desktop
+// HelpButton and the mobile AppHeader help icon) live wherever the page renders
+// them. Content is resolved from the active route at render time (see
+// help/registry.ts), so this only tracks open/closed.
 const isOpen = ref(false)
 
 export function useHelp() {

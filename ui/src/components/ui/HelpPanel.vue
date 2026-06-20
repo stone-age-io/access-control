@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Right-side slide-over that renders the current route's help. Mounted once in
- * MainLayout; opened by HelpButton (desktop) or HelpFab (mobile). Content is
+ * MainLayout; opened by HelpButton (desktop) or the AppHeader help icon (mobile). Content is
  * resolved from the active route, so it tracks navigation automatically.
  */
 import { computed, watch } from 'vue'

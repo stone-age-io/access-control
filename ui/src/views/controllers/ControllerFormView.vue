@@ -144,12 +144,6 @@ onMounted(async () => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">controller.&lt;code&gt;</code>
           <p class="text-xs opacity-50">The edge box reads its own record and the portals assigned to it from policy.</p>
         </RailCard>
-        <RailCard title="About controllers" icon="⚙️">
-          <p class="text-xs opacity-60 leading-relaxed">
-            An edge box drives the portals whose <strong>controller</strong> relation points at it. Assign portals and
-            set their relay/input bindings on each portal's page.
-          </p>
-        </RailCard>
       </template>
 
       <template #footer>

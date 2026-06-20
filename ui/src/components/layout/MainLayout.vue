@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
-import HelpFab from '@/components/ui/HelpFab.vue'
 import HelpPanel from '@/components/ui/HelpPanel.vue'
 </script>
 
@@ -23,8 +22,7 @@ import HelpPanel from '@/components/ui/HelpPanel.vue'
       <AppSidebar />
     </div>
 
-    <!-- Contextual help: FAB on mobile, slide-over panel everywhere -->
-    <HelpFab />
+    <!-- Contextual help: slide-over panel (opened from the header icon on mobile, the inline button on desktop) -->
     <HelpPanel />
   </div>
 </template>

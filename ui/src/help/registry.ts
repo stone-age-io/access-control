@@ -3,8 +3,8 @@
  *
  * Help is authored once per resource ("topic") and surfaced on its list, detail,
  * and form pages alike. The topic is derived from the first path segment, so no
- * per-view wiring is needed — `HelpButton`/`HelpFab` look up the current route here
- * and self-hide when there is no entry.
+ * per-view wiring is needed — `HelpButton` (desktop) and the AppHeader help icon
+ * (mobile) look up the current route here and self-hide when there is no entry.
  */
 export interface HelpItem {
   term: string

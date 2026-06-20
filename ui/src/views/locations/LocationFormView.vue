@@ -149,9 +149,6 @@ onMounted(() => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">location.&lt;code&gt;</code>
           <p class="text-xs opacity-50">The controller mirrors this location to the KV bucket under this key.</p>
         </RailCard>
-        <RailCard title="About locations" icon="🏢">
-          <p class="text-xs opacity-60 leading-relaxed">A location is a building or campus that owns the IANA timezone used to evaluate schedule windows (handles DST).</p>
-        </RailCard>
       </template>
 
       <template #footer>

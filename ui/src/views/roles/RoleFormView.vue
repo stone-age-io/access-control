@@ -132,11 +132,6 @@ onMounted(async () => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">role.&lt;code&gt;</code>
           <p class="text-xs opacity-50">The mirror writes this role to the policy bucket under this key.</p>
         </RailCard>
-        <RailCard title="About roles" icon="🛡️">
-          <p class="text-xs opacity-60 leading-relaxed">
-            A role is a named bundle of access groups, assigned to cardholders. It maps a job function to the doors that function needs.
-          </p>
-        </RailCard>
       </template>
 
       <template #footer>

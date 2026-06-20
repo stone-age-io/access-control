@@ -143,12 +143,6 @@ onMounted(async () => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">holiday.&lt;id&gt;</code>
           <p class="text-xs opacity-50">The mirror writes this holiday to the ACC_POLICY bucket under this key (one key per record, keyed by id).</p>
         </RailCard>
-        <RailCard title="About holidays" icon="📅">
-          <p class="text-xs opacity-60 leading-relaxed">
-            A holiday closes every window of any schedule that observes holidays, for the holiday's location.
-            Mark it recurring to match the same month/day every year.
-          </p>
-        </RailCard>
       </template>
 
       <template #footer>

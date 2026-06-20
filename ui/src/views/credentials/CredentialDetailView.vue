@@ -86,7 +86,7 @@ onMounted(load)
     </template>
 
     <BaseCard title="Credential">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
         <DataField label="Value">
           <code class="text-sm">{{ record.value }}</code>
         </DataField>

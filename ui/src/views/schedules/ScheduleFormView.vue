@@ -211,12 +211,6 @@ onMounted(() => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">sched.&lt;code&gt;</code>
           <p class="text-xs opacity-50">The mirror writes this schedule to the ACC_POLICY bucket under this key.</p>
         </RailCard>
-        <RailCard title="About schedules" icon="🗓️">
-          <p class="text-xs opacity-60 leading-relaxed">
-            Reusable weekly time windows. Access is open during any window; each window is evaluated in its
-            location's local time. An end at or before the start crosses midnight.
-          </p>
-        </RailCard>
       </template>
 
       <template #footer>

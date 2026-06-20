@@ -192,12 +192,6 @@ onMounted(async () => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">cred.&lt;value&gt;</code>
           <p class="text-xs opacity-50">The reader presents this value; the controller looks it up by this key.</p>
         </RailCard>
-        <RailCard title="About credentials" icon="🎫">
-          <p class="text-xs opacity-60 leading-relaxed">
-            A credential is an opaque string mapped to one cardholder. Revoke or suspend it to stop access
-            without deleting the record.
-          </p>
-        </RailCard>
       </template>
 
       <template #footer>

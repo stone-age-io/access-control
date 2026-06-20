@@ -153,12 +153,6 @@ onMounted(async () => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">group.&lt;code&gt;</code>
           <p class="text-xs opacity-50">The controller mirrors this group to the ACC_POLICY bucket under this key.</p>
         </RailCard>
-        <RailCard title="About access groups" icon="🗝️">
-          <p class="text-xs opacity-60 leading-relaxed">
-            An access level: a set of portals granted together under one schedule. Roles bundle access groups
-            and are assigned to cardholders.
-          </p>
-        </RailCard>
       </template>
 
       <template #footer>

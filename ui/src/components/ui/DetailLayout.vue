@@ -22,7 +22,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 max-w-6xl">
     <!-- Header -->
     <div>
       <div v-if="breadcrumbs?.length" class="breadcrumbs text-sm">

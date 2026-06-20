@@ -153,12 +153,6 @@ onMounted(async () => {
           <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">user.&lt;assigned on save&gt;</code>
           <p class="text-xs opacity-50">Cardholders are keyed by their record id in the ACC_POLICY bucket.</p>
         </RailCard>
-        <RailCard title="About cardholders" icon="🪪">
-          <p class="text-xs opacity-60 leading-relaxed">
-            A cardholder is a person who holds credentials — not a PocketBase login. Roles grant access groups;
-            add their badges and PINs from the cardholder page once saved.
-          </p>
-        </RailCard>
       </template>
 
       <template #footer>
