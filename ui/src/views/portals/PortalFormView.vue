@@ -8,6 +8,9 @@ import type { Portal, Location, Controller, Schedule, Posture, PortalType } from
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import IndexPicker from '@/components/ui/IndexPicker.vue'
+import { useControllerIO } from '@/composables/useControllerIO'
+import { conflictsAt } from '@/utils/io'
 
 const router = useRouter()
 const route = useRoute()
@@ -51,6 +54,13 @@ const loading = ref(false)
 const loadingRecord = ref(false)
 
 const kvKey = computed(() => policyKey('portals', { code: form.value.code.trim() }))
+
+// The assigned controller's hardware capacity + current I/O occupancy, so the
+// relay/input pickers can offer valid indices and flag collisions on that box.
+const ctrlId = computed(() => form.value.controller)
+const { profile, io } = useControllerIO(ctrlId)
+const relayLines = computed(() => profile.value?.relays ?? [])
+const inputLines = computed(() => profile.value?.inputs ?? [])
 
 async function loadOptions() {
   try {
@@ -106,6 +116,21 @@ async function handleSubmit() {
   }
   if (form.value.auto_schedule && !form.value.auto_posture) {
     toast.error('Scheduled posture: pick a posture, or clear the schedule'); return
+  }
+  // DPS and REX are distinct functions; they can't share one input line.
+  if (form.value.dps_input && form.value.dps_input === form.value.rex_input) {
+    toast.error('DPS and REX cannot use the same input index'); return
+  }
+  // Reject indices already claimed by another portal/aux point on the same box.
+  const conflicts: string[] = []
+  const lr = conflictsAt(io.value.relays, form.value.lock_relay, recordId)
+  if (lr.length) conflicts.push(`lock relay ${form.value.lock_relay} (${lr.map((o) => o.label).join(', ')})`)
+  const dps = conflictsAt(io.value.inputs, form.value.dps_input, recordId)
+  if (dps.length) conflicts.push(`DPS input ${form.value.dps_input} (${dps.map((o) => o.label).join(', ')})`)
+  const rex = conflictsAt(io.value.inputs, form.value.rex_input, recordId)
+  if (rex.length) conflicts.push(`REX input ${form.value.rex_input} (${rex.map((o) => o.label).join(', ')})`)
+  if (conflicts.length) {
+    toast.error(`Hardware conflict on this controller: ${conflicts.join('; ')}`); return
   }
 
   loading.value = true
@@ -238,16 +263,18 @@ onMounted(async () => {
             </select>
           </FormField>
 
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <FormField label="Lock relay">
-              <input v-model.number="form.lock_relay" type="number" min="0" class="input input-bordered" />
+              <IndexPicker v-model="form.lock_relay" :lines="relayLines" :usage="io.relays" :self-id="recordId" none-label="— no lock —" />
             </FormField>
             <FormField label="DPS input">
-              <input v-model.number="form.dps_input" type="number" min="0" class="input input-bordered" />
+              <IndexPicker v-model="form.dps_input" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
             </FormField>
             <FormField label="REX input">
-              <input v-model.number="form.rex_input" type="number" min="0" class="input input-bordered" />
+              <IndexPicker v-model="form.rex_input" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
             </FormField>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
             <FormField label="Held-open (s)">
               <input v-model.number="form.held_open_seconds" type="number" min="0" class="input input-bordered" />
             </FormField>
@@ -256,9 +283,9 @@ onMounted(async () => {
             </FormField>
           </div>
           <p class="text-xs opacity-50">
-            Logical relay/input indices on the controller; its model template maps them to physical lines.
-            Door-position (DPS) and request-to-exit (REX) drive forced/held-open detection. Ignored for logical portals.
-            Reader address is the OSDP PD address on the controller's RS485 bus (used only when the controller's reader is OSDP; 0 for a single reader).
+            Relay/input pickers list the assigned controller model's lines and flag any already in use on that box.
+            Door-position (DPS) and request-to-exit (REX) drive forced/held-open detection; leave at “none” if unmonitored. Ignored for logical portals.
+            Pick a controller to see its lines (otherwise enter the raw index). Reader address is the OSDP PD address on the controller's RS485 bus (used only when the controller's reader is OSDP; 0 for a single reader).
           </p>
         </div>
       </BaseCard>

@@ -6,12 +6,15 @@ import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { policyKey } from '@/utils/policyKey'
 import { formatDate, formatRelativeTime } from '@/utils/format'
-import type { Controller, Portal } from '@/types/pocketbase'
+import { modelProfile, type ModelProfile } from '@/utils/models'
+import { buildControllerIO, type ControllerIO } from '@/utils/io'
+import type { Controller, Portal, AuxInput, AuxOutput } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
+import ControllerIOMap from '@/components/ui/ControllerIOMap.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -21,6 +24,10 @@ const { confirm } = useConfirm()
 const recordId = route.params.id as string
 const record = ref<Controller | null>(null)
 const portals = ref<Portal[]>([])
+const auxInputs = ref<AuxInput[]>([])
+const auxOutputs = ref<AuxOutput[]>([])
+const profile = ref<ModelProfile | null>(null)
+const io = ref<ControllerIO>({ relays: new Map(), inputs: new Map() })
 const loading = ref(true)
 const deleting = ref(false)
 
@@ -30,12 +37,18 @@ const kvKey = computed(() => (record.value ? policyKey('controllers', record.val
 async function load() {
   loading.value = true
   try {
-    const [c, p] = await Promise.all([
+    const [c, p, ai, ao] = await Promise.all([
       pb.collection('controllers').getOne<Controller>(recordId, { expand: 'location' }),
       pb.collection('portals').getFullList<Portal>({ filter: `controller = "${recordId}"`, sort: 'code' }),
+      pb.collection('aux_input').getFullList<AuxInput>({ filter: `controller = "${recordId}"`, sort: 'code' }),
+      pb.collection('aux_output').getFullList<AuxOutput>({ filter: `controller = "${recordId}"`, sort: 'code' }),
     ])
     record.value = c
     portals.value = p
+    auxInputs.value = ai
+    auxOutputs.value = ao
+    profile.value = await modelProfile(c.model || '')
+    io.value = buildControllerIO(p, ai, ao)
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load controller')
     router.push('/controllers')
@@ -109,6 +122,8 @@ onMounted(load)
       </div>
     </BaseCard>
 
+    <ControllerIOMap :profile="profile" :io="io" />
+
     <RelationList
       title="Drives portals"
       icon="🚪"
@@ -120,6 +135,34 @@ onMounted(load)
     >
       <template #actions>
         <router-link :to="`/portals/new?controller=${record.id}`" class="btn btn-sm btn-outline">+ Add portal</router-link>
+      </template>
+    </RelationList>
+
+    <RelationList
+      title="Aux inputs"
+      icon="🔌"
+      :items="auxInputs"
+      :to="(a) => `/aux-inputs/${a.id}`"
+      :primary="(a) => a.code"
+      :secondary="(a) => (a.input_index ? `input ${a.input_index}` : a.name)"
+      empty="No aux inputs monitored by this controller."
+    >
+      <template #actions>
+        <router-link :to="`/aux-inputs/new?controller=${record.id}`" class="btn btn-sm btn-outline">+ Add aux input</router-link>
+      </template>
+    </RelationList>
+
+    <RelationList
+      title="Aux outputs"
+      icon="⚡"
+      :items="auxOutputs"
+      :to="(a) => `/aux-outputs/${a.id}`"
+      :primary="(a) => a.code"
+      :secondary="(a) => (a.relay_index ? `relay ${a.relay_index}` : a.name)"
+      empty="No aux outputs driven by this controller."
+    >
+      <template #actions>
+        <router-link :to="`/aux-outputs/new?controller=${record.id}`" class="btn btn-sm btn-outline">+ Add aux output</router-link>
       </template>
     </RelationList>
 

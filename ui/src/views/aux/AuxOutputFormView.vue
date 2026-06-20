@@ -8,6 +8,9 @@ import type { AuxOutput, Location, Controller } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import IndexPicker from '@/components/ui/IndexPicker.vue'
+import { useControllerIO } from '@/composables/useControllerIO'
+import { conflictsAt } from '@/utils/io'
 
 const router = useRouter()
 const route = useRoute()
@@ -31,6 +34,11 @@ const loading = ref(false)
 const loadingRecord = ref(false)
 
 const kvKey = computed(() => policyKey('aux_output', { code: form.value.code }))
+
+// The driving controller's capacity + occupancy, for the relay-index picker.
+const ctrlId = computed(() => form.value.controller)
+const { profile, io } = useControllerIO(ctrlId)
+const relayLines = computed(() => profile.value?.relays ?? [])
 
 async function loadOptions() {
   try {
@@ -69,6 +77,10 @@ async function loadRecord() {
 async function handleSubmit() {
   if (!form.value.code.trim()) { toast.error('Code is required'); return }
   if (!form.value.location) { toast.error('Location is required'); return }
+  const taken = conflictsAt(io.value.relays, form.value.relay_index, recordId)
+  if (taken.length) {
+    toast.error(`Relay ${form.value.relay_index} already used by ${taken.map((o) => o.label).join(', ')} on this controller`); return
+  }
 
   loading.value = true
   try {
@@ -141,8 +153,8 @@ onMounted(async () => {
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Relay index" hint="Logical relay index on the box.">
-              <input v-model.number="form.relay_index" type="number" min="0" class="input input-bordered w-32" />
+            <FormField label="Relay index" hint="The box's relay line to drive; the picker lists the model's lines and flags any already in use.">
+              <IndexPicker v-model="form.relay_index" :lines="relayLines" :usage="io.relays" :self-id="recordId" />
             </FormField>
             <FormField label="Pulse seconds" hint="Default duration for a momentary pulse.">
               <input v-model.number="form.pulse_seconds" type="number" min="0" class="input input-bordered w-32" />

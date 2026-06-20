@@ -8,6 +8,9 @@ import type { AuxInput, Location, Controller } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import IndexPicker from '@/components/ui/IndexPicker.vue'
+import { useControllerIO } from '@/composables/useControllerIO'
+import { conflictsAt } from '@/utils/io'
 
 const router = useRouter()
 const route = useRoute()
@@ -30,6 +33,11 @@ const loading = ref(false)
 const loadingRecord = ref(false)
 
 const kvKey = computed(() => policyKey('aux_input', { code: form.value.code }))
+
+// The monitoring controller's capacity + occupancy, for the input-index picker.
+const ctrlId = computed(() => form.value.controller)
+const { profile, io } = useControllerIO(ctrlId)
+const inputLines = computed(() => profile.value?.inputs ?? [])
 
 async function loadOptions() {
   try {
@@ -67,6 +75,10 @@ async function loadRecord() {
 async function handleSubmit() {
   if (!form.value.code.trim()) { toast.error('Code is required'); return }
   if (!form.value.location) { toast.error('Location is required'); return }
+  const taken = conflictsAt(io.value.inputs, form.value.input_index, recordId)
+  if (taken.length) {
+    toast.error(`Input ${form.value.input_index} already used by ${taken.map((o) => o.label).join(', ')} on this controller`); return
+  }
 
   loading.value = true
   try {
@@ -137,8 +149,8 @@ onMounted(async () => {
             </FormField>
           </div>
 
-          <FormField label="Input index" hint="Logical input index on the box; the model template maps it to a physical line.">
-            <input v-model.number="form.input_index" type="number" min="0" class="input input-bordered w-32" />
+          <FormField label="Input index" hint="The box's input line to monitor; the picker lists the model's lines and flags any already in use.">
+            <IndexPicker v-model="form.input_index" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
           </FormField>
         </div>
       </BaseCard>

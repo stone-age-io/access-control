@@ -13,6 +13,8 @@
 // picks the matching backend from Profile.Transport().
 package hardware
 
+import "fmt"
+
 // Backend is the physical access method for a line.
 type Backend string
 
@@ -43,6 +45,22 @@ type LineSpec struct {
 	Bus  int
 	Addr int
 	Pin  int
+}
+
+// Label is a short human description of the physical line, for diagnostics and the
+// management UI's controller I/O map: the BCM pin for a GPIO line, or the expander
+// address and pin (with the MCP23017 port) for an I2C line.
+func (s LineSpec) Label() string {
+	switch s.Backend {
+	case BackendI2C:
+		port := "A"
+		if s.Pin >= 8 {
+			port = "B"
+		}
+		return fmt.Sprintf("MCP 0x%02X pin %d (port %s)", s.Addr, s.Pin, port)
+	default:
+		return fmt.Sprintf("BCM %d", s.Offset)
+	}
 }
 
 // SerialPort describes a model's RS485 serial port — where an OSDP reader bus is
@@ -81,6 +99,14 @@ func (p Profile) Input(idx int) (LineSpec, bool) {
 	s, ok := p.inputs[idx]
 	return s, ok
 }
+
+// RelayCount reports how many logical relay outputs the model defines; the valid
+// relay-index range is 1..RelayCount.
+func (p Profile) RelayCount() int { return len(p.relays) }
+
+// InputCount reports how many logical digital inputs the model defines; the valid
+// input-index range is 1..InputCount.
+func (p Profile) InputCount() int { return len(p.inputs) }
 
 // Lines returns every physical line the profile defines — relays then inputs, in
 // ascending logical-index order — for backend setup and diagnostics (e.g.

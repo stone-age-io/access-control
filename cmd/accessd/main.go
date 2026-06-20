@@ -31,6 +31,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/mirror"
+	"github.com/stone-age-io/access-control/internal/modelsapi"
 	"github.com/stone-age-io/access-control/internal/natsx"
 	"github.com/stone-age-io/access-control/internal/status"
 	"github.com/stone-age-io/access-control/internal/subjects"
@@ -177,6 +178,10 @@ func main() {
 		// Command bridge: superuser-only HTTP routes → control-plane NATS commands
 		// (cmd.grant / cmd.posture). The UI's only way to drive a portal.
 		commandapi.Register(e, nc.NC, subj, log)
+
+		// Hardware-model catalogue: read-only GET /api/models the UI reads to render
+		// the controller I/O map and bound the relay/input index pickers.
+		modelsapi.Register(e)
 
 		// Status projector: ACC_STATUS device shadow → point_status projection (UI
 		// live state). Watches on a background context so it outlives this setup

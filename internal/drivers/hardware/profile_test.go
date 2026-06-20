@@ -80,6 +80,33 @@ func TestPi5R8Mapping(t *testing.T) {
 	}
 }
 
+// Both shipping models expose 8 relays + 8 inputs; the counts back the UI's index
+// pickers (valid range 1..count).
+func TestLineCounts(t *testing.T) {
+	for _, m := range []string{"kincony-server-mini", "kincony-pi5r8"} {
+		p, _ := ProfileFor(m)
+		if p.RelayCount() != 8 || p.InputCount() != 8 {
+			t.Errorf("%s = %d relays / %d inputs, want 8/8", m, p.RelayCount(), p.InputCount())
+		}
+	}
+}
+
+// Label renders the physical line for the UI's I/O map: BCM pin for GPIO, expander
+// address+pin+port for I2C.
+func TestLineLabel(t *testing.T) {
+	gp, _ := ProfileFor("kincony-server-mini")
+	if s, _ := gp.Relay(1); s.Label() != "BCM 5" {
+		t.Errorf("server-mini relay 1 label = %q, want %q", s.Label(), "BCM 5")
+	}
+	ip, _ := ProfileFor("kincony-pi5r8")
+	if s, _ := ip.Input(1); s.Label() != "MCP 0x20 pin 0 (port A)" {
+		t.Errorf("pi5r8 input 1 label = %q, want %q", s.Label(), "MCP 0x20 pin 0 (port A)")
+	}
+	if s, _ := ip.Relay(1); s.Label() != "MCP 0x20 pin 8 (port B)" {
+		t.Errorf("pi5r8 relay 1 label = %q, want %q", s.Label(), "MCP 0x20 pin 8 (port B)")
+	}
+}
+
 // Transport reports the backend the controller uses to pick a driver.
 func TestTransport(t *testing.T) {
 	if p, _ := ProfileFor("kincony-server-mini"); p.Transport() != BackendGPIO {
