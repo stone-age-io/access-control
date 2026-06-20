@@ -14,7 +14,7 @@ const uiStore = useUIStore()
 const isLargeScreen = useMediaQuery('(min-width: 1024px)')
 const effectiveCompact = computed(() => uiStore.sidebarCompact && isLargeScreen.value)
 
-interface NavItem { label: string; icon: string; path: string; child?: boolean }
+interface NavItem { label: string; icon: string; path: string; child?: boolean; roles?: string[] }
 interface NavSection { title?: string; items: NavItem[] }
 
 const sections: NavSection[] = [
@@ -26,7 +26,7 @@ const sections: NavSection[] = [
       { label: 'Credentials', icon: '🎫', path: '/credentials', child: true },
       { label: 'Roles', icon: '🛡️', path: '/roles' },
       { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
-      { label: 'Import', icon: '📥', path: '/import' },
+      { label: 'Import', icon: '📥', path: '/import', roles: ['operator', 'admin'] },
     ],
   },
   {
@@ -45,7 +45,26 @@ const sections: NavSection[] = [
     title: 'Activity',
     items: [{ label: 'Events', icon: '📋', path: '/events' }],
   },
+  {
+    title: 'Administration',
+    items: [
+      { label: 'Operators', icon: '👥', path: '/operators', roles: ['admin'] },
+      { label: 'Audit Log', icon: '📜', path: '/audit-log', roles: ['admin'] },
+    ],
+  },
 ]
+
+// Hide items the current role can't reach; drop sections left empty.
+const visibleSections = computed<NavSection[]>(() =>
+  sections
+    .map((s) => ({ ...s, items: s.items.filter((i) => !i.roles || i.roles.includes(authStore.role)) }))
+    .filter((s) => s.items.length > 0),
+)
+
+const roleLabel = computed(() => {
+  const r = authStore.role
+  return r ? r.charAt(0).toUpperCase() + r.slice(1) : 'Operator'
+})
 
 function isActive(path: string): boolean {
   if (path === '/') return route.path === '/'
@@ -101,7 +120,7 @@ async function handleLogout() {
     <!-- NAVIGATION -->
     <nav class="flex-1 overflow-y-auto overflow-x-hidden px-3 pb-2">
       <ul class="menu p-0 gap-1 w-full">
-        <template v-for="(section, si) in sections" :key="si">
+        <template v-for="(section, si) in visibleSections" :key="si">
           <li v-if="section.title && !effectiveCompact" class="menu-title px-2 pt-3 pb-1 text-[10px] uppercase tracking-widest opacity-50">
             {{ section.title }}
           </li>
@@ -156,7 +175,7 @@ async function handleLogout() {
           </div>
         </div>
         <div v-show="!effectiveCompact" class="flex flex-col truncate flex-1 text-left min-w-0">
-          <span class="font-semibold text-sm truncate leading-tight">Superuser</span>
+          <span class="font-semibold text-sm truncate leading-tight">{{ roleLabel }}</span>
           <span class="text-xs text-base-content/60 truncate leading-tight">{{ authStore.email }}</span>
         </div>
         <button

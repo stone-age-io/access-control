@@ -56,7 +56,7 @@ async function handleLogin() {
         </form>
 
         <p class="text-center text-xs opacity-50 mt-4">
-          Authenticates as a PocketBase superuser.
+          Sign in with your operator account. Superusers use the PocketBase dashboard (/_/).
         </p>
       </div>
     </div>

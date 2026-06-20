@@ -101,3 +101,7 @@ accessd:
   # record directly. Keep this a few controller heartbeatIntervals so one dropped
   # heartbeat does not flap a box offline.
   controllerOfflineAfter: 45s
+  # How long to keep control-plane audit rows (audit_logs — who changed which
+  # policy record, written by internal/changelog) before a daily 03:00 prune
+  # deletes them. Unset (0) = 365 days; set negative to keep forever.
+  auditRetentionDays: 365

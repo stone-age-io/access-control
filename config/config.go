@@ -138,6 +138,10 @@ type AccessdConfig struct {
 	// controller before marking it offline. Should exceed a controller's
 	// HeartbeatInterval by a few intervals. Defaults to 45s.
 	ControllerOfflineAfter time.Duration `json:"controllerOfflineAfter" yaml:"controllerOfflineAfter" mapstructure:"controllerOfflineAfter"`
+	// AuditRetentionDays is how long control-plane audit rows (audit_logs, written
+	// by internal/changelog) are kept before a daily prune deletes them. Unset (0)
+	// defaults to 365; set a negative value to disable pruning (keep forever).
+	AuditRetentionDays int `json:"auditRetentionDays" yaml:"auditRetentionDays" mapstructure:"auditRetentionDays"`
 }
 
 // ControllerConfig is the edge controller's configuration — just its identity.
@@ -289,6 +293,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Accessd.ControllerOfflineAfter == 0 {
 		cfg.Accessd.ControllerOfflineAfter = 45 * time.Second
+	}
+	if cfg.Accessd.AuditRetentionDays == 0 {
+		cfg.Accessd.AuditRetentionDays = 365
 	}
 	if cfg.Controller.Driver == "" {
 		cfg.Controller.Driver = "mock"

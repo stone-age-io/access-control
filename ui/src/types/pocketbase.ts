@@ -189,6 +189,35 @@ export interface PointStatus extends BaseRecord {
   payload: Record<string, any>
 }
 
+export type OperatorRole = 'admin' | 'operator' | 'viewer'
+
+/** A management-UI operator (the built-in `users` auth collection + role). */
+export interface User extends BaseRecord {
+  email: string
+  name: string
+  verified: boolean
+  /** admin = full control; operator = daily ops; viewer = read-only. */
+  role: OperatorRole | ''
+}
+
+export type AuditEventType = 'create' | 'update' | 'delete' | 'auth'
+
+/** Control-plane change log (who edited which policy record), written by internal/changelog. */
+export interface AuditLog extends BaseRecord {
+  event_type: AuditEventType | ''
+  collection_name: string
+  record_id: string
+  actor_email: string
+  actor_id: string
+  actor_collection: string
+  request_ip: string
+  request_method: string
+  request_url: string
+  timestamp: string
+  before: Record<string, any> | null
+  after: Record<string, any> | null
+}
+
 /** Queryable projection of the JetStream audit stream. */
 export interface AccessEvent extends BaseRecord {
   location: string

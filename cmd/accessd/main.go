@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/audit"
+	"github.com/stone-age-io/access-control/internal/changelog"
 	"github.com/stone-age-io/access-control/internal/commandapi"
 	"github.com/stone-age-io/access-control/internal/health"
 	"github.com/stone-age-io/access-control/internal/logger"
@@ -72,6 +73,13 @@ func main() {
 		Automigrate:  true,
 		TemplateLang: migratecmd.TemplateLangGo,
 	})
+
+	// Control-plane audit log: record who changes which policy record, via API.
+	// Binds *Request hooks (API-only), so accessd's own app.Save() writes
+	// (heartbeats, projections, mirror) never appear. Registered here (not in
+	// OnServe) since it's pure PocketBase — independent of NATS — and the hooks
+	// only fire once serving anyway.
+	changelog.Register(pb, cfg.Accessd.AuditRetentionDays, log)
 
 	// Resources brought up only when actually serving (not for migrate/superuser).
 	var (

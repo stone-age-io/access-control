@@ -6,8 +6,8 @@
 // internal/drivers/hardware rather than being duplicated in the frontend.
 //
 // The catalogue is static — derived from the compiled-in profiles — so the route is
-// a plain GET with no NATS or PocketBase reads. Superuser-only, consistent with the
-// collections' nil access rules (the UI authenticates as a superuser).
+// a plain GET with no NATS or PocketBase reads. Any authenticated operator may read
+// it (every role, including viewer, needs it to render the controller I/O map).
 package modelsapi
 
 import (
@@ -35,7 +35,7 @@ type model struct {
 
 // Register wires GET /api/models onto the serve event's router.
 func Register(se *core.ServeEvent) {
-	se.Router.GET("/api/models", handle).Bind(apis.RequireSuperuserAuth())
+	se.Router.GET("/api/models", handle).Bind(apis.RequireAuth())
 }
 
 func handle(e *core.RequestEvent) error {
