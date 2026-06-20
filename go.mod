@@ -11,6 +11,8 @@ require (
 	github.com/warthog618/go-gpiocdev v0.9.1
 	go.uber.org/zap v1.27.1
 	go.uber.org/zap/exp v0.3.0
+	periph.io/x/conn/v3 v3.7.3
+	periph.io/x/host/v3 v3.8.5
 )
 
 require (

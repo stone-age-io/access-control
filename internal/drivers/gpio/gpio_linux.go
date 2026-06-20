@@ -256,6 +256,8 @@ func (h *Hardware) onEdge(code, kind string) gpiocdev.EventHandler {
 			e.Closed = active // DPS active = contact closed = door shut
 		case drivers.InputREX:
 			e.Active = active // REX active = egress pressed
+		case drivers.InputAux:
+			e.Active = active // aux active = observed line asserted
 		}
 		select {
 		case h.ch <- e:

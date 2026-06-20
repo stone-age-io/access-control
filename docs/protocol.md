@@ -11,7 +11,19 @@ The wire contract between the central app (`accessd`) and the edge controllers
 Subjects, KV keys, and message shapes below are the source of truth shared by
 both binaries. Subject construction and parsing live in one place,
 [`internal/subjects`](../internal/subjects/subjects.go); the KV value shapes live
-in [`internal/policykv`](../internal/policykv/wire.go).
+in [`internal/policykv`](../internal/policykv/wire.go) (policy, downward) and
+[`internal/statuskv`](../internal/statuskv/wire.go) (status, upward). Config keys
+(bucket/stream names, the app token) have their own reference in
+[`configuration.md`](configuration.md).
+
+## Contents
+
+- [Subject namespace](#subject-namespace) — the `acc.>` token layout and why it leads
+- [Subjects](#subjects) — every subject, command bodies, door alarms, scheduled posture
+- [Policy KV (`ACC_POLICY`)](#policy-kv-bucket-acc_policy) — downward policy mirror, one key per record
+- [Status KV (`ACC_STATUS`)](#status-kv-bucket-acc_status) — upward device shadow
+- [Decision](#decision) — the pure `policy.Decide` order and reason codes
+- [Audit projection](#audit-projection-events-collection) — JetStream → PocketBase `events` rows
 
 ## Subject namespace
 
@@ -52,8 +64,9 @@ collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
 \* → ctrl = controller subscribes; ctrl → = controller publishes.
 
 Controllers subscribe per location with wildcards: taps via
-`acc.{location}.*.*.tap` and commands via `acc.{location}.*.*.cmd.posture` /
-`acc.{location}.*.*.cmd.grant`. The audit surface is the `acc.*.…evt` subtree,
+`acc.{location}.*.*.tap` and commands via `acc.{location}.*.*.cmd.posture`,
+`acc.{location}.*.*.cmd.grant`, and `acc.{location}.*.*.cmd.output` (aux outputs).
+The audit surface is the `acc.*.…evt` subtree,
 captured by `ACC_EVENTS` and projected into the `events` collection via **two
 stream subjects of different fixed arity** (JetStream forbids overlapping subjects,
 so the short one must not use a trailing `>`):
@@ -76,9 +89,7 @@ subscribes to `acc.*.ctrl.*.heartbeat` over core NATS and writes the controller'
 which would flood the audit log). A controller publishes one heartbeat on start
 and then every `controller.heartbeatInterval` (default 15s); accessd marks a
 controller `offline` once it has been silent longer than
-`accessd.controllerOfflineAfter` (default 45s). The publish ticker is one of the
-controller's three deliberate exceptions to its no-ticker rule (the others are the
-held-open DOTL timer and the scheduled-posture hold-eval ticker, below).
+`accessd.controllerOfflineAfter` (default 45s).
 
 ### Command details
 
@@ -123,7 +134,7 @@ a **door-position switch** (DPS, `dpsInput`) and an optional **request-to-exit**
 
 A grant (an `allow` tap or a `grant` command) and a REX press each open a short
 window during which a door-open reads as *authorized* (no `forced`), arming the
-held-open timer instead; the DOTL timer is a deliberate no-ticker exception. While
+held-open timer instead. While
 a location's **fire** input is active, all alarm emission is suppressed
 (forced/held during evacuation would be false alarms). The DOTL timer and the
 held-open threshold are hardware-local timing, not policy.
@@ -137,7 +148,7 @@ driven portal's hold in step with its effective posture three ways: immediately 
 a posture command (so a lockdown re-locks at once), immediately when a portal is
 armed, and on a periodic **hold-eval reconcile** (default 10s) that re-evaluates
 each portal and is the no-event fallback that flips scheduled posture at window
-boundaries — the controller's third deliberate timer exception. The reconcile is a
+boundaries. The reconcile is a
 *sampling* loop (it reads "is the window open now", never computes boundaries), so
 the interval is a pure latency knob with no correctness coupling; if an
 `autoSchedule` is set but not yet loaded (mid re-sync) the reconcile keeps the
@@ -150,8 +161,9 @@ de-energizes (fail-secure: the door re-locks; egress stays hardware-owned).
 > `acc.{location}.{type}.{thing}.tap` (the legacy/integration path; a real OSDP/
 > Wiegand `ReaderDriver` slots in later). The **lock and door inputs have real
 > drivers**: `controller.driver: mock` (default — no physical I/O, no door
-> monitoring) or `gpio` (relays + DPS/REX over the Linux GPIO character device,
-> via the `controller.model` hardware profile; Linux/arm64 edge hardware).
+> monitoring) or `gpio` (relays + DPS/REX on real hardware, the `controller.model`
+> profile selecting the transport — native GPIO char device or an MCP23017 I2C
+> expander; Linux edge hardware).
 
 ## Policy KV (bucket `ACC_POLICY`)
 
@@ -212,12 +224,18 @@ reconnect performs a full re-sync.
 ## Status KV (bucket `ACC_STATUS`)
 
 The upward "device shadow" — the live state of each point the edge drives, the
-mirror image of `ACC_POLICY`: **controllers write** (one key per point);
-**accessd watches** and projects into the rebuildable `point_status` collection
-(the UI subscribes for realtime). Latest-wins per key (KV history 1): this is
-"what is true now," not history — the history of record is `ACC_EVENTS`. accessd
-owns bucket creation; controllers bind it read-write. A controller deletes its
-keys on disarm; a reconnect re-publishes the whole shadow.
+mirror image of `ACC_POLICY`: **controllers write** (one key per point, value
+shapes in [`internal/statuskv`](../internal/statuskv/wire.go)); **accessd watches**
+and projects into the rebuildable `point_status` collection (the UI subscribes for
+realtime). Latest-wins per key (KV history 1): this is "what is true now," not
+history — the history of record is `ACC_EVENTS`. accessd owns bucket creation;
+controllers bind it read-write. A controller deletes its keys on disarm; a
+reconnect re-publishes the whole shadow.
+
+accessd's projector ([`internal/status`](../internal/status)) is the upward twin
+of a controller's PolicyStore: it `WatchAll`s the bucket (a reconnect re-delivers
+every key = full re-sync), and on the sync sentinel it **prunes** `point_status`
+rows whose KV key is gone — so a deleted shadow key removes the projection row.
 
 | Key | Value shape |
 |---|---|
@@ -227,8 +245,11 @@ keys on disarm; a reconnect re-publishes the whole shadow.
 
 `door` is `unknown` on a controller without a DPS input wired (e.g. the mock
 driver) or before the first edge. `posture` is the current **effective** posture
-(command override / scheduled / standing). `energized` is an aux output's standing
-held state (a `pulse` is momentary and not reflected).
+(command override / scheduled / standing). `held` is the **door-held-open (DOTL)
+alarm flag** — true while a held-open alarm is active — **not** the strike's
+physical state; the strike hold follows `posture` (only `unlocked` holds it).
+`energized` is an aux output's standing held state (a `pulse` is momentary and
+not reflected).
 
 ## Decision
 

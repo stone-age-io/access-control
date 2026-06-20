@@ -86,11 +86,13 @@ controller:
   # Portal hardware backend:
   #   mock — simulated (default). No physical I/O: taps arrive over NATS and there
   #          is no door monitoring. Use for dev or a logical-only controller.
-  #   gpio — drive real relays and DPS/REX inputs via the Linux GPIO character
-  #          device. Requires `model` below. Linux/arm64 edge hardware only.
+  #   gpio — drive real relays and DPS/REX inputs. The `model` below picks the
+  #          physical transport: native GPIO char device (kincony-server-mini) or
+  #          an MCP23017 I2C expander (kincony-pi5r8). Requires `model`. Linux only.
   driver: "mock"
-  # Hardware model — selects the GPIO profile mapping a portal's logical relay/
-  # input indices to physical lines. Required when driver is "gpio"; must match a
-  # registered model (kincony-server-mini | kincony-pi5r8) and the controllers
-  # record. Relay/input wiring polarity is encoded in the profile, not here.
+  # Hardware model — selects the profile mapping a portal's logical relay/input
+  # indices to physical lines AND the transport (GPIO vs I2C). Required when driver
+  # is "gpio"; must match a registered model (kincony-server-mini | kincony-pi5r8)
+  # and the controllers record. Relay/input wiring polarity is in the profile, not
+  # here.
   # model: "kincony-server-mini"

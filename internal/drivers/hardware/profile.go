@@ -7,9 +7,10 @@
 //
 // Two physical backends are modelled. The KinCony Server-Mini (Raspberry Pi CM4)
 // wires relays and inputs to CM4 GPIO directly, so its lines are BackendGPIO
-// (gpiochip + offset). The Pi5R8 (planned) addresses I/O through I2C expanders,
-// so its lines are BackendI2C — defined here as data but not yet driven (the GPIO
-// backend rejects BackendI2C with a clear error).
+// (gpiochip + offset), driven by internal/drivers/gpio. The Pi5R8 (Raspberry Pi
+// CM5) addresses I/O through an MCP23017 I2C expander, so its lines are
+// BackendI2C (bus + addr + pin), driven by internal/drivers/i2c. The controller
+// picks the matching backend from Profile.Transport().
 package hardware
 
 // Backend is the physical access method for a line.
@@ -18,8 +19,8 @@ type Backend string
 const (
 	// BackendGPIO is a direct GPIO character-device line (chip + offset).
 	BackendGPIO Backend = "gpio"
-	// BackendI2C is an I2C GPIO-expander pin (bus + addr + pin). Declared for the
-	// Pi5R8 profile; not implemented this milestone.
+	// BackendI2C is an I2C GPIO-expander pin (bus + addr + pin), e.g. an MCP23017.
+	// Driven by internal/drivers/i2c.
 	BackendI2C Backend = "i2c"
 )
 
@@ -36,7 +37,9 @@ type LineSpec struct {
 	// "relay energized" / "input contact made" regardless of wiring polarity.
 	ActiveLow bool
 
-	// BackendI2C (Pi5R8 — placeholder values, verify against the schematic):
+	// BackendI2C (e.g. MCP23017): Bus is the Linux I2C bus number (/dev/i2c-N),
+	// Addr is the 7-bit device address, and Pin is the expander pin 0-15 — 0-7 is
+	// port A, 8-15 is port B.
 	Bus  int
 	Addr int
 	Pin  int
@@ -62,6 +65,35 @@ func (p Profile) Relay(idx int) (LineSpec, bool) {
 func (p Profile) Input(idx int) (LineSpec, bool) {
 	s, ok := p.inputs[idx]
 	return s, ok
+}
+
+// Lines returns every physical line the profile defines — relays then inputs, in
+// ascending logical-index order — for backend setup and diagnostics (e.g.
+// resolving the I2C bus a model's lines share).
+func (p Profile) Lines() []LineSpec {
+	out := make([]LineSpec, 0, len(p.relays)+len(p.inputs))
+	for i := 1; i <= len(p.relays); i++ {
+		if s, ok := p.relays[i]; ok {
+			out = append(out, s)
+		}
+	}
+	for i := 1; i <= len(p.inputs); i++ {
+		if s, ok := p.inputs[i]; ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Transport reports the physical backend this model's lines use, so the
+// controller can construct the matching driver (GPIO char device vs I2C). A
+// profile is homogeneous — every line shares one backend — so this returns the
+// backend of the first defined line, and BackendGPIO if the profile is empty.
+func (p Profile) Transport() Backend {
+	if lines := p.Lines(); len(lines) > 0 {
+		return lines[0].Backend
+	}
+	return BackendGPIO
 }
 
 // ProfileFor returns the hardware profile for a controller model and whether one
@@ -106,39 +138,45 @@ func i2cLine(bus, addr, pin int, activeLow bool) LineSpec {
 // record.
 var registry = map[string]Profile{
 	// KinCony Server-Mini (Raspberry Pi CM4, 8 relays + 8 inputs to GPIO directly).
-	// BCM pin map per KinCony's CM4 pin definition; relay/input polarity assumed
-	// per the board's typical wiring — verify on the bench before production.
+	// BCM pin map verified against KinCony's published CM4 pin definition: logical
+	// relay N = OUTn, logical input N = INn. Line polarity (relays active-high,
+	// inputs active-low) follows the board's wiring convention — verify on the
+	// bench before production.
 	"kincony-server-mini": {
 		Model: "kincony-server-mini",
+		// OUT1..8 = BCM 5, 22, 17, 4, 6, 13, 19, 26
 		relays: map[int]LineSpec{
 			1: gpioRelay(5), 2: gpioRelay(22), 3: gpioRelay(17), 4: gpioRelay(4),
 			5: gpioRelay(6), 6: gpioRelay(13), 7: gpioRelay(19), 8: gpioRelay(26),
 		},
+		// IN1..8 = BCM 18, 23, 24, 25, 12, 16, 20, 21
 		inputs: map[int]LineSpec{
 			1: gpioInput(18), 2: gpioInput(23), 3: gpioInput(24), 4: gpioInput(25),
 			5: gpioInput(12), 6: gpioInput(16), 7: gpioInput(20), 8: gpioInput(21),
 		},
 	},
 
-	// KinCony Pi5R8 (Raspberry Pi CM5) — STUB. I/O is addressed via I2C expanders
-	// rather than native GPIO; the descriptors below are PLACEHOLDERS (two PCF8574-
-	// style expanders on bus 1: relays at 0x20, inputs at 0x22) to exercise the
-	// multi-backend template. The I2C backend is not implemented this milestone, so
-	// selecting this model fails fast in the GPIO driver. Replace with verified
-	// bus/addr/pin values when the board is in hand.
+	// KinCony Pi5R8 (Raspberry Pi CM5): all 16 relay/input lines are on a single
+	// MCP23017 I2C expander at 0x20 on bus 1 (/dev/i2c-1), per KinCony's reference
+	// Node-RED flow. Inputs IN1..8 are Port A (pins 0-7), pulled up and active-low
+	// (contact to GND); relays OUT1..8 are Port B (pins 8-15). Relay polarity
+	// (assumed active-high) and a possible second expander at 0x22 (present but
+	// unused in the reference flow) are bench items to confirm on the board.
 	"kincony-pi5r8": {
 		Model: "kincony-pi5r8",
+		// OUT1..8 = MCP23017 @0x20 port B, pins 8..15
 		relays: map[int]LineSpec{
-			1: i2cLine(1, 0x20, 0, false), 2: i2cLine(1, 0x20, 1, false),
-			3: i2cLine(1, 0x20, 2, false), 4: i2cLine(1, 0x20, 3, false),
-			5: i2cLine(1, 0x20, 4, false), 6: i2cLine(1, 0x20, 5, false),
-			7: i2cLine(1, 0x20, 6, false), 8: i2cLine(1, 0x20, 7, false),
+			1: i2cLine(1, 0x20, 8, false), 2: i2cLine(1, 0x20, 9, false),
+			3: i2cLine(1, 0x20, 10, false), 4: i2cLine(1, 0x20, 11, false),
+			5: i2cLine(1, 0x20, 12, false), 6: i2cLine(1, 0x20, 13, false),
+			7: i2cLine(1, 0x20, 14, false), 8: i2cLine(1, 0x20, 15, false),
 		},
+		// IN1..8 = MCP23017 @0x20 port A, pins 0..7
 		inputs: map[int]LineSpec{
-			1: i2cLine(1, 0x22, 0, true), 2: i2cLine(1, 0x22, 1, true),
-			3: i2cLine(1, 0x22, 2, true), 4: i2cLine(1, 0x22, 3, true),
-			5: i2cLine(1, 0x22, 4, true), 6: i2cLine(1, 0x22, 5, true),
-			7: i2cLine(1, 0x22, 6, true), 8: i2cLine(1, 0x22, 7, true),
+			1: i2cLine(1, 0x20, 0, true), 2: i2cLine(1, 0x20, 1, true),
+			3: i2cLine(1, 0x20, 2, true), 4: i2cLine(1, 0x20, 3, true),
+			5: i2cLine(1, 0x20, 4, true), 6: i2cLine(1, 0x20, 5, true),
+			7: i2cLine(1, 0x20, 6, true), 8: i2cLine(1, 0x20, 7, true),
 		},
 	},
 }

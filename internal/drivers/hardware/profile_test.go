@@ -57,14 +57,35 @@ func TestUnknownModel(t *testing.T) {
 	}
 }
 
-// The Pi5R8 stub is registered with I2C-backed descriptors (defined, not driven).
-func TestPi5R8StubIsI2C(t *testing.T) {
+// The Pi5R8 maps all I/O to a single MCP23017 at 0x20 on bus 1: inputs on Port A
+// (pins 0-7, active-low), relays on Port B (pins 8-15, active-high).
+func TestPi5R8Mapping(t *testing.T) {
 	p, ok := ProfileFor("kincony-pi5r8")
 	if !ok {
-		t.Fatal("kincony-pi5r8 stub not registered")
+		t.Fatal("kincony-pi5r8 profile not registered")
 	}
-	s, ok := p.Relay(1)
-	if !ok || s.Backend != BackendI2C {
-		t.Errorf("pi5r8 relay 1 = %+v (ok=%v), want an I2C descriptor", s, ok)
+	// Relays: logical 1..8 -> Port B pins 8..15, active-high.
+	for idx, wantPin := range map[int]int{1: 8, 4: 11, 8: 15} {
+		s, ok := p.Relay(idx)
+		if !ok || s.Backend != BackendI2C || s.Bus != 1 || s.Addr != 0x20 || s.Pin != wantPin || s.ActiveLow {
+			t.Errorf("relay %d = %+v (ok=%v), want bus 1 addr 0x20 pin %d active-high", idx, s, ok, wantPin)
+		}
+	}
+	// Inputs: logical 1..8 -> Port A pins 0..7, active-low.
+	for idx, wantPin := range map[int]int{1: 0, 5: 4, 8: 7} {
+		s, ok := p.Input(idx)
+		if !ok || s.Backend != BackendI2C || s.Bus != 1 || s.Addr != 0x20 || s.Pin != wantPin || !s.ActiveLow {
+			t.Errorf("input %d = %+v (ok=%v), want bus 1 addr 0x20 pin %d active-low", idx, s, ok, wantPin)
+		}
+	}
+}
+
+// Transport reports the backend the controller uses to pick a driver.
+func TestTransport(t *testing.T) {
+	if p, _ := ProfileFor("kincony-server-mini"); p.Transport() != BackendGPIO {
+		t.Errorf("server-mini transport = %q, want gpio", p.Transport())
+	}
+	if p, _ := ProfileFor("kincony-pi5r8"); p.Transport() != BackendI2C {
+		t.Errorf("pi5r8 transport = %q, want i2c", p.Transport())
 	}
 }

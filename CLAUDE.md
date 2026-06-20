@@ -18,9 +18,11 @@ Two Go binaries plus a Vue 3 management UI:
 
 v1 status: the **reader is simulated** — taps arrive by publishing to `acc.{location}.{type}.{thing}.tap` (a real
 OSDP/Wiegand `ReaderDriver` slots in later). The **lock and door inputs have real drivers**: `internal/drivers`
-holds the interfaces + mocks; `internal/drivers/gpio` is a no-cgo GPIO backend (KinCony Server-Mini) keyed by a
-per-model profile in `internal/drivers/hardware`. A controller picks `mock` (default) or `gpio` via
-`controller.driver`.
+holds the interfaces + mocks; the two real backends sit behind a per-model profile in `internal/drivers/hardware`
+and are chosen by that profile's `Transport()` — `internal/drivers/gpio` (no-cgo Linux GPIO char device) for the
+KinCony Server-Mini (CM4), `internal/drivers/i2c` (no-cgo MCP23017 over I2C, via periph.io, inputs read by
+polling) for the Pi5R8 (CM5). A controller picks `mock` (default) or `gpio` via `controller.driver`; under `gpio`
+the `model`'s profile decides GPIO-vs-I2C transport, so neither the binary nor config changes per board.
 
 ## Build & run
 
@@ -101,8 +103,8 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   this controller's `code` (`PolicyStore.PortalsForController`), so reassigning a portal to another box, retyping
   it, or removing it takes effect without touching the box — local config shrinks to identity (`controller.code`).
   Arming reconciles on every policy change (coalesced, off the watch goroutine): for each portal it arms the
-  reader subscription, the lock, and the DPS/REX inputs via a `PortalHardware` backend (`drivers.MockHardware`
-  or the GPIO driver), and disarms the lot when the portal leaves. The controller boots **default-deny** (armed
+  reader subscription, the lock, and the DPS/REX inputs via a `PortalHardware` backend (`drivers.MockHardware`,
+  the GPIO driver, or the I2C/MCP23017 driver), and disarms the lot when the portal leaves. The controller boots **default-deny** (armed
   for nothing) instead of blocking or crashing when policy is slow/unreachable, and converges as policy arrives.
   It binds the policy KV **read-only** (`natsx.KVBucket`); accessd owns bucket creation.
 - **Door monitoring** (`internal/controller/runtime.go`) — a per-door state machine over DPS/REX inputs emits

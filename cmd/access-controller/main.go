@@ -22,6 +22,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/drivers/gpio"
 	"github.com/stone-age-io/access-control/internal/drivers/hardware"
+	"github.com/stone-age-io/access-control/internal/drivers/i2c"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/natsx"
@@ -139,15 +140,31 @@ func main() {
 			log.Fatal("unknown controller model for gpio driver",
 				"model", cfg.Controller.Model, "known", hardware.Models())
 		}
-		gpioHW, err := gpio.New(profile, log)
-		if err != nil {
-			log.Fatal("failed to initialize gpio driver", "error", err)
+		// The model profile decides the transport: native GPIO lines (CM4
+		// Server-Mini) vs an MCP23017 I2C expander (CM5 Pi5R8). Both backends
+		// satisfy the same portal/aux/door-input surface.
+		switch profile.Transport() {
+		case hardware.BackendI2C:
+			i2cHW, err := i2c.New(profile, log)
+			if err != nil {
+				log.Fatal("failed to initialize i2c driver", "error", err)
+			}
+			defer func() { _ = i2cHW.Close() }()
+			portalHW = i2cHW
+			auxHW = i2cHW
+			doorInput = i2cHW
+			log.Info("portal hardware driver: i2c", "model", cfg.Controller.Model)
+		default: // hardware.BackendGPIO
+			gpioHW, err := gpio.New(profile, log)
+			if err != nil {
+				log.Fatal("failed to initialize gpio driver", "error", err)
+			}
+			defer func() { _ = gpioHW.Close() }()
+			portalHW = gpioHW
+			auxHW = gpioHW
+			doorInput = gpioHW
+			log.Info("portal hardware driver: gpio", "model", cfg.Controller.Model)
 		}
-		defer func() { _ = gpioHW.Close() }()
-		portalHW = gpioHW
-		auxHW = gpioHW
-		doorInput = gpioHW
-		log.Info("portal hardware driver: gpio", "model", cfg.Controller.Model)
 	default: // "mock" (validated by config)
 		mockHW := drivers.NewMockHardware(log)
 		portalHW = mockHW

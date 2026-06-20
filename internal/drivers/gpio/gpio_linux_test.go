@@ -5,6 +5,9 @@ package gpio
 import (
 	"testing"
 
+	gpiocdev "github.com/warthog618/go-gpiocdev"
+
+	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/drivers/hardware"
 	"github.com/stone-age-io/access-control/internal/logger"
 )
@@ -58,6 +61,45 @@ func TestArmI2CBackendRejected(t *testing.T) {
 	_, err := d.Arm("p1", 1, 0, 0)
 	if err == nil {
 		t.Fatal("Arm on an I2C-backed model succeeded, want 'not supported' error")
+	}
+}
+
+// onEdge maps a line edge to an InputEvent per kind. Invoking the handler
+// directly with a synthetic event needs no gpiochip. A rising edge (AsActiveLow
+// already applied) is an inactive→active transition. DPS reports Closed; REX and
+// aux report Active — the aux case regressed once (neither flag set), starving
+// the runtime's aux-input state, so it is covered explicitly.
+func TestOnEdgeEventMapping(t *testing.T) {
+	d := newHW(t, "kincony-server-mini")
+	defer d.Close()
+	h := d.(*Hardware)
+
+	cases := []struct {
+		kind                   string
+		rising                 bool
+		wantClosed, wantActive bool
+	}{
+		{drivers.InputDPS, true, true, false},
+		{drivers.InputDPS, false, false, false},
+		{drivers.InputREX, true, false, true},
+		{drivers.InputAux, true, false, true},
+		{drivers.InputAux, false, false, false},
+	}
+	for _, c := range cases {
+		evType := gpiocdev.LineEventFallingEdge
+		if c.rising {
+			evType = gpiocdev.LineEventRisingEdge
+		}
+		h.onEdge("p1", c.kind)(gpiocdev.LineEvent{Type: evType})
+		select {
+		case e := <-h.Inputs():
+			if e.Portal != "p1" || e.Kind != c.kind || e.Closed != c.wantClosed || e.Active != c.wantActive {
+				t.Errorf("kind %s rising=%v: got Closed=%v Active=%v, want Closed=%v Active=%v",
+					c.kind, c.rising, e.Closed, e.Active, c.wantClosed, c.wantActive)
+			}
+		default:
+			t.Errorf("kind %s rising=%v: no event emitted", c.kind, c.rising)
+		}
 	}
 }
 

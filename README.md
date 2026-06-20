@@ -11,10 +11,20 @@ system of record (PocketBase) and mirrors policy to NATS KV one key per record;
 edge controllers (`access-controller`) watch that keyspace and decide locally.
 
 > v1 status: the **reader is simulated** (taps arrive over NATS; a real OSDP/
-> Wiegand driver slots in later), but the **lock and door inputs have real GPIO
-> drivers** (`internal/drivers/gpio`, KinCony Server-Mini) alongside the mocks,
-> selectable per controller. Door monitoring (forced / held-open) and controller
-> heartbeat/health are implemented.
+> Wiegand driver slots in later), but the **lock and door inputs have real
+> drivers** alongside the mocks, selectable per controller: native GPIO
+> (`internal/drivers/gpio`, KinCony Server-Mini / CM4) and MCP23017 over I2C
+> (`internal/drivers/i2c`, KinCony Pi5R8 / CM5). Door monitoring (forced /
+> held-open) and controller heartbeat/health are implemented.
+
+## Docs
+
+- [`docs/protocol.md`](docs/protocol.md) — the NATS wire contract: subjects, KV
+  shapes (`ACC_POLICY` + `ACC_STATUS`), decision reason codes, audit projection.
+- [`docs/configuration.md`](docs/configuration.md) — every config key, default,
+  and `SA_` env override for both binaries.
+- [`docs/hardware.md`](docs/hardware.md) — physical I/O: supported boards, pin
+  maps, relay/input polarity, transports, and how to add a board.
 
 ## Layout
 
@@ -24,8 +34,9 @@ cmd/access-controller/  edge: policy watcher + pure decision + drivers + door mo
 internal/policy/        the pure core: Policy types, Decide(), windowOpen()
 internal/controller/    PolicyStore (KV watch → maps), tap loop, door state machine, portal/lock arming, commands, heartbeat
 internal/drivers/       ReaderDriver / LockDriver / DoorInput / FAIInput interfaces + mocks (MockHardware)
-internal/drivers/hardware/  per-model hardware Profile: logical relay/input index → physical line
-internal/drivers/gpio/  GPIO lock + door-input backend (go-gpiocdev, no cgo; Linux only)
+internal/drivers/hardware/  per-model hardware Profile: logical relay/input index → physical line + transport
+internal/drivers/gpio/  native GPIO lock + door-input backend (go-gpiocdev, no cgo; Linux only)
+internal/drivers/i2c/   MCP23017 lock + door-input backend over I2C (periph.io, no cgo; polled inputs)
 internal/health/        accessd-side heartbeat subscriber → controllers.last_seen/status
 internal/audit/         JetStream consumer → PocketBase events collection
 internal/natsx/         NATS connection + KV helpers
