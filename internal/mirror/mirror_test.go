@@ -143,6 +143,45 @@ func TestKeyAndValue_ScheduleWindows(t *testing.T) {
 	if w.Start != "08:00" || w.End != "17:00" || len(w.Days) != 5 {
 		t.Errorf("window = %+v, want 08:00-17:00 on 5 days", w)
 	}
+	// ignore_holidays defaults false, so a schedule observes holidays by default.
+	if !got.ObserveHolidays {
+		t.Errorf("ObserveHolidays = false, want true (default observe)")
+	}
+}
+
+// A holiday keys under holiday.<id>, resolves its location to a code, and emits
+// the calendar-date part only.
+func TestKeyAndValue_Holiday(t *testing.T) {
+	app := newApp(t)
+	location := find(t, app, "locations", "code", "hq")
+
+	col, err := app.FindCollectionByNameOrId("holidays")
+	if err != nil {
+		t.Fatalf("collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("location", location.Id)
+	rec.Set("date", "2026-12-25 00:00:00.000Z")
+	rec.Set("name", "Christmas")
+	rec.Set("recurring", true)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	key, val, err := keyAndValue(app, rec)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	if want := "holiday." + rec.Id; key != want {
+		t.Errorf("key = %q, want %q", key, want)
+	}
+	var got policykv.Holiday
+	if err := json.Unmarshal(val, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Location != "hq" || got.Date != "2026-12-25" || !got.Recurring {
+		t.Errorf("holiday = %+v, want location=hq date=2026-12-25 recurring=true", got)
+	}
 }
 
 // Cardholders are keyed by PocketBase id under the user. prefix.

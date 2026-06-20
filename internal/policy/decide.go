@@ -12,14 +12,17 @@ import "time"
 //
 //  1. Unknown portal              -> deny_unknown_point
 //  2. Posture gate:
-//        disabled                 -> deny_point_disabled
-//        lockdown                 -> deny_lockdown          (beats a valid credential)
-//        unlocked                 -> allow_posture_unlocked (free passage; credential not consulted)
-//        secure                   -> continue
+//     disabled                 -> deny_point_disabled
+//     lockdown                 -> deny_lockdown            (beats a valid credential)
+//     unlocked                 -> allow_posture_unlocked   (strike held open; credential not consulted)
+//     free_access              -> allow_posture_free_access (any tap opens; credential not consulted)
+//     secure                   -> continue
 //  3. Credential / user deny:
-//        unknown credential       -> deny_unknown_credential
-//        non-active credential    -> deny_revoked
-//        unknown or non-active user -> deny_revoked
+//     unknown credential       -> deny_unknown_credential
+//     non-active credential    -> deny_revoked
+//     before valid_from        -> deny_not_yet_valid
+//     after valid_until        -> deny_expired
+//     unknown or non-active user -> deny_revoked
 //  4. Grant (walk roles -> groups): a group that contains this portal AND whose
 //     schedule window is open now -> allow_grant. If a group contained the portal
 //     but none were open -> deny_schedule_closed; if none contained it -> deny_no_access.
@@ -38,7 +41,12 @@ func Decide(p *Policy, loc *time.Location, posture, cred, portal string, atUTC t
 	case PostureLockdown:
 		return Decision{Reason: ReasonDenyLockdown}
 	case PostureUnlocked:
+		// B: strike held open by the controller; a habitual tap still reads as allow.
 		return Decision{Allow: true, Reason: ReasonAllowPostureUnlocked, Pulse: ap.PulseSeconds}
+	case PostureFreeAccess:
+		// A: any tap opens without consulting the credential; the strike pulses
+		// (door stays closed between entries) and every entry is still logged.
+		return Decision{Allow: true, Reason: ReasonAllowPostureFreeAccess, Pulse: ap.PulseSeconds}
 	case PostureSecure:
 		// fall through to credential evaluation
 	default:
@@ -52,6 +60,12 @@ func Decide(p *Policy, loc *time.Location, posture, cred, portal string, atUTC t
 	}
 	if c.Status != StatusActive {
 		return Decision{Reason: ReasonDenyRevoked, User: c.User}
+	}
+	if !c.ValidFrom.IsZero() && atUTC.Before(c.ValidFrom) {
+		return Decision{Reason: ReasonDenyNotYetValid, User: c.User}
+	}
+	if !c.ValidUntil.IsZero() && atUTC.After(c.ValidUntil) {
+		return Decision{Reason: ReasonDenyExpired, User: c.User}
 	}
 	u, ok := p.Users[c.User]
 	if !ok || u.Status != StatusActive {
@@ -78,7 +92,7 @@ func Decide(p *Policy, loc *time.Location, posture, cred, portal string, atUTC t
 			if !ok {
 				continue // schedule not yet synced; can't confirm an open window
 			}
-			if windowOpen(sched, loc, atUTC) {
+			if windowOpen(sched, loc, atUTC, p.Holidays[ap.Location]) {
 				return Decision{Allow: true, Reason: ReasonAllowGrant, User: u.ID, Pulse: ap.PulseSeconds}
 			}
 		}
@@ -90,13 +104,26 @@ func Decide(p *Policy, loc *time.Location, posture, cred, portal string, atUTC t
 	return Decision{Reason: ReasonDenyNoAccess, User: u.ID}
 }
 
+// ScheduleOpen reports whether a schedule has an open window at atUTC in the
+// given location timezone, honoring holidays. It is the exported entry point the
+// controller uses to resolve scheduled posture; Decide calls windowOpen directly.
+func ScheduleOpen(s Schedule, loc *time.Location, atUTC time.Time, holidays HolidaySet) bool {
+	return windowOpen(s, loc, atUTC, holidays)
+}
+
 // windowOpen reports whether the given schedule has an open window at atUTC,
 // evaluated in the portal's local timezone. The UTC→local conversion
 // happens exactly once. Windows that cross midnight (End <= Start) are split
 // into a tail segment on the start day and a head segment on the following day,
 // each gated by the correct weekday.
-func windowOpen(s Schedule, loc *time.Location, atUTC time.Time) bool {
+//
+// When the schedule observes holidays and the evaluated local date is a holiday
+// of the location, no window opens — a holiday closes the whole local day.
+func windowOpen(s Schedule, loc *time.Location, atUTC time.Time, holidays HolidaySet) bool {
 	lt := atUTC.In(loc)
+	if s.ObserveHolidays && holidays.Contains(lt) {
+		return false
+	}
 	nowMin := lt.Hour()*60 + lt.Minute()
 	todayWD := isoWeekday(lt)
 	yesterdayWD := isoWeekday(lt.AddDate(0, 0, -1))

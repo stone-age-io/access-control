@@ -199,10 +199,12 @@ func (h *Hardware) onEdge(code, kind string) gpiocdev.EventHandler {
 	}
 }
 
-// gpioLock energizes a relay line for a portal. Pulse holds it active for the
-// requested seconds, then releases it via a one-shot timer — hardware-local strike
-// timing, not a policy ticker. A new pulse resets the hold. AsActiveLow (set at
-// request time per the line spec) means SetValue(1) energizes regardless of wiring
+// gpioLock energizes a relay line for a portal. The line is energized while a
+// momentary Pulse is in flight OR a standing SetHeld is set — Pulse's one-shot
+// timer drops back to the held state, not unconditionally off, so the two
+// compose (a tap during a scheduled-unlock window pulses harmlessly). Both are
+// hardware-local strike timing, not a policy ticker. AsActiveLow (set at request
+// time per the line spec) means SetValue(1) energizes regardless of wiring
 // polarity.
 type gpioLock struct {
 	code string
@@ -211,6 +213,7 @@ type gpioLock struct {
 
 	mu     sync.Mutex
 	timer  *time.Timer
+	held   bool // standing hold (posture unlocked / auto-unlock)
 	closed bool
 }
 
@@ -255,12 +258,45 @@ func (l *gpioLock) Pulse(seconds int) error {
 		if l.closed {
 			return
 		}
-		if err := l.line.SetValue(0); err != nil {
+		// Drop back to the standing hold state, not unconditionally off: a pulse
+		// over a held-open door must leave the door held when it expires.
+		if err := l.line.SetValue(boolToVal(l.held)); err != nil {
 			l.log.Error("failed to de-energize relay", "portal", l.code, "error", err)
 		}
 		l.timer = nil
 	})
 	return nil
+}
+
+// SetHeld implements drivers.LockDriver: set or clear the standing hold. Energizes
+// immediately when held; when released, de-energizes unless a pulse is still in
+// flight (that pulse's timer will then drop to the now-false held state).
+// Idempotent.
+func (l *gpioLock) SetHeld(held bool) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return fmt.Errorf("lock for %q is closed", l.code)
+	}
+	if l.held == held {
+		return nil
+	}
+	l.held = held
+	if held {
+		return l.line.SetValue(1)
+	}
+	if l.timer != nil {
+		return nil // a momentary pulse is still energizing the line; let it expire
+	}
+	return l.line.SetValue(0)
+}
+
+// boolToVal maps a hold/energize flag to a GPIO line value (1 = active).
+func boolToVal(on bool) int {
+	if on {
+		return 1
+	}
+	return 0
 }
 
 // Close stops any pending release, de-energizes, and releases the line.

@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
-import type { Portal, Location, Controller, Posture, PortalType } from '@/types/pocketbase'
+import type { Portal, Location, Controller, Schedule, Posture, PortalType } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
@@ -17,7 +17,13 @@ const recordId = route.params.id as string | undefined
 const isEdit = computed(() => !!recordId)
 
 const TYPES: PortalType[] = ['door', 'turnstile', 'elevator', 'gate', 'logical']
-const POSTURES: Posture[] = ['secure', 'unlocked', 'lockdown', 'disabled']
+const POSTURES: { value: Posture; label: string }[] = [
+  { value: 'secure', label: 'Secure (validate every tap)' },
+  { value: 'free_access', label: 'Free access (any tap, no validation)' },
+  { value: 'unlocked', label: 'Unlocked (held open, free passage)' },
+  { value: 'lockdown', label: 'Lockdown (deny all)' },
+  { value: 'disabled', label: 'Disabled (deny all)' },
+]
 
 const form = ref({
   code: '',
@@ -31,10 +37,13 @@ const form = ref({
   dps_input: 0,
   rex_input: 0,
   held_open_seconds: 30,
+  auto_posture: '' as Posture | '',
+  auto_schedule: '',
 })
 
 const locations = ref<Location[]>([])
 const controllers = ref<Controller[]>([])
+const schedules = ref<Schedule[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
 
@@ -42,12 +51,14 @@ const kvKey = computed(() => policyKey('portals', { code: form.value.code.trim()
 
 async function loadOptions() {
   try {
-    const [locs, ctrls] = await Promise.all([
+    const [locs, ctrls, scheds] = await Promise.all([
       pb.collection('locations').getFullList<Location>({ sort: 'code' }),
       pb.collection('controllers').getFullList<Controller>({ sort: 'code' }),
+      pb.collection('schedules').getFullList<Schedule>({ sort: 'code' }),
     ])
     locations.value = locs
     controllers.value = ctrls
+    schedules.value = scheds
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load options')
   }
@@ -70,6 +81,8 @@ async function loadRecord() {
       dps_input: p.dps_input || 0,
       rex_input: p.rex_input || 0,
       held_open_seconds: p.held_open_seconds || 0,
+      auto_posture: (p.auto_posture || '') as Posture | '',
+      auto_schedule: p.auto_schedule || '',
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load portal')
@@ -83,6 +96,13 @@ async function handleSubmit() {
   if (!form.value.code.trim()) { toast.error('Code is required'); return }
   if (!form.value.type) { toast.error('Type is required'); return }
   if (!form.value.location) { toast.error('Location is required'); return }
+  // Scheduled posture is both-or-neither: one set requires the other.
+  if (form.value.auto_posture && !form.value.auto_schedule) {
+    toast.error('Scheduled posture: pick a schedule, or clear the posture'); return
+  }
+  if (form.value.auto_schedule && !form.value.auto_posture) {
+    toast.error('Scheduled posture: pick a posture, or clear the schedule'); return
+  }
 
   loading.value = true
   try {
@@ -98,6 +118,8 @@ async function handleSubmit() {
       dps_input: Number(form.value.dps_input) || 0,
       rex_input: Number(form.value.rex_input) || 0,
       held_open_seconds: Number(form.value.held_open_seconds) || 0,
+      auto_posture: form.value.auto_posture,
+      auto_schedule: form.value.auto_schedule,
     }
     if (isEdit.value) {
       await pb.collection('portals').update(recordId!, data)
@@ -167,9 +189,9 @@ onMounted(async () => {
             <div class="form-control">
               <label class="label"><span class="label-text">Standing Posture</span></label>
               <select v-model="form.posture" class="select select-bordered">
-                <option v-for="p in POSTURES" :key="p" :value="p">{{ p }}</option>
+                <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
               </select>
-              <label class="label"><span class="label-text-alt">Default state; a runtime command can override it on the controller.</span></label>
+              <label class="label"><span class="label-text-alt">Default state; a runtime command or scheduled posture can override it on the controller.</span></label>
             </div>
             <div class="form-control">
               <label class="label"><span class="label-text">Pulse (seconds)</span></label>
@@ -215,6 +237,34 @@ onMounted(async () => {
             Logical relay/input indices on the controller; its model template maps them to physical lines.
             Door-position (DPS) and request-to-exit (REX) drive forced/held-open detection. Ignored for logical portals.
           </p>
+        </div>
+      </BaseCard>
+
+      <BaseCard title="Scheduled posture">
+        <div class="space-y-4">
+          <p class="text-sm text-base-content/60">
+            While the schedule's window is open, the controller adopts this posture instead of the standing one
+            (a runtime command still overrides both). Set both, or leave both blank for no automation.
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label"><span class="label-text">Posture</span></label>
+              <select v-model="form.auto_posture" class="select select-bordered">
+                <option value="">— None —</option>
+                <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
+              </select>
+            </div>
+            <div class="form-control">
+              <label class="label"><span class="label-text">Schedule</span></label>
+              <select v-model="form.auto_schedule" class="select select-bordered">
+                <option value="">— None —</option>
+                <option v-for="s in schedules" :key="s.id" :value="s.id">{{ s.code }} — {{ s.name || s.code }}</option>
+              </select>
+              <label v-if="schedules.length === 0" class="label">
+                <span class="label-text-alt text-warning">No schedules exist yet — create one first.</span>
+              </label>
+            </div>
+          </div>
         </div>
       </BaseCard>
 

@@ -12,7 +12,7 @@ export interface BaseRecord {
   expand?: Record<string, any>
 }
 
-export type Posture = 'secure' | 'unlocked' | 'lockdown' | 'disabled'
+export type Posture = 'secure' | 'free_access' | 'unlocked' | 'lockdown' | 'disabled'
 export type CardholderStatus = 'active' | 'suspended'
 export type CredentialStatus = 'active' | 'revoked' | 'suspended'
 export type CredentialType = 'nkey' | 'wiegand' | 'pin' | 'mobile'
@@ -45,6 +45,8 @@ export interface Schedule extends BaseRecord {
   code: string
   name: string
   windows: ScheduleWindow[]
+  /** When true, holidays do NOT close this schedule's windows (stored inverted; UI shows "Observe holidays" = !ignore_holidays). */
+  ignore_holidays: boolean
 }
 
 /** An edge box (e.g. a KinCony Server-Mini) that drives the portals assigned to it. */
@@ -75,7 +77,11 @@ export interface Portal extends BaseRecord {
   rex_input: number
   /** Door-open-too-long threshold (seconds). */
   held_open_seconds: number
-  expand?: { location?: Location; controller?: Controller }
+  /** While auto_schedule's window is open, the controller adopts this posture instead of the standing one ('' = no automation). */
+  auto_posture: Posture | ''
+  /** Schedules relation id that gates auto_posture ('' = no automation). Both-or-neither with auto_posture. */
+  auto_schedule: string
+  expand?: { location?: Location; controller?: Controller; auto_schedule?: Schedule }
 }
 
 /** A set of portals under one schedule (an "access level"). */
@@ -112,7 +118,22 @@ export interface Credential extends BaseRecord {
   user: string
   status: CredentialStatus | ''
   label: string
+  /** ISO datetime; presentations before this deny. Empty = no lower bound. */
+  valid_from: string
+  /** ISO datetime; presentations after this deny. Empty = no upper bound. */
+  valid_until: string
   expand?: { user?: Cardholder }
+}
+
+/** A date a location is closed; closes every window of any holiday-observing schedule that day. */
+export interface Holiday extends BaseRecord {
+  location: string
+  /** Local calendar day (only the date part is used). */
+  date: string
+  name: string
+  /** Match this month/day every year (for fixed-date holidays like Dec 25). */
+  recurring: boolean
+  expand?: { location?: Location }
 }
 
 /** Queryable projection of the JetStream audit stream. */

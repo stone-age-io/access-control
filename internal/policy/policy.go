@@ -14,14 +14,27 @@
 // bounded by one user's role/group fan-out.
 package policy
 
+import "time"
+
 // Posture is a portal's standing state. Effective posture is resolved by
-// the controller (standing value from policy, optionally overridden by a command)
-// and passed into Decide, so Decide stays pure.
+// the controller (standing value from policy, optionally overridden by a command
+// or a scheduled-posture window) and passed into Decide, so Decide stays pure.
+//
+// secure, free_access, and unlocked differ in two independent dimensions —
+// whether the credential is consulted, and whether the strike is physically
+// held open. Decide only owns the first; the controller owns the second
+// (the reconciler holds the strike only for unlocked). See the table:
+//
+//	posture      credential consulted?   strike physically held?
+//	secure       yes                     no (pulses on grant)
+//	free_access  no (any tap opens)      no (pulses on tap)
+//	unlocked     no (any tap opens)      yes (held open; no tap needed)
 const (
-	PostureSecure   = "secure"   // credential required (default)
-	PostureUnlocked = "unlocked" // free passage, credentials not consulted
-	PostureLockdown = "lockdown" // deny all — beats a valid credential
-	PostureDisabled = "disabled" // not enforcing / maintenance
+	PostureSecure     = "secure"      // credential required (default)
+	PostureFreeAccess = "free_access" // any tap opens (credential not consulted); strike still pulses, door stays closed
+	PostureUnlocked   = "unlocked"    // physical hold — strike held open, no tap needed
+	PostureLockdown   = "lockdown"    // deny all — beats a valid credential
+	PostureDisabled   = "disabled"    // not enforcing / maintenance
 )
 
 // Status values shared by users and credentials. Anything other than
@@ -36,11 +49,14 @@ const (
 // and the events collection, so downstream consumers and dashboards can rely on
 // them.
 const (
-	ReasonAllowGrant           = "allow_grant"
-	ReasonAllowPostureUnlocked = "allow_posture_unlocked"
+	ReasonAllowGrant             = "allow_grant"
+	ReasonAllowPostureUnlocked   = "allow_posture_unlocked"    // posture unlocked (B): credential not consulted
+	ReasonAllowPostureFreeAccess = "allow_posture_free_access" // posture free_access (A): any tap opens, no validation
 
 	ReasonDenyUnknownCredential = "deny_unknown_credential"
 	ReasonDenyRevoked           = "deny_revoked"
+	ReasonDenyNotYetValid       = "deny_not_yet_valid" // credential presented before its valid_from
+	ReasonDenyExpired           = "deny_expired"       // credential presented after its valid_until
 	ReasonDenyNoAccess          = "deny_no_access"
 	ReasonDenyScheduleClosed    = "deny_schedule_closed"
 	ReasonDenyLockdown          = "deny_lockdown"
@@ -59,12 +75,33 @@ type Policy struct {
 	Roles     map[string]Role        // role code -> role
 	Groups    map[string]AccessGroup // access-group code -> group
 	Creds     map[string]Credential  // credential value -> credential (the tap lookup)
+	Holidays  map[string]HolidaySet  // location code -> that site's holiday calendar
 }
 
 // Schedule is a reusable set of weekly time windows. The owning site supplies
 // the timezone at evaluation time; a schedule carries no timezone of its own.
+// ObserveHolidays (the operator-facing default is true) closes every window on a
+// holiday of the evaluated portal's location.
 type Schedule struct {
-	Windows []Window
+	Windows         []Window
+	ObserveHolidays bool
+}
+
+// HolidaySet is one location's holiday calendar: explicit "YYYY-MM-DD" local
+// dates plus "MM-DD" dates that recur every year. The zero value (nil maps)
+// contains nothing, so a location with no holidays never closes a schedule.
+type HolidaySet struct {
+	Dates     map[string]struct{} // "2006-01-02"
+	Recurring map[string]struct{} // "01-02"
+}
+
+// Contains reports whether the given local date falls on a holiday.
+func (h HolidaySet) Contains(local time.Time) bool {
+	if _, ok := h.Dates[local.Format("2006-01-02")]; ok {
+		return true
+	}
+	_, ok := h.Recurring[local.Format("01-02")]
+	return ok
 }
 
 // Window is one recurring time window. Days are ISO weekdays (1=Mon..7=Sun).
@@ -78,13 +115,18 @@ type Window struct {
 
 // Portal is a controllable opening (door/gate/turnstile/elevator) or a logical
 // access target. Type is the portal kind (also the {type} subject segment).
-// Posture here is the standing default; the controller may hold a runtime override.
+// Posture here is the standing default; the controller may override it with a
+// runtime command or, while AutoSchedule's window is open, with AutoPosture
+// (scheduled posture — both empty means no automation). Effective posture is
+// resolved by the controller, never by the pure Decide.
 type Portal struct {
 	Code         string
 	Type         string
 	Location     string
 	Posture      string
 	PulseSeconds int
+	AutoPosture  string // posture to adopt while AutoSchedule is open ("" = none)
+	AutoSchedule string // schedule code gating AutoPosture ("" = none)
 }
 
 // User is an identity that holds credentials and roles.
@@ -109,10 +151,15 @@ type AccessGroup struct {
 }
 
 // Credential is an opaque string presented at a reader, mapping to one user.
+// ValidFrom/ValidUntil are optional activation/expiry bounds (zero = unbounded);
+// the controller parses them once on apply so Decide does no parsing on the hot
+// path. A presentation outside the bounds denies.
 type Credential struct {
-	Value  string
-	User   string
-	Status string
+	Value      string
+	User       string
+	Status     string
+	ValidFrom  time.Time
+	ValidUntil time.Time
 }
 
 // Decision is the result of evaluating a credential presentation.

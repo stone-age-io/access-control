@@ -30,7 +30,7 @@ async function load() {
   loading.value = true
   try {
     const [p, g] = await Promise.all([
-      pb.collection('portals').getOne<Portal>(recordId, { expand: 'location,controller' }),
+      pb.collection('portals').getOne<Portal>(recordId, { expand: 'location,controller,auto_schedule' }),
       pb.collection('access_groups').getFullList<AccessGroup>({ filter: `portals ~ "${recordId}"`, sort: 'code' }),
     ])
     record.value = p
@@ -117,6 +117,23 @@ onMounted(load)
         <DataField label="Lock relay">{{ record.lock_relay }}</DataField>
         <DataField label="DPS input">{{ record.dps_input }}</DataField>
         <DataField label="REX input">{{ record.rex_input }}</DataField>
+      </div>
+    </BaseCard>
+
+    <BaseCard title="Scheduled posture">
+      <div v-if="!record.auto_posture && !record.auto_schedule" class="text-sm opacity-50">
+        No scheduled posture — the standing posture always applies.
+      </div>
+      <div v-else class="grid grid-cols-2 gap-x-6 gap-y-4">
+        <DataField label="Posture">
+          <span class="badge badge-sm badge-ghost">{{ record.auto_posture || '—' }}</span>
+        </DataField>
+        <DataField label="Schedule">
+          <router-link v-if="record.expand?.auto_schedule" :to="`/schedules/${record.expand.auto_schedule.id}`" class="link link-primary">
+            {{ record.expand.auto_schedule.code }}
+          </router-link>
+          <span v-else class="opacity-40">—</span>
+        </DataField>
       </div>
     </BaseCard>
 

@@ -5,6 +5,7 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { policyKey } from '@/utils/policyKey'
+import { formatDate } from '@/utils/format'
 import type { Credential, Cardholder } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
@@ -96,6 +97,8 @@ onMounted(load)
           <span class="badge badge-sm" :class="statusBadge(record.status || '')">{{ record.status || 'active' }}</span>
         </DataField>
         <DataField label="Label">{{ record.label || '—' }}</DataField>
+        <DataField v-if="record.valid_from" label="Valid from">{{ formatDate(record.valid_from) }}</DataField>
+        <DataField v-if="record.valid_until" label="Valid until">{{ formatDate(record.valid_until) }}</DataField>
         <DataField label="Cardholder">
           <router-link v-if="holder" :to="`/cardholders/${holder.id}`" class="link link-primary">
             {{ holder.name || holder.email || holder.id }}

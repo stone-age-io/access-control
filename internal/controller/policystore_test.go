@@ -108,6 +108,75 @@ func TestStoreSuspendUpdate(t *testing.T) {
 	}
 }
 
+// TestStoreCredentialValidity: the store parses RFC 3339 bounds on apply and the
+// decision honors them (deny before valid_from / after valid_until, allow within).
+func TestStoreCredentialValidity(t *testing.T) {
+	s := seeded(t)
+	at := ny(t, 2026, 1, 5, 9, 0) // Mon in-hours
+
+	// Not yet valid: activates in February.
+	s.apply("cred.CARD-001", []byte(`{"value":"CARD-001","user":"alice","status":"active","validFrom":"2026-02-01T00:00:00Z"}`))
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", at); d.Allow || d.Reason != policy.ReasonDenyNotYetValid {
+		t.Errorf("not-yet-valid: decision = %+v, want deny_not_yet_valid", d)
+	}
+
+	// Expired last year.
+	s.apply("cred.CARD-001", []byte(`{"value":"CARD-001","user":"alice","status":"active","validUntil":"2025-12-31T23:59:00Z"}`))
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", at); d.Allow || d.Reason != policy.ReasonDenyExpired {
+		t.Errorf("expired: decision = %+v, want deny_expired", d)
+	}
+
+	// Within an explicit window grants again.
+	s.apply("cred.CARD-001", []byte(`{"value":"CARD-001","user":"alice","status":"active","validFrom":"2026-01-01T00:00:00Z","validUntil":"2026-12-31T23:59:00Z"}`))
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", at); !d.Allow || d.Reason != policy.ReasonAllowGrant {
+		t.Errorf("within validity: decision = %+v, want allow_grant", d)
+	}
+}
+
+// TestStoreCredentialBadValidityFailsClosed: a present-but-unparseable bound drops
+// the credential entirely rather than honoring a half-parsed value.
+func TestStoreCredentialBadValidityFailsClosed(t *testing.T) {
+	s := seeded(t)
+	at := ny(t, 2026, 1, 5, 9, 0)
+
+	// Precondition: the seeded credential grants.
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", at); !d.Allow {
+		t.Fatalf("precondition: expected allow, got %+v", d)
+	}
+	// Re-apply with a garbage valid_until: the credential is dropped (fail closed).
+	s.apply("cred.CARD-001", []byte(`{"value":"CARD-001","user":"alice","status":"active","validUntil":"not-a-date"}`))
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", at); d.Allow || d.Reason != policy.ReasonDenyUnknownCredential {
+		t.Errorf("bad validity: decision = %+v, want deny_unknown_credential (dropped)", d)
+	}
+}
+
+// TestStoreHolidays: a holiday on the schedule's day closes the grant, and
+// removing the holiday re-opens it. Exercises the per-location aggregation and
+// the ObserveHolidays flag round-trip from the wire.
+func TestStoreHolidays(t *testing.T) {
+	s := seeded(t)
+	mon := ny(t, 2026, 1, 5, 9, 0) // Mon in business hours
+
+	// Make business-hours observe holidays (the seeded schedule omits the flag).
+	s.apply("sched.business-hours", []byte(`{"code":"business-hours","windows":[{"days":[1,2,3,4,5],"start":"08:00","end":"17:00"}],"observeHolidays":true}`))
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", mon); !d.Allow {
+		t.Fatalf("precondition: expected allow before holiday, got %+v", d)
+	}
+
+	// Declare that Monday a holiday at hq: the grant now denies (schedule closed).
+	s.apply("holiday.h1", []byte(`{"location":"hq","date":"2026-01-05","recurring":false}`))
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", mon); d.Allow || d.Reason != policy.ReasonDenyScheduleClosed {
+		t.Errorf("on holiday: decision = %+v, want deny_schedule_closed", d)
+	}
+
+	// A holiday at a different location must not affect hq.
+	s.apply("holiday.h2", []byte(`{"location":"other","date":"2026-01-05","recurring":false}`))
+	s.remove("holiday.h1")
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", mon); !d.Allow {
+		t.Errorf("after removing hq holiday: decision = %+v, want allow", d)
+	}
+}
+
 func TestStorePortalLookup(t *testing.T) {
 	s := seeded(t)
 	ap, ok := s.Portal("lobby-main")

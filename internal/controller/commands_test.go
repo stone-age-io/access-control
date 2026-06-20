@@ -25,11 +25,13 @@ type fakeEmitterRefs struct {
 func TestCommandPostureOverrideAndClear(t *testing.T) {
 	h, rt, _ := handlerFor(t)
 
+	at := ny(t, 2026, 1, 5, 9, 0)
+
 	h.onPosture(&nats.Msg{
 		Subject: "acc.hq.door.lobby-main.cmd.posture",
 		Data:    []byte(`{"posture":"lockdown","actor":"guard"}`),
 	})
-	if got := rt.postureFor("lobby-main"); got != policy.PostureLockdown {
+	if got, _ := rt.effectivePosture("lobby-main", at); got != policy.PostureLockdown {
 		t.Errorf("posture = %q, want lockdown", got)
 	}
 
@@ -37,7 +39,7 @@ func TestCommandPostureOverrideAndClear(t *testing.T) {
 		Subject: "acc.hq.door.lobby-main.cmd.posture",
 		Data:    []byte(`{"posture":"clear"}`),
 	})
-	if got := rt.postureFor("lobby-main"); got != policy.PostureSecure {
+	if got, _ := rt.effectivePosture("lobby-main", at); got != policy.PostureSecure {
 		t.Errorf("posture after clear = %q, want secure (standing)", got)
 	}
 }
@@ -48,7 +50,7 @@ func TestCommandPostureInvalidIgnored(t *testing.T) {
 		Subject: "acc.hq.door.lobby-main.cmd.posture",
 		Data:    []byte(`{"posture":"bogus"}`),
 	})
-	if got := rt.postureFor("lobby-main"); got != policy.PostureSecure {
+	if got, _ := rt.effectivePosture("lobby-main", ny(t, 2026, 1, 5, 9, 0)); got != policy.PostureSecure {
 		t.Errorf("posture = %q, want unchanged secure", got)
 	}
 }

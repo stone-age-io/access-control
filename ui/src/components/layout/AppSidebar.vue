@@ -36,6 +36,7 @@ const sections: NavSection[] = [
       { label: 'Controllers', icon: '⚙️', path: '/controllers' },
       { label: 'Portals', icon: '🚪', path: '/portals' },
       { label: 'Schedules', icon: '🗓️', path: '/schedules' },
+      { label: 'Holidays', icon: '📅', path: '/holidays' },
     ],
   },
   {

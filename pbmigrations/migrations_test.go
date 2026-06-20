@@ -27,7 +27,7 @@ func TestCollectionsExist(t *testing.T) {
 
 	for _, name := range []string{
 		"locations", "schedules", "portals", "access_groups",
-		"roles", "cardholders", "credentials", "events",
+		"roles", "cardholders", "credentials", "events", "holidays",
 	} {
 		if _, err := app.FindCollectionByNameOrId(name); err != nil {
 			t.Errorf("collection %q not found: %v", name, err)
@@ -89,6 +89,32 @@ func TestFixtureSeeded(t *testing.T) {
 	}
 	if got := portal.GetString("type"); got != "door" {
 		t.Errorf("lobby-main type = %q, want door", got)
+	}
+}
+
+// TestFixtureExtras verifies the post-schema demonstration data: a recurring
+// Christmas holiday at hq and the lobby-public auto-unlock door.
+func TestFixtureExtras(t *testing.T) {
+	app := newApp(t)
+
+	holiday, err := app.FindFirstRecordByData("holidays", "name", "Christmas")
+	if err != nil {
+		t.Fatalf("holiday Christmas not found: %v", err)
+	}
+	if !holiday.GetBool("recurring") {
+		t.Errorf("Christmas holiday recurring = false, want true")
+	}
+
+	pub, err := app.FindFirstRecordByData("portals", "code", "lobby-public")
+	if err != nil {
+		t.Fatalf("portal lobby-public not found: %v", err)
+	}
+	if got := pub.GetString("auto_posture"); got != "unlocked" {
+		t.Errorf("lobby-public auto_posture = %q, want unlocked", got)
+	}
+	sched, err := app.FindRecordById("schedules", pub.GetString("auto_schedule"))
+	if err != nil || sched.GetString("code") != "business-hours" {
+		t.Errorf("lobby-public auto_schedule = %v, want business-hours", pub.GetString("auto_schedule"))
 	}
 }
 

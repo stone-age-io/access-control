@@ -86,13 +86,14 @@ func (h *MockHardware) Lock(code string) (*MockLock, bool) {
 	return l, ok
 }
 
-// MockLock records pulses and (optionally) logs them. Safe for concurrent use.
+// MockLock records pulses and the standing hold state. Safe for concurrent use.
 type MockLock struct {
 	portal string
 	log    *logger.Logger
 
 	mu     sync.Mutex
 	pulses []int
+	held   bool
 }
 
 // NewMockLock creates a mock lock for a portal. log may be nil.
@@ -109,6 +110,25 @@ func (l *MockLock) Pulse(seconds int) error {
 		l.log.Info("lock pulse", "portal", l.portal, "seconds", seconds)
 	}
 	return nil
+}
+
+// SetHeld implements LockDriver. Idempotent: a no-op when already in that state.
+func (l *MockLock) SetHeld(held bool) error {
+	l.mu.Lock()
+	changed := l.held != held
+	l.held = held
+	l.mu.Unlock()
+	if changed && l.log != nil {
+		l.log.Info("lock hold changed", "portal", l.portal, "held", held)
+	}
+	return nil
+}
+
+// Held reports the current standing hold state (for tests/inspection).
+func (l *MockLock) Held() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.held
 }
 
 // Pulses returns a copy of the recorded pulse durations.

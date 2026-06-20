@@ -98,10 +98,12 @@ func init() {
 			MaxSelect:    1,
 		})
 		portals.Fields.Add(&core.TextField{Name: "name"})
-		// posture: standing default; a runtime command may override it on the controller.
+		// posture: standing default; a runtime command or a scheduled-posture
+		// window may override it on the controller. free_access = any tap opens
+		// (no validation, strike pulses); unlocked = strike physically held open.
 		portals.Fields.Add(&core.SelectField{
 			Name:      "posture",
-			Values:    []string{"secure", "unlocked", "lockdown", "disabled"},
+			Values:    []string{"secure", "free_access", "unlocked", "lockdown", "disabled"},
 			MaxSelect: 1,
 		})
 		portals.Fields.Add(&core.NumberField{Name: "pulse_seconds", OnlyInt: true})

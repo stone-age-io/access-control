@@ -8,6 +8,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
+	"github.com/stone-age-io/access-control/internal/policy"
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
@@ -27,6 +28,13 @@ var (
 	accessGrace = 10 * time.Second
 	// heldOpenUnit multiplies a portal's held_open_seconds into a duration.
 	heldOpenUnit = time.Second
+	// holdEvalInterval is how often the runtime re-reconciles each portal's strike
+	// hold to its effective posture — the no-event fallback that flips scheduled
+	// posture at window boundaries. It is the controller's third deliberate timer
+	// exception (with the DOTL timer and the heartbeat); commands and arming
+	// reconcile holds immediately, so this only has to be tight enough for time
+	// boundaries, and schedules are minute-grained. A var so tests can shorten it.
+	holdEvalInterval = 10 * time.Second
 )
 
 // doorMonitor is the per-portal door-state machine: current contact state, the
@@ -124,6 +132,49 @@ func (r *Runtime) lockFor(portal string) (drivers.LockDriver, bool) {
 	return lock, ok
 }
 
+// applyHold reconciles one portal's physical strike hold to its effective
+// posture: the strike is held open only while effectively unlocked (B). Every
+// other posture (secure/free_access/lockdown/disabled) is enforced lazily at the
+// next tap, so it just releases the hold. An indeterminate posture (auto schedule
+// not loaded yet) keeps the previous hold to avoid flapping during a re-sync.
+// A no-op for portals this controller does not drive.
+func (r *Runtime) applyHold(portal string, at time.Time) {
+	lock, ok := r.lockFor(portal)
+	if !ok {
+		return
+	}
+	posture, resolved := r.effectivePosture(portal, at)
+	if !resolved {
+		return // keep previous hold
+	}
+	if err := lock.SetHeld(posture == policy.PostureUnlocked); err != nil {
+		r.log.Error("failed to set lock hold", "portal", portal, "error", err)
+	}
+}
+
+// reconcileHolds reconciles every driven portal's strike hold to effective
+// posture. It snapshots the portal set under the read lock, then applies holds
+// without holding it (SetHeld may touch hardware). Driven off the hold-eval
+// ticker and exercised directly by tests.
+func (r *Runtime) reconcileHolds(at time.Time) {
+	r.mu.RLock()
+	portals := make([]string, 0, len(r.locks))
+	for code := range r.locks {
+		portals = append(portals, code)
+	}
+	r.mu.RUnlock()
+	for _, portal := range portals {
+		r.applyHold(portal, at)
+	}
+}
+
+// ApplyHold reconciles a single portal's strike hold to its current effective
+// posture immediately. The portal reconciler calls it right after arming so a
+// portal's physical state is correct at once, not only on the next hold-eval tick.
+func (r *Runtime) ApplyHold(portal string) {
+	r.applyHold(portal, time.Now().UTC())
+}
+
 // Run consumes taps and door inputs until the context is cancelled or the reader
 // channel closes. A nil DoorInput yields a nil channel, which is never selected.
 func (r *Runtime) Run(ctx context.Context) error {
@@ -132,6 +183,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 	if r.input != nil {
 		inputs = r.input.Inputs()
 	}
+	holdTicker := time.NewTicker(holdEvalInterval)
+	defer holdTicker.Stop()
 	r.log.Info("tap loop started", "location", r.location)
 	for {
 		select {
@@ -149,12 +202,15 @@ func (r *Runtime) Run(ctx context.Context) error {
 				continue
 			}
 			r.handleInput(ev)
+		case <-holdTicker.C:
+			// No-event fallback: flip scheduled-posture holds at window boundaries.
+			r.reconcileHolds(time.Now().UTC())
 		}
 	}
 }
 
 func (r *Runtime) handleTap(tap drivers.Tap) {
-	posture := r.postureFor(tap.Portal)
+	posture, _ := r.effectivePosture(tap.Portal, tap.At) // unresolved falls back to standing (fail-safe)
 	d := r.store.Decide(posture, tap.Credential, tap.Portal, tap.At)
 	r.m.IncDecision(d.Allow, d.Reason)
 
@@ -305,20 +361,17 @@ func (r *Runtime) monitorFor(portal string) *doorMonitor {
 	return m
 }
 
-// postureFor returns the effective posture for a portal: a runtime command
-// override if present, otherwise the portal's standing posture. Unknown portals
-// return "" — Decide checks portal existence first and denies regardless.
-func (r *Runtime) postureFor(portal string) string {
+// effectivePosture returns the effective posture for a portal at the given
+// instant — a runtime command override, else the scheduled posture while its
+// window is open, else the standing posture (resolved together under the store
+// lock). The bool is false only when an auto_schedule is configured but not yet
+// loaded: the posture is still the safe standing value, but the hold reconciler
+// treats it as "keep previous" rather than flap. Unknown portals return ("", true).
+func (r *Runtime) effectivePosture(portal string, at time.Time) (string, bool) {
 	r.mu.RLock()
-	override, has := r.overrides[portal]
+	override := r.overrides[portal] // "" when absent
 	r.mu.RUnlock()
-	if has {
-		return override
-	}
-	if ap, ok := r.store.Portal(portal); ok {
-		return ap.Posture
-	}
-	return ""
+	return r.store.ResolvePosture(portal, override, at)
 }
 
 // portalAddr resolves a portal's location and type for subject construction. It
@@ -357,6 +410,7 @@ func (r *Runtime) SetPosture(portal, posture, actor, reason string, at time.Time
 	r.mu.Lock()
 	r.overrides[portal] = posture
 	r.mu.Unlock()
+	r.applyHold(portal, at) // reflect the override on the strike now (lockdown is instant)
 	r.emitState(portal, posture, actor, reason, at)
 }
 
@@ -371,7 +425,9 @@ func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
 	r.mu.Lock()
 	delete(r.overrides, portal)
 	r.mu.Unlock()
-	r.emitState(portal, r.postureFor(portal), actor, reason, at)
+	r.applyHold(portal, at) // strike follows the now-effective (scheduled/standing) posture
+	effective, _ := r.effectivePosture(portal, at)
+	r.emitState(portal, effective, actor, reason, at)
 }
 
 // Unlock momentarily energizes the strike for a portal (a command-driven pulse,

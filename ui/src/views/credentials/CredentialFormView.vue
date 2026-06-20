@@ -26,7 +26,27 @@ const form = ref({
   user: (route.query.user as string) || '',
   status: 'active' as CredentialStatus,
   label: '',
+  // datetime-local strings ("YYYY-MM-DDTHH:MM"); '' = no bound.
+  valid_from: '',
+  valid_until: '',
 })
+
+// PocketBase stores dates as e.g. "2026-12-25 10:30:00.000Z"; a datetime-local
+// input wants local "YYYY-MM-DDTHH:MM". Convert in both directions.
+function toLocalInput(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function fromLocalInput(local: string): string {
+  if (!local) return ''
+  const d = new Date(local)
+  if (isNaN(d.getTime())) return ''
+  return d.toISOString()
+}
 
 const cardholders = ref<Cardholder[]>([])
 const loading = ref(false)
@@ -53,6 +73,8 @@ async function loadRecord() {
       user: c.user || '',
       status: (c.status || 'active') as CredentialStatus,
       label: c.label || '',
+      valid_from: toLocalInput(c.valid_from || ''),
+      valid_until: toLocalInput(c.valid_until || ''),
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load credential')
@@ -74,6 +96,8 @@ async function handleSubmit() {
       user: form.value.user,
       status: form.value.status,
       label: form.value.label.trim(),
+      valid_from: fromLocalInput(form.value.valid_from),
+      valid_until: fromLocalInput(form.value.valid_until),
     }
     if (isEdit.value) {
       await pb.collection('credentials').update(recordId!, data)
@@ -145,6 +169,19 @@ onMounted(async () => {
           <div class="form-control">
             <label class="label"><span class="label-text">Label</span></label>
             <input v-model="form.label" type="text" placeholder="Alice's badge" class="input input-bordered" />
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label"><span class="label-text">Valid from</span></label>
+              <input v-model="form.valid_from" type="datetime-local" class="input input-bordered" />
+              <label class="label"><span class="label-text-alt">Leave blank for no bound.</span></label>
+            </div>
+            <div class="form-control">
+              <label class="label"><span class="label-text">Valid until</span></label>
+              <input v-model="form.valid_until" type="datetime-local" class="input input-bordered" />
+              <label class="label"><span class="label-text-alt">Leave blank for no bound.</span></label>
+            </div>
           </div>
         </div>
       </BaseCard>

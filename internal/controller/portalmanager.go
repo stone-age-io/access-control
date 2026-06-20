@@ -186,6 +186,10 @@ func (pm *PortalManager) arm(ap policy.Portal) {
 	}
 	pm.rt.SetLock(ap.Code, lock)
 	pm.armed[ap.Code] = ap.Type
+	// Set the strike's standing hold to match effective posture right away, so a
+	// scheduled-/standing-unlocked portal opens on arm without waiting for the
+	// next hold-eval tick.
+	pm.rt.ApplyHold(ap.Code)
 }
 
 func (pm *PortalManager) disarm(code string) {

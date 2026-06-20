@@ -28,6 +28,12 @@ const routes: RouteRecordRaw[] = [
       { path: 'schedules/:id', name: 'Schedule', component: () => import('@/views/schedules/ScheduleDetailView.vue'), meta: { title: 'Schedule' } },
       { path: 'schedules/:id/edit', name: 'ScheduleEdit', component: () => import('@/views/schedules/ScheduleFormView.vue'), meta: { title: 'Edit Schedule' } },
 
+      // Holidays
+      { path: 'holidays', name: 'Holidays', component: () => import('@/views/holidays/HolidayListView.vue'), meta: { title: 'Holidays' } },
+      { path: 'holidays/new', name: 'HolidayNew', component: () => import('@/views/holidays/HolidayFormView.vue'), meta: { title: 'New Holiday' } },
+      { path: 'holidays/:id', name: 'Holiday', component: () => import('@/views/holidays/HolidayDetailView.vue'), meta: { title: 'Holiday' } },
+      { path: 'holidays/:id/edit', name: 'HolidayEdit', component: () => import('@/views/holidays/HolidayFormView.vue'), meta: { title: 'Edit Holiday' } },
+
       // Portals
       { path: 'portals', name: 'Portals', component: () => import('@/views/portals/PortalListView.vue'), meta: { title: 'Portals' } },
       { path: 'portals/new', name: 'PortalNew', component: () => import('@/views/portals/PortalFormView.vue'), meta: { title: 'New Portal' } },

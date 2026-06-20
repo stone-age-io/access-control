@@ -62,9 +62,16 @@ plain maps — no I/O, no locks, no rules engine. It runs identically on central
 The graph mirrors the operator's mental model 1:1: **user → roles → access groups → (portals + one schedule)**.
 
 **Evaluation order is the contract — deny-overrides come first** (see the doc comment on `Decide`):
-unknown portal → posture gate (disabled/lockdown deny; unlocked allows without consulting credential; secure
-continues) → credential/user status → grant walk (a group containing the portal whose schedule window is open).
-Everything unrecognized or not-yet-synced **fails closed (deny)**. A zero `Policy{}` default-denies everything.
+unknown portal → posture gate (disabled/lockdown deny; `unlocked`/`free_access` allow without consulting the
+credential; secure continues) → credential/user status (incl. credential `validFrom`/`validUntil` bounds) → grant
+walk (a group containing the portal whose schedule window is open *and the day isn't a holiday the schedule
+observes*). Everything unrecognized or not-yet-synced **fails closed (deny)**. A zero `Policy{}` default-denies
+everything. The **effective posture** fed to the gate is resolved by the controller (command override → scheduled
+posture `autoPosture` while `autoSchedule` is open → standing `posture`), so `Decide` stays pure.
+
+Two postures both "allow without consulting the credential" but differ physically (the controller owns this, not
+`Decide`): `free_access` opens on any tap with the strike pulsing (door stays closed, every entry logged);
+`unlocked` holds the strike open (free passage, no tap needed).
 
 ### Data flow (one direction, eventually consistent)
 
@@ -135,18 +142,27 @@ controller must share the same `subjects.app`** (a mismatch silently severs poli
 `docs/protocol.md` is the full wire reference (subjects, message shapes, KV key scheme, decision reason codes).
 
 Commands (`internal/controller/commands.go`) install **runtime posture overrides** that are operational state,
-never written back to PocketBase. `posture: "clear"` reverts to the standing value. The controller grows **no
-policy ticker** — `until` (timed reversion) and the standing posture both come from outside; reversion is an
-external scheduler publishing a follow-up command. The only timers are two deliberate, hardware-scoped exceptions:
-the per-door held-open (DOTL) timer and the liveness heartbeat. Fire input suppresses alarm emission (hardware
+never written back to PocketBase. `posture: "clear"` reverts to the effective posture (scheduled if open, else
+standing). The controller grows **no policy ticker** — `until` (timed reversion) comes from outside (an external
+scheduler publishing a follow-up command). The only timers are **three** deliberate, scoped exceptions: the
+per-door held-open (DOTL) timer, the liveness heartbeat, and the **scheduled-posture hold-eval reconcile**
+(`runtime.reconcileHolds`, default 10s) — a sampling loop that flips the strike hold at schedule-window boundaries
+(the no-event case) and is backed up by immediate reconciles on posture commands and on portal arming. Only the
+`unlocked` posture holds the strike (via `LockDriver.SetHeld`, which composes with `Pulse`); everything else is
+enforced lazily at tap, so physically the strike is just not held. Fire input suppresses alarm emission (hardware
 owns egress).
 
 ### Schema is code
 
 `pbmigrations` defines collections in Go (`1750000000_collections.go`) and seeds an idempotent dev fixture
-(`1750000001_fixture.go`, no-ops if `locations` is non-empty). Collections have **nil access rules = superuser-only**,
-the right default for a PACS control plane. `migratecmd` Automigrate snapshots dashboard collection edits into
-new Go files beside the hand-authored ones — review those before committing.
+(`1750000001_fixture.go`, no-ops if `locations` is non-empty). Later additive migrations extend the schema:
+`1750000002` (credential `valid_from`/`valid_until`), `1750000003` (the `holidays` collection +
+`schedules.ignore_holidays`, the inverted opt-out so observe-holidays is the default), `1750000004` (portal
+`auto_posture`/`auto_schedule` for scheduled posture), and `1750000005` (fixture extras that demo holidays +
+auto-unlock — they must run *after* the schema that defines them, so they can't live in the base fixture).
+Collections have **nil access rules = superuser-only**, the right default for a PACS control plane. `migratecmd`
+Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
+before committing.
 
 ## Config
 

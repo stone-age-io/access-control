@@ -104,6 +104,11 @@ onMounted(load)
           <code class="text-sm">{{ record.code }}</code>
         </DataField>
         <DataField label="Name">{{ record.name || '—' }}</DataField>
+        <DataField label="Observes holidays">
+          <span class="badge badge-sm" :class="!record.ignore_holidays ? 'badge-success' : 'badge-ghost'">
+            {{ !record.ignore_holidays ? 'Yes' : 'No' }}
+          </span>
+        </DataField>
       </div>
     </BaseCard>
 

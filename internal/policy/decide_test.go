@@ -80,7 +80,41 @@ func TestWindowOpen(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := windowOpen(tc.sch, loc, tc.at); got != tc.want {
+			if got := windowOpen(tc.sch, loc, tc.at, HolidaySet{}); got != tc.want {
+				t.Errorf("windowOpen = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWindowOpenHolidays(t *testing.T) {
+	loc := mustNY(t)
+	// 2026-01-05 is a Monday; 2026-12-25 is a Friday; 2026-07-03 is a Friday.
+	biz := Schedule{Windows: []Window{{Days: []int{1, 2, 3, 4, 5}, Start: "08:00", End: "17:00"}}, ObserveHolidays: true}
+	bizNoObserve := Schedule{Windows: []Window{{Days: []int{1, 2, 3, 4, 5}, Start: "08:00", End: "17:00"}}} // ObserveHolidays false
+
+	hol := HolidaySet{
+		Dates:     map[string]struct{}{"2026-01-05": {}}, // explicit: this Monday
+		Recurring: map[string]struct{}{"12-25": {}},      // recurring: Christmas every year
+	}
+
+	tests := []struct {
+		name string
+		sch  Schedule
+		hol  HolidaySet
+		at   time.Time
+		want bool
+	}{
+		{"explicit holiday closes window", biz, hol, local(loc, 2026, 1, 5, 9, 0), false},
+		{"non-holiday weekday open", biz, hol, local(loc, 2026, 1, 6, 9, 0), true},
+		{"recurring holiday closes (Dec 25)", biz, hol, local(loc, 2026, 12, 25, 9, 0), false},
+		{"recurring matches other years too", biz, HolidaySet{Recurring: map[string]struct{}{"12-25": {}}}, local(loc, 2030, 12, 25, 9, 0), false},
+		{"observe=false ignores holiday", bizNoObserve, hol, local(loc, 2026, 1, 5, 9, 0), true},
+		{"empty holiday set, observe=true, open", biz, HolidaySet{}, local(loc, 2026, 1, 6, 9, 0), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := windowOpen(tc.sch, loc, tc.at, tc.hol); got != tc.want {
 				t.Errorf("windowOpen = %v, want %v", got, tc.want)
 			}
 		})
@@ -119,6 +153,17 @@ func TestDecide(t *testing.T) {
 	suspendedUser := basePolicy()
 	suspendedUser.Users["u1"] = User{ID: "u1", Status: StatusSuspended, Roles: []string{"r1"}}
 
+	// variant policies for credential validity bounds (evaluated at mon0900).
+	notYetValid := basePolicy()
+	notYetValid.Creds["C1"] = Credential{Value: "C1", User: "u1", Status: StatusActive,
+		ValidFrom: local(loc, 2026, 2, 1, 0, 0)} // activates in February
+	expired := basePolicy()
+	expired.Creds["C1"] = Credential{Value: "C1", User: "u1", Status: StatusActive,
+		ValidUntil: local(loc, 2025, 12, 31, 23, 59)} // expired last year
+	withinValidity := basePolicy()
+	withinValidity.Creds["C1"] = Credential{Value: "C1", User: "u1", Status: StatusActive,
+		ValidFrom: local(loc, 2026, 1, 1, 0, 0), ValidUntil: local(loc, 2026, 12, 31, 23, 59)}
+
 	tests := []struct {
 		name       string
 		p          *Policy
@@ -141,7 +186,13 @@ func TestDecide(t *testing.T) {
 		{"suspended user", suspendedUser, PostureSecure, "C1", "lobby", mon0900, false, ReasonDenyRevoked, "u1", 0},
 		{"lockdown beats grant", basePolicy(), PostureLockdown, "C1", "lobby", mon0900, false, ReasonDenyLockdown, "", 0},
 		{"unlocked free passage", basePolicy(), PostureUnlocked, "NOPE", "lobby", mon0900, true, ReasonAllowPostureUnlocked, "", 5},
+		{"free_access any tap opens", basePolicy(), PostureFreeAccess, "NOPE", "lobby", mon0900, true, ReasonAllowPostureFreeAccess, "", 5},
 		{"disabled point", basePolicy(), PostureDisabled, "C1", "lobby", mon0900, false, ReasonDenyPointDisabled, "", 0},
+
+		// credential validity bounds (deny-overrides, before the grant walk)
+		{"credential not yet valid", notYetValid, PostureSecure, "C1", "lobby", mon0900, false, ReasonDenyNotYetValid, "u1", 0},
+		{"credential expired", expired, PostureSecure, "C1", "lobby", mon0900, false, ReasonDenyExpired, "u1", 0},
+		{"credential within validity grants", withinValidity, PostureSecure, "C1", "lobby", mon0900, true, ReasonAllowGrant, "u1", 5},
 	}
 
 	for _, tc := range tests {

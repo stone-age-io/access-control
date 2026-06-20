@@ -30,6 +30,8 @@ const DAYS = [
 const code = ref('')
 const name = ref('')
 const windows = ref<ScheduleWindow[]>([{ days: [1, 2, 3, 4, 5], start: '08:00', end: '17:00' }])
+// UI shows the positive "observe"; stored inverted as ignore_holidays. Default: observe.
+const observeHolidays = ref(true)
 
 const loading = ref(false)
 const loadingRecord = ref(false)
@@ -62,6 +64,7 @@ async function loadRecord() {
     const sched = await pb.collection('schedules').getOne<Schedule>(recordId)
     code.value = sched.code || ''
     name.value = sched.name || ''
+    observeHolidays.value = !sched.ignore_holidays
     windows.value = Array.isArray(sched.windows) && sched.windows.length
       ? sched.windows.map(w => ({ days: [...(w.days || [])], start: w.start || '', end: w.end || '' }))
       : [{ days: [1, 2, 3, 4, 5], start: '08:00', end: '17:00' }]
@@ -90,6 +93,7 @@ async function handleSubmit() {
       code: code.value.trim(),
       name: name.value.trim(),
       windows: windows.value.map(w => ({ days: w.days, start: w.start, end: w.end })),
+      ignore_holidays: !observeHolidays.value,
     }
     if (isEdit.value) {
       await pb.collection('schedules').update(recordId!, data)
@@ -133,6 +137,14 @@ onMounted(() => {
               <label class="label"><span class="label-text">Name</span></label>
               <input v-model="name" type="text" placeholder="Business Hours" class="input input-bordered" />
             </div>
+          </div>
+
+          <div class="form-control">
+            <label class="label cursor-pointer justify-start gap-3">
+              <input v-model="observeHolidays" type="checkbox" class="toggle toggle-primary" />
+              <span class="label-text">Observe holidays</span>
+            </label>
+            <label class="label"><span class="label-text-alt">Closes every window on a holiday of the portal's location.</span></label>
           </div>
         </div>
       </BaseCard>

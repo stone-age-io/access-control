@@ -22,11 +22,18 @@ type ReaderDriver interface {
 	Taps() <-chan Tap
 }
 
-// LockDriver energizes a strike/relay for a portal. Pulse holds it for the
-// given number of seconds (the decision's pulse value). A zero or negative
-// value means "use the driver's default"; the mock just records it.
+// LockDriver energizes a strike/relay for a portal. The line is energized while
+// EITHER a momentary pulse is in flight OR a standing hold is set — the two
+// compose, so a habitual tap during a scheduled-unlock window pulses harmlessly
+// and the line stays held when the pulse expires.
+//
+//   - Pulse holds the strike for the given number of seconds (the decision's
+//     pulse value). A zero or negative value means "use the driver's default".
+//   - SetHeld sets/clears the standing hold (posture unlocked / auto-unlock). It
+//     is idempotent: setting the current value is a no-op.
 type LockDriver interface {
 	Pulse(seconds int) error
+	SetHeld(held bool) error
 }
 
 // Input kinds for InputEvent.Kind.

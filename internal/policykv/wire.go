@@ -19,6 +19,7 @@ const (
 	PrefixUser       = "user."
 	PrefixCred       = "cred."
 	PrefixController = "controller."
+	PrefixHoliday    = "holiday."
 )
 
 // Location carries the timezone (the controller resolves it once per evaluation)
@@ -38,10 +39,22 @@ type Window struct {
 	End   string `json:"end"`
 }
 
-// Schedule is a reusable set of weekly windows.
+// Schedule is a reusable set of weekly windows. ObserveHolidays closes every
+// window on a holiday of the evaluated portal's location (operator default true).
 type Schedule struct {
-	Code    string   `json:"code"`
-	Windows []Window `json:"windows"`
+	Code            string   `json:"code"`
+	Windows         []Window `json:"windows"`
+	ObserveHolidays bool     `json:"observeHolidays"`
+}
+
+// Holiday is one date on a location's calendar. Date is a local "YYYY-MM-DD"
+// (the wall-clock day the site is closed); Recurring matches that month/day every
+// year (for fixed-date holidays like Dec 25). One KV key per record, keyed by the
+// PocketBase id (holidays carry no natural code).
+type Holiday struct {
+	Location  string `json:"location"`
+	Date      string `json:"date"`
+	Recurring bool   `json:"recurring"`
 }
 
 // Portal references its location by code; Type is the portal kind (also the
@@ -58,6 +71,8 @@ type Portal struct {
 	Location        string `json:"location"`
 	Posture         string `json:"posture"`
 	PulseSeconds    int    `json:"pulseSeconds"`
+	AutoPosture     string `json:"autoPosture,omitempty"`  // scheduled posture while AutoSchedule is open
+	AutoSchedule    string `json:"autoSchedule,omitempty"` // schedule code gating AutoPosture
 	Controller      string `json:"controller,omitempty"`
 	LockRelay       int    `json:"lockRelay,omitempty"`
 	DpsInput        int    `json:"dpsInput,omitempty"`
@@ -95,9 +110,14 @@ type User struct {
 	Roles  []string `json:"roles"`
 }
 
-// Credential maps an opaque value to a cardholder (by id).
+// Credential maps an opaque value to a cardholder (by id). ValidFrom/ValidUntil
+// are optional RFC 3339 activation/expiry bounds (empty = unbounded); the
+// controller parses them once on apply. A present-but-unparseable bound fails
+// closed (the credential denies).
 type Credential struct {
-	Value  string `json:"value"`
-	User   string `json:"user"`
-	Status string `json:"status"`
+	Value      string `json:"value"`
+	User       string `json:"user"`
+	Status     string `json:"status"`
+	ValidFrom  string `json:"validFrom,omitempty"`
+	ValidUntil string `json:"validUntil,omitempty"`
 }

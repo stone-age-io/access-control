@@ -190,6 +190,77 @@ func TestRuntimeIgnoresCommandsForUndrivenPortal(t *testing.T) {
 	}
 }
 
+// unlocked (B) physically holds the strike the moment the command lands, and
+// lockdown / clear release it immediately — no waiting for the hold-eval tick.
+func TestRuntimeUnlockedPostureHoldsStrike(t *testing.T) {
+	rt, _, lock, _ := runtimeFor(t)
+	at := ny(t, 2026, 1, 5, 8, 0)
+
+	rt.SetPosture("lobby-main", policy.PostureUnlocked, "guard", "open house", at)
+	if !lock.Held() {
+		t.Errorf("expected strike held immediately on unlocked posture")
+	}
+	rt.SetPosture("lobby-main", policy.PostureLockdown, "guard", "incident", at)
+	if lock.Held() {
+		t.Errorf("expected strike released immediately on lockdown")
+	}
+	rt.ClearPosture("lobby-main", "guard", "all clear", at)
+	if lock.Held() {
+		t.Errorf("expected strike released after clearing to secure")
+	}
+}
+
+// free_access (A) opens on any tap but never holds the strike — the door stays
+// closed between entries and each entry still pulses.
+func TestRuntimeFreeAccessDoesNotHold(t *testing.T) {
+	rt, _, lock, emit := runtimeFor(t)
+	at := ny(t, 2026, 1, 5, 8, 0)
+
+	rt.SetPosture("lobby-main", policy.PostureFreeAccess, "guard", "passing period", at)
+	if lock.Held() {
+		t.Errorf("free_access must not hold the strike")
+	}
+	rt.handleTap(drivers.Tap{Portal: "lobby-main", Credential: "NOPE", At: ny(t, 2026, 1, 5, 9, 0)})
+	if got := lock.Pulses(); len(got) != 1 || got[0] != 5 {
+		t.Errorf("free_access tap should pulse [5], got %v", got)
+	}
+	if taps := emit.taps(); len(taps) != 1 || !taps[0].Allow || taps[0].Reason != policy.ReasonAllowPostureFreeAccess {
+		t.Errorf("tap events = %+v, want one allow_posture_free_access", taps)
+	}
+}
+
+// The hold-eval reconcile flips a scheduled-posture (auto-unlock) door open while
+// its window is open and re-locks it outside the window — with no tap.
+func TestReconcileHoldsScheduledPosture(t *testing.T) {
+	rt, _, lock, _ := runtimeFor(t)
+	// Auto-unlock lobby-main during business hours.
+	rt.store.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","autoPosture":"unlocked","autoSchedule":"business-hours"}`))
+
+	rt.reconcileHolds(ny(t, 2026, 1, 5, 9, 0)) // Mon in-hours
+	if !lock.Held() {
+		t.Errorf("expected strike held during the auto-unlock window")
+	}
+	rt.reconcileHolds(ny(t, 2026, 1, 5, 18, 0)) // Mon after-hours
+	if lock.Held() {
+		t.Errorf("expected strike released outside the auto-unlock window")
+	}
+}
+
+// When an auto_schedule is configured but its schedule record isn't loaded yet
+// (e.g. mid reconnect re-sync), the reconcile keeps the previous hold rather than
+// flapping the door.
+func TestReconcileHoldsKeepsPreviousWhenUnresolved(t *testing.T) {
+	rt, _, lock, _ := runtimeFor(t)
+	// Point at a schedule that does not exist in the store.
+	rt.store.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","autoPosture":"unlocked","autoSchedule":"ghost-schedule"}`))
+	_ = lock.SetHeld(true) // a previously-held door
+
+	rt.reconcileHolds(ny(t, 2026, 1, 5, 9, 0))
+	if !lock.Held() {
+		t.Errorf("expected the previous hold to be kept while auto_schedule is unresolved")
+	}
+}
+
 func TestRuntimeLockdownOverride(t *testing.T) {
 	rt, reader, lock, emit := runtimeFor(t)
 	rt.SetPosture("lobby-main", policy.PostureLockdown, "guard", "incident", ny(t, 2026, 1, 5, 8, 0))

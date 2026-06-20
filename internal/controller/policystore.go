@@ -61,11 +61,12 @@ type PolicyStore struct {
 	log *logger.Logger
 	m   *metrics.Metrics
 
-	mu          sync.RWMutex
-	locations   map[string]locationEntry
-	graph       policy.Policy
-	controllers map[string]policykv.Controller // controller code -> controller (for model/location)
-	bindings    map[string]Binding             // portal code -> hardware binding
+	mu             sync.RWMutex
+	locations      map[string]locationEntry
+	graph          policy.Policy
+	controllers    map[string]policykv.Controller // controller code -> controller (for model/location)
+	bindings       map[string]Binding             // portal code -> hardware binding
+	holidayRecords map[string]policykv.Holiday    // holiday id -> record (graph.Holidays is rebuilt from this)
 
 	onChange func() // fired (off the lock) after each applied change and each sync
 
@@ -85,12 +86,13 @@ type PolicyStore struct {
 // caller ensures the bucket exists).
 func NewPolicyStore(kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metrics) *PolicyStore {
 	return &PolicyStore{
-		kv:          kv,
-		log:         log.With("component", "policystore"),
-		m:           m,
-		locations:   make(map[string]locationEntry),
-		controllers: make(map[string]policykv.Controller),
-		bindings:    make(map[string]Binding),
+		kv:             kv,
+		log:            log.With("component", "policystore"),
+		m:              m,
+		locations:      make(map[string]locationEntry),
+		controllers:    make(map[string]policykv.Controller),
+		bindings:       make(map[string]Binding),
+		holidayRecords: make(map[string]policykv.Holiday),
 		graph: policy.Policy{
 			Schedules: make(map[string]policy.Schedule),
 			Portals:   make(map[string]policy.Portal),
@@ -98,6 +100,7 @@ func NewPolicyStore(kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metric
 			Roles:     make(map[string]policy.Role),
 			Groups:    make(map[string]policy.AccessGroup),
 			Creds:     make(map[string]policy.Credential),
+			Holidays:  make(map[string]policy.HolidaySet),
 		},
 		ready: make(chan struct{}),
 	}
@@ -117,6 +120,42 @@ func (s *PolicyStore) Decide(posture, cred, portal string, atUTC time.Time) poli
 		}
 	}
 	return policy.Decide(&s.graph, loc, posture, cred, portal, atUTC)
+}
+
+// ResolvePosture computes a portal's effective posture under one read lock:
+//
+//  1. a runtime command override (passed in; "" means none) wins;
+//  2. else, while the portal's auto_schedule window is open, its auto_posture;
+//  3. else the standing posture.
+//
+// It also reports whether the result is determinate. resolved=false means the
+// portal has an auto_schedule whose schedule record or timezone is not loaded yet
+// (e.g. mid reconnect re-sync): the returned posture is the safe standing value
+// (so the decision path stays fail-safe), but the physical-hold reconciler should
+// keep the previous hold rather than flap. An unknown portal resolves to ("", true)
+// — Decide denies it regardless.
+func (s *PolicyStore) ResolvePosture(portal, override string, atUTC time.Time) (posture string, resolved bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if override != "" {
+		return override, true
+	}
+	ap, ok := s.graph.Portals[portal]
+	if !ok {
+		return "", true
+	}
+	if ap.AutoSchedule != "" {
+		sched, schedOK := s.graph.Schedules[ap.AutoSchedule]
+		le, locOK := s.locations[ap.Location]
+		if !schedOK || !locOK || le.loc == nil {
+			return ap.Posture, false // configured but unresolved: keep previous hold
+		}
+		if policy.ScheduleOpen(sched, le.loc, atUTC, s.graph.Holidays[ap.Location]) {
+			return ap.AutoPosture, true
+		}
+	}
+	return ap.Posture, true
 }
 
 // Portal returns a copy of the portal and whether it is known. The tap loop uses
@@ -379,6 +418,7 @@ func (s *PolicyStore) apply(key string, value []byte) {
 		s.graph.Portals[w.Code] = policy.Portal{
 			Code: w.Code, Type: w.Type, Location: w.Location,
 			Posture: w.Posture, PulseSeconds: w.PulseSeconds,
+			AutoPosture: w.AutoPosture, AutoSchedule: w.AutoSchedule,
 		}
 		s.bindings[w.Code] = Binding{
 			Controller: w.Controller, LockRelay: w.LockRelay,
@@ -392,6 +432,14 @@ func (s *PolicyStore) apply(key string, value []byte) {
 			return
 		}
 		s.controllers[w.Code] = w
+
+	case strings.HasPrefix(key, policykv.PrefixHoliday):
+		var w policykv.Holiday
+		if !s.unmarshal(key, value, &w) {
+			return
+		}
+		s.holidayRecords[strings.TrimPrefix(key, policykv.PrefixHoliday)] = w
+		s.rebuildHolidays()
 
 	case strings.HasPrefix(key, policykv.PrefixGroup):
 		var w policykv.AccessGroup
@@ -421,7 +469,21 @@ func (s *PolicyStore) apply(key string, value []byte) {
 		if !s.unmarshal(key, value, &w) {
 			return
 		}
-		s.graph.Creds[w.Value] = policy.Credential{Value: w.Value, User: w.User, Status: w.Status}
+		validFrom, ok1 := parseOptionalTime(w.ValidFrom)
+		validUntil, ok2 := parseOptionalTime(w.ValidUntil)
+		if !ok1 || !ok2 {
+			// The mirror always emits RFC 3339, so an unparseable bound means a
+			// corrupt value. Fail closed: drop the credential entirely (a tap then
+			// reads as deny_unknown_credential) rather than honor a half-parsed one.
+			s.log.Error("policystore: credential has unparseable validity date, dropping (fail closed)",
+				"key", key, "validFrom", w.ValidFrom, "validUntil", w.ValidUntil)
+			delete(s.graph.Creds, w.Value)
+			return
+		}
+		s.graph.Creds[w.Value] = policy.Credential{
+			Value: w.Value, User: w.User, Status: w.Status,
+			ValidFrom: validFrom, ValidUntil: validUntil,
+		}
 
 	default:
 		s.log.Warn("policystore: unknown key prefix, ignoring", "key", key)
@@ -446,6 +508,9 @@ func (s *PolicyStore) remove(key string) {
 		delete(s.bindings, code)
 	case strings.HasPrefix(key, policykv.PrefixController):
 		delete(s.controllers, strings.TrimPrefix(key, policykv.PrefixController))
+	case strings.HasPrefix(key, policykv.PrefixHoliday):
+		delete(s.holidayRecords, strings.TrimPrefix(key, policykv.PrefixHoliday))
+		s.rebuildHolidays()
 	case strings.HasPrefix(key, policykv.PrefixGroup):
 		delete(s.graph.Groups, strings.TrimPrefix(key, policykv.PrefixGroup))
 	case strings.HasPrefix(key, policykv.PrefixRole):
@@ -476,7 +541,48 @@ func toSchedule(w policykv.Schedule) policy.Schedule {
 	for i, win := range w.Windows {
 		windows[i] = policy.Window{Days: win.Days, Start: win.Start, End: win.End}
 	}
-	return policy.Schedule{Windows: windows}
+	return policy.Schedule{Windows: windows, ObserveHolidays: w.ObserveHolidays}
+}
+
+// rebuildHolidays regenerates the per-location HolidaySets in the graph from the
+// raw holiday records. Holidays are few (dozens per org), so a full rebuild on
+// each holiday change is cheaper than incremental set surgery. Must be called
+// holding the write lock.
+func (s *PolicyStore) rebuildHolidays() {
+	out := make(map[string]policy.HolidaySet)
+	for _, h := range s.holidayRecords {
+		if h.Location == "" || len(h.Date) != 10 {
+			continue // dangling/malformed: fail-safe skip (a missing holiday just doesn't close)
+		}
+		set := out[h.Location]
+		if h.Recurring {
+			if set.Recurring == nil {
+				set.Recurring = make(map[string]struct{})
+			}
+			set.Recurring[h.Date[5:]] = struct{}{} // "YYYY-MM-DD" -> "MM-DD"
+		} else {
+			if set.Dates == nil {
+				set.Dates = make(map[string]struct{})
+			}
+			set.Dates[h.Date] = struct{}{}
+		}
+		out[h.Location] = set
+	}
+	s.graph.Holidays = out
+}
+
+// parseOptionalTime parses an optional RFC 3339 timestamp. An empty string is a
+// valid "unbounded" value (zero time, ok). A non-empty value that fails to parse
+// returns ok=false so the caller can fail closed.
+func parseOptionalTime(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, true
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
 }
 
 func toSet(codes []string) map[string]struct{} {

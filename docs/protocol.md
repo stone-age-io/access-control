@@ -76,17 +76,19 @@ which would flood the audit log). A controller publishes one heartbeat on start
 and then every `controller.heartbeatInterval` (default 15s); accessd marks a
 controller `offline` once it has been silent longer than
 `accessd.controllerOfflineAfter` (default 45s). The publish ticker is one of the
-controller's two deliberate exceptions to its no-ticker rule (the other is the
-held-open DOTL timer).
+controller's three deliberate exceptions to its no-ticker rule (the others are the
+held-open DOTL timer and the scheduled-posture hold-eval ticker, below).
 
 ### Command details
 
 - **posture** — installs a runtime posture override for the portal. Valid values:
-  `secure`, `unlocked`, `lockdown`, `disabled`, or `clear` (reverts to the
-  standing posture from policy). Overrides are operational state on the
-  controller and are **never written back to PocketBase**. `until` is parsed but
-  **deliberately ignored** — the controller grows no timer; timed reversion must
-  come from an external scheduler publishing a follow-up command.
+  `secure`, `free_access`, `unlocked`, `lockdown`, `disabled`, or `clear` (reverts
+  to the *effective* posture from policy — scheduled posture if its window is open,
+  else the standing posture). Overrides are operational state on the controller and
+  are **never written back to PocketBase**. `until` is parsed but **deliberately
+  ignored** — timed reversion must come from an external scheduler publishing a
+  follow-up command. `free_access` opens on any tap without consulting the
+  credential (strike pulses, door stays closed); `unlocked` holds the strike open.
 - **unlock** — a momentary strike pulse, distinct from a standing posture change.
   `seconds <= 0` (or omitted) falls back to the portal's configured `pulseSeconds`.
 - **fire** — toggles a location's fire-alarm-input state. While active, the
@@ -112,10 +114,28 @@ a **door-position switch** (DPS, `dpsInput`) and an optional **request-to-exit**
 
 A grant (an `allow` tap or an `unlock` command) and a REX press each open a short
 window during which a door-open reads as *authorized* (no `forced`), arming the
-held-open timer instead; the DOTL timer is the controller's second deliberate
-no-ticker exception. While a location's **fire** input is active, all alarm
-emission is suppressed (forced/held during evacuation would be false alarms). The
-DOTL timer and the held-open threshold are hardware-local timing, not policy.
+held-open timer instead; the DOTL timer is a deliberate no-ticker exception. While
+a location's **fire** input is active, all alarm emission is suppressed
+(forced/held during evacuation would be false alarms). The DOTL timer and the
+held-open threshold are hardware-local timing, not policy.
+
+### Scheduled posture & the strike hold
+
+Of the postures, only `unlocked` (B) has a standing physical effect: the strike is
+held energized so the door stands open. Every other posture is enforced lazily at
+the next tap, so physically the strike is just *not held*. The controller keeps each
+driven portal's hold in step with its effective posture three ways: immediately on
+a posture command (so a lockdown re-locks at once), immediately when a portal is
+armed, and on a periodic **hold-eval reconcile** (default 10s) that re-evaluates
+each portal and is the no-event fallback that flips scheduled posture at window
+boundaries — the controller's third deliberate timer exception. The reconcile is a
+*sampling* loop (it reads "is the window open now", never computes boundaries), so
+the interval is a pure latency knob with no correctness coupling; if an
+`autoSchedule` is set but not yet loaded (mid re-sync) the reconcile keeps the
+previous hold rather than flapping the door. A momentary `Pulse` composes with the
+hold: the strike is energized while either is active, so a habitual tap during an
+auto-unlock window pulses harmlessly. On controller shutdown/crash the strike
+de-energizes (fail-secure: the door re-locks; egress stays hardware-owned).
 
 > **v1 status:** the **reader is still simulated** — taps arrive by publishing to
 > `acc.{location}.{type}.{thing}.tap` (the legacy/integration path; a real OSDP/
@@ -134,13 +154,14 @@ sole writer; controllers are read-only watchers.
 | Key | Value shape |
 |---|---|
 | `location.{code}` | `{"code","name","timezone","faiSuppress"}` |
-| `sched.{code}` | `{"code","windows":[{"days":[1..7],"start":"HH:MM","end":"HH:MM"}]}` |
-| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?}` |
+| `sched.{code}` | `{"code","windows":[{"days":[1..7],"start":"HH:MM","end":"HH:MM"}],"observeHolidays"}` |
+| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?}` |
 | `controller.{code}` | `{"code","name","location","model"}` |
+| `holiday.{pbid}` | `{"location":"<location code>","date":"YYYY-MM-DD","recurring"}` |
 | `group.{code}` | `{"code","portals":["<portal code>"],"schedule":"<sched code>"}` |
 | `role.{code}` | `{"code","groups":["<group code>"]}` |
 | `user.{pbid}` | `{"id","status","roles":["<role code>"]}` |
-| `cred.{value}` | `{"value","user":"<cardholder pbid>","status"}` |
+| `cred.{value}` | `{"value","user":"<cardholder pbid>","status","validFrom"?,"validUntil"?}` |
 
 `type` is the portal kind (`door`/`turnstile`/`elevator`/`gate`/`logical`) and the
 `{type}` subject segment. `timezone` is an IANA name resolved once per location on
@@ -148,6 +169,19 @@ the controller. `days` are ISO weekdays (1=Mon … 7=Sun); `start`/`end` are loc
 wall-clock `HH:MM` (`24:00` allowed as end-of-day); `end <= start` means the
 window crosses midnight. `user.{pbid}` and `cred.{value}.user` are the only places
 a PocketBase id appears — the cardholder id is the credential→user join key.
+
+`observeHolidays` (default true; stored inverted as `schedules.ignore_holidays` so
+the safe default holds for any record) closes every window of that schedule on a
+holiday of the evaluated portal's location. A `holiday` is a local calendar
+`date`; `recurring` matches that month/day every year. `validFrom`/`validUntil` are
+optional RFC 3339 credential bounds (the controller parses them once on apply; a
+present-but-unparseable bound drops the credential — fail closed). `autoPosture` +
+`autoSchedule` are **scheduled posture**: while the schedule's window is open the
+controller adopts `autoPosture` (any posture, e.g. `unlocked` for auto-unlock or
+`lockdown` for an overnight lock) instead of the standing `posture`; a runtime
+command override still beats both. The two are written together or not at all
+(the mirror drops a half-configured pair). Like the hardware fields, `autoPosture`/
+`autoSchedule` are resolved by the controller, never by the pure `policy.Decide`.
 
 A portal's hardware binding (the `?`-marked fields, omitted when unset) is **central
 state**, carried in policy so a box is stateless and swappable: `controller` is the
@@ -171,20 +205,26 @@ contract — **deny-overrides come first**:
 
 1. Unknown portal → `deny_unknown_point`
 2. Posture gate: `disabled` → `deny_point_disabled`; `lockdown` → `deny_lockdown`
-   (beats a valid credential); `unlocked` → `allow_posture_unlocked` (credential
-   not consulted); `secure` → continue
+   (beats a valid credential); `unlocked` → `allow_posture_unlocked` (strike held,
+   credential not consulted); `free_access` → `allow_posture_free_access` (any tap
+   opens, credential not consulted); `secure` → continue
 3. Credential/user: unknown credential → `deny_unknown_credential`; non-active
-   credential, or unknown/non-active user → `deny_revoked`
+   credential → `deny_revoked`; before `validFrom` → `deny_not_yet_valid`; after
+   `validUntil` → `deny_expired`; unknown/non-active user → `deny_revoked`
 4. Grant: walk the user's roles → access groups; a group that contains this portal
-   **and** whose schedule window is open now → `allow_grant`. If a group
-   contained the portal but no window was open → `deny_schedule_closed`; if none
-   contained it → `deny_no_access`.
+   **and** whose schedule window is open now (and the day is not a holiday the
+   schedule observes) → `allow_grant`. If a group contained the portal but no
+   window was open → `deny_schedule_closed`; if none contained it → `deny_no_access`.
+
+The effective posture fed to step 2 is resolved by the controller, not `Decide`:
+a runtime command override, else scheduled posture (`autoPosture` while
+`autoSchedule` is open), else the standing `posture`.
 
 | Concept | Values |
 |---|---|
-| Posture | `secure` · `unlocked` · `lockdown` · `disabled` |
+| Posture | `secure` · `free_access` · `unlocked` · `lockdown` · `disabled` |
 | Status (user/cred) | `active` (anything else denies: `suspended`, `revoked`) |
-| Reason codes | `allow_grant` · `allow_posture_unlocked` · `deny_unknown_credential` · `deny_revoked` · `deny_no_access` · `deny_schedule_closed` · `deny_lockdown` · `deny_point_disabled` · `deny_unknown_point` |
+| Reason codes | `allow_grant` · `allow_posture_unlocked` · `allow_posture_free_access` · `deny_unknown_credential` · `deny_revoked` · `deny_not_yet_valid` · `deny_expired` · `deny_no_access` · `deny_schedule_closed` · `deny_lockdown` · `deny_point_disabled` · `deny_unknown_point` |
 
 Reason codes are **stable strings** — they flow verbatim into `tap` events and
 the `events` collection, so downstream consumers and dashboards depend on them.

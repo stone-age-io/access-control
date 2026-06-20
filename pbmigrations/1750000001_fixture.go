@@ -14,6 +14,11 @@ import (
 //
 // Idempotent and safe in any environment: it no-ops if the locations collection
 // is already populated, so it only ever touches a fresh dev database.
+//
+// Holidays, credential validity dates, and scheduled posture (auto_posture /
+// auto_schedule) are seeded by 1750000005_fixture_extras.go instead — they live
+// on collections/fields created by later migrations, so they cannot be seeded
+// here without breaking migration ordering.
 func init() {
 	migrations.Register(func(app core.App) error {
 		existing, err := app.FindAllRecords("locations")

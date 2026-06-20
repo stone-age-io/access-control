@@ -29,7 +29,7 @@ const opTimeout = 5 * time.Second
 // KV. The events collection is written by the audit consumer, not mirrored.
 var mirroredCollections = []string{
 	"locations", "schedules", "controllers", "portals", "access_groups",
-	"roles", "cardholders", "credentials",
+	"roles", "cardholders", "credentials", "holidays",
 }
 
 // Publisher writes policy records to the KV bucket.
@@ -174,6 +174,8 @@ func recordKey(r *core.Record) (string, error) {
 		return naturalKey(policykv.PrefixUser, r.Id)
 	case "credentials":
 		return naturalKey(policykv.PrefixCred, r.GetString("value"))
+	case "holidays":
+		return naturalKey(policykv.PrefixHoliday, r.Id)
 	default:
 		return "", fmt.Errorf("not a mirrored collection: %s", name)
 	}
@@ -210,6 +212,8 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 		payload = policykv.Schedule{
 			Code:    r.GetString("code"),
 			Windows: parseWindows(r),
+			// Stored inverted (default observe): see 1750000003_holidays.go.
+			ObserveHolidays: !r.GetBool("ignore_holidays"),
 		}
 	case "portals":
 		if err := validToken("portal code", r.GetString("code")); err != nil {
@@ -222,12 +226,22 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 		if posture == "" {
 			posture = "secure" // standing default
 		}
+		// Scheduled posture is both-or-neither: an auto_posture with no
+		// auto_schedule (or a schedule that doesn't resolve) is incomplete
+		// automation, so drop both (fail-safe: the portal keeps its standing posture).
+		autoPosture := r.GetString("auto_posture")
+		autoSchedule := resolveCode(app, "schedules", r.GetString("auto_schedule"))
+		if autoPosture == "" || autoSchedule == "" {
+			autoPosture, autoSchedule = "", ""
+		}
 		payload = policykv.Portal{
 			Code:            r.GetString("code"),
 			Type:            r.GetString("type"),
 			Location:        resolveCode(app, "locations", r.GetString("location")),
 			Posture:         posture,
 			PulseSeconds:    r.GetInt("pulse_seconds"),
+			AutoPosture:     autoPosture,
+			AutoSchedule:    autoSchedule,
 			Controller:      resolveCode(app, "controllers", r.GetString("controller")),
 			LockRelay:       r.GetInt("lock_relay"),
 			DpsInput:        r.GetInt("dps_input"),
@@ -263,9 +277,17 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 		}
 	case "credentials":
 		payload = policykv.Credential{
-			Value:  r.GetString("value"),
-			User:   r.GetString("user"), // cardholder id (relation value as-is)
-			Status: defaultStr(r.GetString("status"), "active"),
+			Value:      r.GetString("value"),
+			User:       r.GetString("user"), // cardholder id (relation value as-is)
+			Status:     defaultStr(r.GetString("status"), "active"),
+			ValidFrom:  dateRFC3339(r, "valid_from"),
+			ValidUntil: dateRFC3339(r, "valid_until"),
+		}
+	case "holidays":
+		payload = policykv.Holiday{
+			Location:  resolveCode(app, "locations", r.GetString("location")),
+			Date:      dateOnly(r, "date"),
+			Recurring: r.GetBool("recurring"),
 		}
 	default:
 		return "", nil, fmt.Errorf("not a mirrored collection: %s", r.Collection().Name)
@@ -320,6 +342,28 @@ func defaultStr(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// dateRFC3339 reads a PocketBase DateField as a normalized RFC 3339 UTC string,
+// or "" when the field is unset. Keeping the wire format fixed (rather than
+// PocketBase's "2006-01-02 15:04:05.000Z") lets the controller parse with a
+// single layout.
+func dateRFC3339(r *core.Record, field string) string {
+	dt := r.GetDateTime(field)
+	if dt.IsZero() {
+		return ""
+	}
+	return dt.Time().UTC().Format(time.RFC3339)
+}
+
+// dateOnly reads a PocketBase DateField as a "YYYY-MM-DD" calendar day (the date
+// part only), or "" when unset. A holiday is a calendar day, not an instant.
+func dateOnly(r *core.Record, field string) string {
+	dt := r.GetDateTime(field)
+	if dt.IsZero() {
+		return ""
+	}
+	return dt.Time().UTC().Format("2006-01-02")
 }
 
 // reservedTokens are subject keywords a location/portal code or portal type must
