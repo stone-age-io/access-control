@@ -10,7 +10,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
-import RefList from '@/components/ui/RefList.vue'
+import RelationList from '@/components/ui/RelationList.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -100,17 +100,20 @@ onMounted(load)
       </div>
     </BaseCard>
 
-    <template #rail>
-      <RecordMeta :record="record" :kv-key="kvKey" />
-      <RefList
-        title="Portals"
-        icon="🚪"
-        :items="portals"
-        :to="(p) => `/portals/${p.id}`"
-        :primary="(p) => p.code"
-        :secondary="(p) => p.name"
-        empty="No portals in this location."
-      />
-    </template>
+    <RelationList
+      title="Portals"
+      icon="🚪"
+      :items="portals"
+      :to="(p) => `/portals/${p.id}`"
+      :primary="(p) => p.code"
+      :secondary="(p) => p.name"
+      empty="No portals in this location."
+    >
+      <template #actions>
+        <router-link :to="`/portals/new?location=${record.id}`" class="btn btn-sm btn-outline">+ Add portal</router-link>
+      </template>
+    </RelationList>
+
+    <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>
 </template>

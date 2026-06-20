@@ -10,7 +10,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
-import RefList from '@/components/ui/RefList.vue'
+import RelationList from '@/components/ui/RelationList.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -143,17 +143,16 @@ onMounted(load)
       </div>
     </BaseCard>
 
-    <template #rail>
-      <RecordMeta :record="record" :kv-key="kvKey" />
-      <RefList
-        title="Used by groups"
-        icon="🗝️"
-        :items="groups"
-        :to="(g) => `/access-groups/${g.id}`"
-        :primary="(g) => g.code"
-        :secondary="(g) => g.name"
-        empty="Not used by any access group yet."
-      />
-    </template>
+    <RelationList
+      title="Used by groups"
+      icon="🗝️"
+      :items="groups"
+      :to="(g) => `/access-groups/${g.id}`"
+      :primary="(g) => g.code"
+      :secondary="(g) => g.name"
+      empty="Not used by any access group yet."
+    />
+
+    <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>
 </template>

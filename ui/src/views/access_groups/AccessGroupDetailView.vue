@@ -5,13 +5,12 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { policyKey } from '@/utils/policyKey'
-import type { AccessGroup, Role } from '@/types/pocketbase'
+import type { AccessGroup, Role, Portal } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
-import RailCard from '@/components/ui/RailCard.vue'
-import RefList from '@/components/ui/RefList.vue'
+import RelationList from '@/components/ui/RelationList.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -27,11 +26,15 @@ const deleting = ref(false)
 const title = computed(() => record.value?.name || record.value?.code || 'Access Group')
 const kvKey = computed(() => (record.value ? policyKey('access_groups', record.value) : ''))
 
+const portals = computed<Portal[]>(() => record.value?.expand?.portals || [])
+const portalLocation = (p: Portal) => p.expand?.location?.code || '—'
+const portalSearch = (p: Portal) => [p.code, p.name, p.expand?.location?.code].filter(Boolean).join(' ')
+
 async function load() {
   loading.value = true
   try {
     const [g, r] = await Promise.all([
-      pb.collection('access_groups').getOne<AccessGroup>(recordId, { expand: 'portals,schedule' }),
+      pb.collection('access_groups').getOne<AccessGroup>(recordId, { expand: 'portals.location,schedule' }),
       pb.collection('roles').getFullList<Role>({ filter: `access_groups ~ "${recordId}"`, sort: 'code' }),
     ])
     record.value = g
@@ -104,46 +107,34 @@ onMounted(load)
       </div>
     </BaseCard>
 
-    <!-- Portals in this group -->
-    <BaseCard title="Portals">
-      <div v-if="(record.expand?.portals || []).length === 0" class="text-center py-6 text-sm opacity-50">
-        No portals in this group.
-      </div>
-      <ul v-else class="divide-y divide-base-200">
-        <li
-          v-for="p in record.expand?.portals || []"
-          :key="p.id"
-          class="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded hover:bg-base-200 cursor-pointer transition-colors"
-          @click="router.push(`/portals/${p.id}`)"
-        >
-          <code class="text-sm font-medium text-primary">{{ p.code }}</code>
-          <span class="text-sm opacity-60 truncate flex-1">{{ p.name }}</span>
-          <span class="badge badge-ghost badge-sm">{{ p.posture || '—' }}</span>
-        </li>
-      </ul>
-    </BaseCard>
+    <!-- Portals in this group, grouped by location -->
+    <RelationList
+      title="Portals"
+      icon="🚪"
+      :items="portals"
+      :to="(p) => `/portals/${p.id}`"
+      :group="portalLocation"
+      :search-text="portalSearch"
+      empty="No portals in this group."
+    >
+      <template #item="{ item: p }">
+        <code class="text-sm font-medium text-primary">{{ p.code }}</code>
+        <span class="text-sm opacity-60 truncate flex-1">{{ p.name }}</span>
+        <span class="badge badge-ghost badge-sm">{{ p.posture || '—' }}</span>
+      </template>
+    </RelationList>
 
-    <!-- Rail -->
-    <template #rail>
-      <RecordMeta :record="record" :kv-key="kvKey" />
-      <RailCard v-if="record.expand?.schedule" title="Schedule" icon="🗓️">
-        <router-link
-          :to="`/schedules/${record.expand.schedule.id}`"
-          class="flex flex-col gap-0.5 hover:opacity-80"
-        >
-          <code class="text-sm font-medium text-primary">{{ record.expand.schedule.code }}</code>
-          <span v-if="record.expand.schedule.name" class="text-xs opacity-50">{{ record.expand.schedule.name }}</span>
-        </router-link>
-      </RailCard>
-      <RefList
-        title="Used by roles"
-        icon="🛡️"
-        :items="roles"
-        :to="(r) => `/roles/${r.id}`"
-        :primary="(r) => r.code"
-        :secondary="(r) => r.name"
-        empty="Not used by any role yet."
-      />
-    </template>
+    <!-- Roles using this group -->
+    <RelationList
+      title="Used by roles"
+      icon="🛡️"
+      :items="roles"
+      :to="(r) => `/roles/${r.id}`"
+      :primary="(r) => r.code"
+      :secondary="(r) => r.name"
+      empty="Not used by any role yet."
+    />
+
+    <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>
 </template>

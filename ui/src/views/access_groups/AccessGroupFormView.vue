@@ -8,6 +8,7 @@ import type { AccessGroup, Portal, Schedule } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import RelationPicker from '@/components/ui/RelationPicker.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -30,10 +31,13 @@ const loadingRecord = ref(false)
 
 const kvKey = computed(() => policyKey('access_groups', { code: form.value.code.trim() }))
 
+const portalLocation = (p: Portal) => p.expand?.location?.code || '—'
+const portalSearch = (p: Portal) => [p.code, p.name, p.expand?.location?.code].filter(Boolean).join(' ')
+
 async function loadOptions() {
   try {
     const [pts, scheds] = await Promise.all([
-      pb.collection('portals').getFullList<Portal>({ sort: 'code' }),
+      pb.collection('portals').getFullList<Portal>({ sort: 'code', expand: 'location' }),
       pb.collection('schedules').getFullList<Schedule>({ sort: 'code' }),
     ])
     portals.value = pts
@@ -131,16 +135,16 @@ onMounted(async () => {
 
       <BaseCard title="Portals">
         <div class="space-y-2">
-          <p class="text-sm text-base-content/60">The portals this group grants (during the schedule's windows).</p>
-          <div class="border border-base-300 rounded-box p-3 max-h-64 overflow-y-auto space-y-1">
-            <label v-for="p in portals" :key="p.id" class="flex items-center gap-3 cursor-pointer py-1 px-1 rounded hover:bg-base-200">
-              <input type="checkbox" class="checkbox checkbox-sm" :value="p.id" v-model="form.portals" />
-              <code class="text-sm font-medium">{{ p.code }}</code>
-              <span class="text-sm opacity-50 truncate">{{ p.name }}</span>
-            </label>
-            <p v-if="portals.length === 0" class="text-sm opacity-50 py-2">No portals available. Create some first.</p>
-          </div>
-          <p class="text-xs opacity-50">{{ form.portals.length }} selected</p>
+          <p class="text-sm text-base-content/60">The portals this group grants (during the schedule's windows), grouped by location.</p>
+          <RelationPicker
+            v-model="form.portals"
+            :options="portals"
+            :group="portalLocation"
+            :search-text="portalSearch"
+            :primary="(p) => p.code"
+            :secondary="(p) => p.name"
+            empty="No portals available. Create some first."
+          />
         </div>
       </BaseCard>
 

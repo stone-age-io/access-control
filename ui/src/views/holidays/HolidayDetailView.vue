@@ -97,8 +97,6 @@ onMounted(load)
       </div>
     </BaseCard>
 
-    <template #rail>
-      <RecordMeta :record="record" :kv-key="kvKey" />
-    </template>
+    <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>
 </template>

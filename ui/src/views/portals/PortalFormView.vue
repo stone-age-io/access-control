@@ -29,10 +29,12 @@ const form = ref({
   code: '',
   name: '',
   type: 'door' as PortalType,
-  location: '',
+  // Prefill the location when arriving from a location page (?location=<id>).
+  location: (route.query.location as string) || '',
   posture: 'secure' as Posture,
   pulse_seconds: 5,
-  controller: '',
+  // Prefill the controller when arriving from a controller page (?controller=<id>).
+  controller: (route.query.controller as string) || '',
   lock_relay: 0,
   dps_input: 0,
   rex_input: 0,
@@ -181,8 +183,13 @@ onMounted(async () => {
             </FormField>
           </div>
 
+        </div>
+      </BaseCard>
+
+      <BaseCard title="Posture &amp; timing">
+        <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Standing Posture" hint="Default state; a runtime command or scheduled posture can override it on the controller.">
+            <FormField label="Standing posture" hint="Default state; a runtime command or scheduled posture can override it on the controller.">
               <select v-model="form.posture" class="select select-bordered">
                 <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
               </select>
@@ -190,6 +197,31 @@ onMounted(async () => {
             <FormField label="Pulse (seconds)" hint="How long the lock releases on a grant.">
               <input v-model.number="form.pulse_seconds" type="number" min="0" class="input input-bordered" />
             </FormField>
+          </div>
+
+          <div class="border-t border-base-200 pt-4 space-y-4">
+            <div>
+              <div class="text-sm font-medium text-base-content/90">Scheduled override</div>
+              <p class="text-sm text-base-content/60 mt-1">
+                While the schedule's window is open, the controller adopts this posture instead of the standing one
+                (a runtime command still overrides both). Set both, or leave both blank for no automation.
+              </p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField label="Posture">
+                <select v-model="form.auto_posture" class="select select-bordered">
+                  <option value="">— None —</option>
+                  <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
+                </select>
+              </FormField>
+              <FormField label="Schedule">
+                <select v-model="form.auto_schedule" class="select select-bordered">
+                  <option value="">— None —</option>
+                  <option v-for="s in schedules" :key="s.id" :value="s.id">{{ s.code }} — {{ s.name || s.code }}</option>
+                </select>
+                <p v-if="schedules.length === 0" class="text-xs text-warning">No schedules exist yet — create one first.</p>
+              </FormField>
+            </div>
           </div>
         </div>
       </BaseCard>
@@ -221,30 +253,6 @@ onMounted(async () => {
             Logical relay/input indices on the controller; its model template maps them to physical lines.
             Door-position (DPS) and request-to-exit (REX) drive forced/held-open detection. Ignored for logical portals.
           </p>
-        </div>
-      </BaseCard>
-
-      <BaseCard title="Scheduled posture">
-        <div class="space-y-4">
-          <p class="text-sm text-base-content/60">
-            While the schedule's window is open, the controller adopts this posture instead of the standing one
-            (a runtime command still overrides both). Set both, or leave both blank for no automation.
-          </p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Posture">
-              <select v-model="form.auto_posture" class="select select-bordered">
-                <option value="">— None —</option>
-                <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
-              </select>
-            </FormField>
-            <FormField label="Schedule">
-              <select v-model="form.auto_schedule" class="select select-bordered">
-                <option value="">— None —</option>
-                <option v-for="s in schedules" :key="s.id" :value="s.id">{{ s.code }} — {{ s.name || s.code }}</option>
-              </select>
-              <p v-if="schedules.length === 0" class="text-xs text-warning">No schedules exist yet — create one first.</p>
-            </FormField>
-          </div>
         </div>
       </BaseCard>
 

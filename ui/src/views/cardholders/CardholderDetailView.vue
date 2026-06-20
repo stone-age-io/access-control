@@ -10,7 +10,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
-import RefList from '@/components/ui/RefList.vue'
+import RelationList from '@/components/ui/RelationList.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -30,7 +30,8 @@ const kvKey = computed(() => (record.value ? policyKey('cardholders', record.val
 
 // Effective access: every portal reachable via this holder's
 // roles → access groups → portals, deduped, with the granting groups.
-interface EffectivePortal { portal: Portal; groups: string[] }
+// `id` lets RelationList key the rows.
+interface EffectivePortal { id: string; portal: Portal; groups: string[] }
 const effectiveAccess = computed<EffectivePortal[]>(() => {
   const byId = new Map<string, EffectivePortal>()
   for (const role of roles.value) {
@@ -40,13 +41,16 @@ const effectiveAccess = computed<EffectivePortal[]>(() => {
         if (existing) {
           if (!existing.groups.includes(group.code)) existing.groups.push(group.code)
         } else {
-          byId.set(portal.id, { portal, groups: [group.code] })
+          byId.set(portal.id, { id: portal.id, portal, groups: [group.code] })
         }
       }
     }
   }
   return [...byId.values()].sort((a, b) => a.portal.code.localeCompare(b.portal.code))
 })
+
+const credentialSearch = (c: Credential) => [c.value, c.label, c.type].filter(Boolean).join(' ')
+const effectiveSearch = (ea: EffectivePortal) => [ea.portal.code, ea.portal.name, ...ea.groups].filter(Boolean).join(' ')
 
 async function load() {
   loading.value = true
@@ -131,66 +135,54 @@ onMounted(load)
     </BaseCard>
 
     <!-- Credentials (a credential belongs to this cardholder) -->
-    <BaseCard title="Credentials">
+    <RelationList
+      title="Credentials"
+      icon="🎫"
+      :items="credentials"
+      :to="(c) => `/credentials/${c.id}`"
+      :search-text="credentialSearch"
+      empty="No credentials yet. Add a badge, PIN, or mobile credential for this person."
+    >
       <template #actions>
         <router-link :to="`/credentials/new?user=${record.id}`" class="btn btn-sm btn-outline">+ Add credential</router-link>
       </template>
-      <div v-if="credentials.length === 0" class="text-center py-6 text-sm opacity-50">
-        No credentials yet. Add a badge, PIN, or mobile credential for this person.
-      </div>
-      <ul v-else class="divide-y divide-base-200">
-        <li
-          v-for="cred in credentials"
-          :key="cred.id"
-          class="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded hover:bg-base-200 cursor-pointer transition-colors"
-          @click="router.push(`/credentials/${cred.id}`)"
-        >
-          <code class="text-sm font-medium text-primary truncate">{{ cred.value }}</code>
-          <span class="badge badge-ghost badge-sm">{{ cred.type || '—' }}</span>
-          <span v-if="cred.label" class="text-sm opacity-60 truncate flex-1">{{ cred.label }}</span>
-          <span class="badge badge-sm ml-auto" :class="credBadge(cred.status || '')">{{ cred.status || 'active' }}</span>
-        </li>
-      </ul>
-    </BaseCard>
+      <template #item="{ item: cred }">
+        <code class="text-sm font-medium text-primary truncate">{{ cred.value }}</code>
+        <span class="badge badge-ghost badge-sm">{{ cred.type || '—' }}</span>
+        <span v-if="cred.label" class="text-sm opacity-60 truncate flex-1">{{ cred.label }}</span>
+        <span class="badge badge-sm ml-auto" :class="credBadge(cred.status || '')">{{ cred.status || 'active' }}</span>
+      </template>
+    </RelationList>
 
     <!-- Effective access -->
-    <BaseCard title="Effective Access">
-      <template #actions>
-        <span class="text-xs opacity-50">{{ effectiveAccess.length }} point(s)</span>
+    <RelationList
+      title="Effective access"
+      icon="🎯"
+      :items="effectiveAccess"
+      :to="(ea) => `/portals/${ea.portal.id}`"
+      :search-text="effectiveSearch"
+      hint="Portals this person can reach through their roles — during each granting group's schedule."
+      empty="No access yet. Assign roles whose access groups include some portals."
+    >
+      <template #item="{ item: ea }">
+        <code class="text-sm font-medium text-primary">{{ ea.portal.code }}</code>
+        <span class="text-sm opacity-60 truncate flex-1">{{ ea.portal.name }}</span>
+        <span class="text-[10px] uppercase opacity-40 tracking-wide">via</span>
+        <span v-for="g in ea.groups" :key="g" class="badge badge-ghost badge-sm">{{ g }}</span>
       </template>
-      <p class="text-sm text-base-content/60 mb-3">
-        Portals this person can reach through their roles — during each granting group's schedule.
-      </p>
-      <div v-if="effectiveAccess.length === 0" class="text-center py-6 text-sm opacity-50">
-        No access yet. Assign roles whose access groups include some portals.
-      </div>
-      <ul v-else class="divide-y divide-base-200">
-        <li
-          v-for="ea in effectiveAccess"
-          :key="ea.portal.id"
-          class="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded hover:bg-base-200 cursor-pointer transition-colors"
-          @click="router.push(`/portals/${ea.portal.id}`)"
-        >
-          <code class="text-sm font-medium text-primary">{{ ea.portal.code }}</code>
-          <span class="text-sm opacity-60 truncate flex-1">{{ ea.portal.name }}</span>
-          <span class="text-[10px] uppercase opacity-40 tracking-wide">via</span>
-          <span v-for="g in ea.groups" :key="g" class="badge badge-ghost badge-sm">{{ g }}</span>
-        </li>
-      </ul>
-    </BaseCard>
+    </RelationList>
 
-    <!-- Rail -->
-    <template #rail>
-      <RecordMeta :record="record" :kv-key="kvKey" />
-      <RefList
-        title="Roles"
-        icon="🛡️"
-        :items="roles"
-        :to="(r) => `/roles/${r.id}`"
-        :primary="(r) => r.code"
-        :secondary="(r) => r.name"
-        empty="No roles assigned."
-      />
-    </template>
+    <!-- Roles -->
+    <RelationList
+      title="Roles"
+      icon="🛡️"
+      :items="roles"
+      :to="(r) => `/roles/${r.id}`"
+      :primary="(r) => r.code"
+      :secondary="(r) => r.name"
+      empty="No roles assigned."
+    />
+
+    <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>
 </template>

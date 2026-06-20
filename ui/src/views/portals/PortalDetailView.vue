@@ -10,7 +10,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
-import RefList from '@/components/ui/RefList.vue'
+import RelationList from '@/components/ui/RelationList.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -83,7 +83,7 @@ onMounted(load)
       <button class="btn btn-sm btn-ghost text-error" :disabled="deleting" @click="handleDelete">Delete</button>
     </template>
 
-    <BaseCard>
+    <BaseCard title="Identity">
       <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
         <DataField label="Code">
           <code class="text-sm">{{ record.code }}</code>
@@ -98,10 +98,34 @@ onMounted(load)
           </router-link>
           <span v-else class="opacity-40">—</span>
         </DataField>
-        <DataField label="Standing Posture">
-          <span class="badge badge-sm badge-ghost">{{ record.posture || 'secure' }}</span>
-        </DataField>
-        <DataField label="Pulse">{{ record.pulse_seconds }} s</DataField>
+      </div>
+    </BaseCard>
+
+    <BaseCard title="Posture &amp; timing">
+      <div class="space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+          <DataField label="Standing posture">
+            <span class="badge badge-sm badge-ghost">{{ record.posture || 'secure' }}</span>
+          </DataField>
+          <DataField label="Pulse">{{ record.pulse_seconds }} s</DataField>
+        </div>
+        <div class="border-t border-base-200 pt-4">
+          <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Scheduled override</div>
+          <p v-if="!record.auto_posture && !record.auto_schedule" class="text-sm opacity-50">
+            None — the standing posture always applies.
+          </p>
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+            <DataField label="Posture">
+              <span class="badge badge-sm badge-ghost">{{ record.auto_posture || '—' }}</span>
+            </DataField>
+            <DataField label="Schedule">
+              <router-link v-if="record.expand?.auto_schedule" :to="`/schedules/${record.expand.auto_schedule.id}`" class="link link-primary">
+                {{ record.expand.auto_schedule.code }}
+              </router-link>
+              <span v-else class="opacity-40">—</span>
+            </DataField>
+          </div>
+        </div>
       </div>
     </BaseCard>
 
@@ -120,34 +144,16 @@ onMounted(load)
       </div>
     </BaseCard>
 
-    <BaseCard title="Scheduled posture">
-      <div v-if="!record.auto_posture && !record.auto_schedule" class="text-sm opacity-50">
-        No scheduled posture — the standing posture always applies.
-      </div>
-      <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
-        <DataField label="Posture">
-          <span class="badge badge-sm badge-ghost">{{ record.auto_posture || '—' }}</span>
-        </DataField>
-        <DataField label="Schedule">
-          <router-link v-if="record.expand?.auto_schedule" :to="`/schedules/${record.expand.auto_schedule.id}`" class="link link-primary">
-            {{ record.expand.auto_schedule.code }}
-          </router-link>
-          <span v-else class="opacity-40">—</span>
-        </DataField>
-      </div>
-    </BaseCard>
+    <RelationList
+      title="In access groups"
+      icon="🗝️"
+      :items="groups"
+      :to="(g) => `/access-groups/${g.id}`"
+      :primary="(g) => g.code"
+      :secondary="(g) => g.name"
+      empty="Not in any access group yet."
+    />
 
-    <template #rail>
-      <RecordMeta :record="record" :kv-key="kvKey" />
-      <RefList
-        title="In access groups"
-        icon="🗝️"
-        :items="groups"
-        :to="(g) => `/access-groups/${g.id}`"
-        :primary="(g) => g.code"
-        :secondary="(g) => g.name"
-        empty="Not in any access group yet."
-      />
-    </template>
+    <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>
 </template>

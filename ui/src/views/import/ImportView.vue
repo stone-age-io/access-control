@@ -521,6 +521,25 @@ const ACTION_BADGE: Record<string, string> = {
           </label>
         </div>
       </BaseCard>
+
+      <RailCard title="CSV format" icon="📄">
+        <p class="text-xs opacity-60 leading-relaxed">
+          One row per credential. Columns: <code class="text-[11px]">name</code>,
+          <code class="text-[11px]">email</code>, <code class="text-[11px]">external_id</code>,
+          <code class="text-[11px]">status</code>, <code class="text-[11px]">roles</code>,
+          <code class="text-[11px]">credential_value</code>, <code class="text-[11px]">credential_type</code>,
+          <code class="text-[11px]">credential_status</code>, <code class="text-[11px]">credential_label</code>.
+        </p>
+        <ul class="text-xs opacity-60 leading-relaxed list-disc pl-4 space-y-1">
+          <li>Repeat a cardholder's <code class="text-[11px]">external_id</code> (or email) on more rows to add more badges.</li>
+          <li>List multiple <code class="text-[11px]">roles</code> in one cell, separated by <code class="text-[11px]">;</code>.</li>
+          <li>Leave the credential columns blank for a cardholder with no badge yet.</li>
+          <li>Cardholders match on <code class="text-[11px]">external_id</code> then email; credentials on their value.</li>
+        </ul>
+        <button type="button" class="btn btn-sm btn-outline w-full" @click="downloadTemplate">
+          ⬇ Download example CSV
+        </button>
+      </RailCard>
     </template>
 
     <template v-else-if="step === 'preview' && plan">
@@ -552,6 +571,14 @@ const ACTION_BADGE: Record<string, string> = {
           <span>⚠ Ignored unrecognized column(s): <code>{{ plan.unknownColumns.join(', ') }}</code></span>
         </div>
       </BaseCard>
+
+      <RailCard title="Before you import" icon="✅">
+        <p class="text-xs opacity-60 leading-relaxed">
+          This is a dry run — nothing has been written yet. <span class="font-medium">{{ writeTotal }}</span>
+          record(s) will be created or updated when you confirm. Rows marked
+          <span class="badge badge-error badge-xs">error</span> are skipped.
+        </p>
+      </RailCard>
 
       <BaseCard title="Row-by-row preview" :no-padding="true">
         <div class="p-4">
@@ -656,38 +683,8 @@ const ACTION_BADGE: Record<string, string> = {
       </div>
     </div>
 
-    <!-- RAIL -->
-    <template #rail>
-      <RailCard v-if="step === 'input'" title="CSV format" icon="📄">
-        <p class="text-xs opacity-60 leading-relaxed">
-          One row per credential. Columns: <code class="text-[11px]">name</code>,
-          <code class="text-[11px]">email</code>, <code class="text-[11px]">external_id</code>,
-          <code class="text-[11px]">status</code>, <code class="text-[11px]">roles</code>,
-          <code class="text-[11px]">credential_value</code>, <code class="text-[11px]">credential_type</code>,
-          <code class="text-[11px]">credential_status</code>, <code class="text-[11px]">credential_label</code>.
-        </p>
-        <ul class="text-xs opacity-60 leading-relaxed list-disc pl-4 space-y-1">
-          <li>Repeat a cardholder's <code class="text-[11px]">external_id</code> (or email) on more rows to add more badges.</li>
-          <li>List multiple <code class="text-[11px]">roles</code> in one cell, separated by <code class="text-[11px]">;</code>.</li>
-          <li>Leave the credential columns blank for a cardholder with no badge yet.</li>
-          <li>Cardholders match on <code class="text-[11px]">external_id</code> then email; credentials on their value.</li>
-        </ul>
-        <button type="button" class="btn btn-sm btn-outline w-full" @click="downloadTemplate">
-          ⬇ Download example CSV
-        </button>
-      </RailCard>
-
-      <RailCard v-else-if="step === 'preview'" title="Before you import" icon="✅">
-        <p class="text-xs opacity-60 leading-relaxed">
-          This is a dry run — nothing has been written yet. <span class="font-medium">{{ writeTotal }}</span>
-          record(s) will be created or updated when you confirm. Rows marked
-          <span class="badge badge-error badge-xs">error</span> are skipped.
-        </p>
-      </RailCard>
-    </template>
-
-    <!-- FOOTER -->
-    <template #footer>
+    <!-- Actions -->
+    <div class="sticky bottom-0 z-20 mt-6 py-3 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 border-t border-base-300 bg-base-100/95 backdrop-blur">
       <template v-if="step === 'input'">
         <router-link to="/cardholders" class="btn btn-ghost">Cancel</router-link>
         <button type="button" class="btn btn-primary" :disabled="busy" @click="buildPlan">
@@ -706,6 +703,6 @@ const ACTION_BADGE: Record<string, string> = {
         <button type="button" class="btn btn-ghost" @click="reset">Import another file</button>
         <router-link to="/cardholders" class="btn btn-primary">View cardholders</router-link>
       </template>
-    </template>
+    </div>
   </DetailLayout>
 </template>

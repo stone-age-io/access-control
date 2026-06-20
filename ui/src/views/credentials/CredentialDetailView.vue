@@ -11,7 +11,6 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
-import RailCard from '@/components/ui/RailCard.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -108,14 +107,6 @@ onMounted(load)
       </div>
     </BaseCard>
 
-    <template #rail>
-      <RecordMeta :record="record" :kv-key="kvKey" />
-      <RailCard v-if="holder" title="Cardholder" icon="🪪">
-        <router-link :to="`/cardholders/${holder.id}`" class="flex flex-col gap-0.5 hover:opacity-80">
-          <span class="text-sm font-medium">{{ holder.name || holder.email || holder.id }}</span>
-          <span v-if="holder.email && holder.name" class="text-xs opacity-50">{{ holder.email }}</span>
-        </router-link>
-      </RailCard>
-    </template>
+    <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>
 </template>

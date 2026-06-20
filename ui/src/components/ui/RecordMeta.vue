@@ -1,5 +1,9 @@
 <script setup lang="ts">
-/** Standard rail card: the policy KV key plus record timestamps and id. */
+/**
+ * Compact record-meta strip for the bottom of a single-column detail view:
+ * the policy KV key plus timestamps and id, low-emphasis and inline. Mirrors
+ * FormLayout's inline KV-key styling.
+ */
 import { formatDate, formatRelativeTime } from '@/utils/format'
 
 defineProps<{
@@ -9,31 +13,22 @@ defineProps<{
 </script>
 
 <template>
-  <div class="card bg-base-100 border border-base-300 shadow-sm">
-    <div class="card-body p-4 gap-3">
-      <h3 class="text-xs font-bold uppercase tracking-wider opacity-60 flex items-center gap-2">
-        <span>🔑</span>Record
-      </h3>
-
-      <div v-if="kvKey">
-        <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-1">Policy KV key</div>
-        <code class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block">{{ kvKey }}</code>
-      </div>
-
-      <div class="grid grid-cols-1 gap-2.5">
-        <div>
-          <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide">Created</div>
-          <div class="text-sm" :title="formatDate(record.created)">{{ formatRelativeTime(record.created) }}</div>
-        </div>
-        <div>
-          <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide">Updated</div>
-          <div class="text-sm" :title="formatDate(record.updated)">{{ formatRelativeTime(record.updated) }}</div>
-        </div>
-        <div>
-          <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide">ID</div>
-          <code class="text-xs opacity-70 break-all">{{ record.id }}</code>
-        </div>
-      </div>
+  <div class="flex flex-wrap items-center gap-x-6 gap-y-2 px-1 pt-2 text-xs text-base-content/50">
+    <div v-if="kvKey" class="flex items-center gap-2 min-w-0">
+      <span class="font-semibold uppercase tracking-wide">Policy KV key</span>
+      <code class="font-mono bg-base-200 px-2 py-0.5 rounded break-all text-base-content/70">{{ kvKey }}</code>
+    </div>
+    <div>
+      <span class="font-semibold uppercase tracking-wide">Created</span>
+      <span class="ml-1" :title="formatDate(record.created)">{{ formatRelativeTime(record.created) }}</span>
+    </div>
+    <div>
+      <span class="font-semibold uppercase tracking-wide">Updated</span>
+      <span class="ml-1" :title="formatDate(record.updated)">{{ formatRelativeTime(record.updated) }}</span>
+    </div>
+    <div>
+      <span class="font-semibold uppercase tracking-wide">ID</span>
+      <code class="ml-1 opacity-80">{{ record.id }}</code>
     </div>
   </div>
 </template>

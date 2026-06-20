@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /**
- * Two-column detail shell.
+ * Single-column detail shell.
  *
- * Header (breadcrumbs + title + #actions) above a responsive grid: the main
- * column (default slot, 2/3) and a sticky #rail (1/3) that fills what used to be
- * dead whitespace with context. Create/edit forms use FormLayout instead.
+ * Header (breadcrumbs + title + #actions + help) above a centered single column
+ * (default slot). Relations live in the column as RelationList sections and the
+ * record meta sits at the bottom as a RecordMeta strip — no rail. Matches the
+ * single-column FormLayout so detail and form views read the same.
  */
 import HelpButton from './HelpButton.vue'
 
@@ -21,9 +22,9 @@ defineProps<{
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="mx-auto w-full max-w-4xl">
     <!-- Header -->
-    <div>
+    <div class="mb-6">
       <div v-if="breadcrumbs?.length" class="breadcrumbs text-sm">
         <ul>
           <li v-for="(c, i) in breadcrumbs" :key="i">
@@ -44,14 +45,9 @@ defineProps<{
       </div>
     </div>
 
-    <!-- Body: main + rail -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-      <div class="lg:col-span-2 space-y-6 min-w-0">
-        <slot />
-      </div>
-      <aside v-if="$slots.rail" class="lg:col-span-1 space-y-4 lg:sticky lg:top-6">
-        <slot name="rail" />
-      </aside>
+    <!-- Body -->
+    <div class="space-y-6">
+      <slot />
     </div>
   </div>
 </template>

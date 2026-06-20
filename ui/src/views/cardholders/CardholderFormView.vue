@@ -7,6 +7,7 @@ import type { Cardholder, CardholderStatus, Role } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import RelationPicker from '@/components/ui/RelationPicker.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -132,15 +133,13 @@ onMounted(async () => {
       <BaseCard title="Roles">
         <div class="space-y-2">
           <p class="text-sm text-base-content/60">The roles assigned to this cardholder.</p>
-          <div class="border border-base-300 rounded-box p-3 max-h-64 overflow-y-auto space-y-1">
-            <label v-for="r in roles" :key="r.id" class="flex items-center gap-3 cursor-pointer py-1 px-1 rounded hover:bg-base-200">
-              <input type="checkbox" class="checkbox checkbox-sm" :value="r.id" v-model="form.roles" />
-              <code class="text-sm font-medium">{{ r.code }}</code>
-              <span class="text-sm opacity-50 truncate">{{ r.name }}</span>
-            </label>
-            <p v-if="roles.length === 0" class="text-sm opacity-50 py-2">No roles available. Create some first.</p>
-          </div>
-          <p class="text-xs opacity-50">{{ form.roles.length }} selected</p>
+          <RelationPicker
+            v-model="form.roles"
+            :options="roles"
+            :primary="(r) => r.code"
+            :secondary="(r) => r.name"
+            empty="No roles available. Create some first."
+          />
         </div>
       </BaseCard>
 

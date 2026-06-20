@@ -10,7 +10,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
-import RefList from '@/components/ui/RefList.vue'
+import RelationList from '@/components/ui/RelationList.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -96,35 +96,27 @@ onMounted(load)
     </BaseCard>
 
     <!-- Access groups in this role -->
-    <BaseCard title="Access Groups">
-      <div v-if="accessGroups.length === 0" class="text-center py-6 text-sm opacity-50">
-        No access groups in this role.
-      </div>
-      <ul v-else class="divide-y divide-base-200">
-        <li
-          v-for="g in accessGroups"
-          :key="g.id"
-          class="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded hover:bg-base-200 cursor-pointer transition-colors"
-          @click="router.push(`/access-groups/${g.id}`)"
-        >
-          <code class="text-sm font-medium text-primary">{{ g.code }}</code>
-          <span class="text-sm opacity-60 truncate flex-1">{{ g.name }}</span>
-        </li>
-      </ul>
-    </BaseCard>
+    <RelationList
+      title="Access groups"
+      icon="🗝️"
+      :items="accessGroups"
+      :to="(g) => `/access-groups/${g.id}`"
+      :primary="(g) => g.code"
+      :secondary="(g) => g.name"
+      empty="No access groups in this role."
+    />
 
-    <!-- Rail -->
-    <template #rail>
-      <RecordMeta :record="record" :kv-key="kvKey" />
-      <RefList
-        title="Cardholders"
-        icon="🪪"
-        :items="cardholders"
-        :to="(c) => `/cardholders/${c.id}`"
-        :primary="(c) => c.name || c.email || c.id"
-        :secondary="(c) => c.email"
-        empty="No cardholders have this role."
-      />
-    </template>
+    <!-- Cardholders with this role -->
+    <RelationList
+      title="Cardholders"
+      icon="🪪"
+      :items="cardholders"
+      :to="(c) => `/cardholders/${c.id}`"
+      :primary="(c) => c.name || c.email || c.id"
+      :secondary="(c) => c.email"
+      empty="No cardholders have this role."
+    />
+
+    <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>
 </template>
