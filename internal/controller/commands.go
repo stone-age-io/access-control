@@ -15,11 +15,11 @@ import (
 // NATS and drives the Runtime:
 //
 //	{app}.{location}.{type}.{thing}.cmd.posture {posture, actor, reason, until?}
-//	{app}.{location}.{type}.{thing}.cmd.unlock  {seconds, actor, reason}
+//	{app}.{location}.{type}.{thing}.cmd.grant   {seconds, actor, reason}
 //	{app}.{location}.evt.fire                   {active}
 //
 // posture installs/clears a runtime override (posture "clear" reverts to the
-// standing value); unlock momentarily pulses the lock; fire toggles alarm
+// standing value); grant momentarily pulses the lock; fire toggles alarm
 // suppression. Commands are core NATS (not JetStream) — fire-and-forget control.
 type CommandHandler struct {
 	location string
@@ -41,7 +41,8 @@ func (h *CommandHandler) Start(nc *nats.Conn) error {
 		handler nats.MsgHandler
 	}{
 		{h.subj.PostureWildcard(h.location), h.onPosture},
-		{h.subj.UnlockWildcard(h.location), h.onUnlock},
+		{h.subj.GrantWildcard(h.location), h.onGrant},
+		{h.subj.OutputWildcard(h.location), h.onOutput},
 		{h.subj.Fire(h.location), h.onFire},
 	}
 	for _, s := range subscriptions {
@@ -101,10 +102,10 @@ func (h *CommandHandler) onPosture(msg *nats.Msg) {
 	h.log.Info("posture override set", "portal", portal, "posture", cmd.Posture, "actor", cmd.Actor)
 }
 
-func (h *CommandHandler) onUnlock(msg *nats.Msg) {
+func (h *CommandHandler) onGrant(msg *nats.Msg) {
 	_, _, portal, _, ok := h.subj.ParseCommand(msg.Subject)
 	if !ok || portal == "" {
-		h.log.Warn("unlock command with no portal", "subject", msg.Subject)
+		h.log.Warn("grant command with no portal", "subject", msg.Subject)
 		return
 	}
 	var cmd struct {
@@ -113,10 +114,29 @@ func (h *CommandHandler) onUnlock(msg *nats.Msg) {
 		Reason  string `json:"reason"`
 	}
 	if err := json.Unmarshal(msg.Data, &cmd); err != nil {
-		h.log.Error("bad unlock command", "subject", msg.Subject, "error", err)
+		h.log.Error("bad grant command", "subject", msg.Subject, "error", err)
 		return
 	}
-	h.rt.Unlock(portal, cmd.Seconds, cmd.Actor, cmd.Reason)
+	h.rt.Grant(portal, cmd.Seconds, cmd.Actor, cmd.Reason)
+}
+
+func (h *CommandHandler) onOutput(msg *nats.Msg) {
+	_, _, code, _, ok := h.subj.ParseCommand(msg.Subject)
+	if !ok || code == "" {
+		h.log.Warn("output command with no aux code", "subject", msg.Subject)
+		return
+	}
+	var cmd struct {
+		Action  string `json:"action"`
+		Seconds int    `json:"seconds"`
+		Actor   string `json:"actor"`
+		Reason  string `json:"reason"`
+	}
+	if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+		h.log.Error("bad output command", "subject", msg.Subject, "error", err)
+		return
+	}
+	h.rt.DriveOutput(code, cmd.Action, cmd.Seconds, cmd.Actor, cmd.Reason)
 }
 
 func (h *CommandHandler) onFire(msg *nats.Msg) {

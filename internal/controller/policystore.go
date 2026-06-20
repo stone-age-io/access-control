@@ -67,6 +67,8 @@ type PolicyStore struct {
 	controllers    map[string]policykv.Controller // controller code -> controller (for model/location)
 	bindings       map[string]Binding             // portal code -> hardware binding
 	holidayRecords map[string]policykv.Holiday    // holiday id -> record (graph.Holidays is rebuilt from this)
+	auxInputs      map[string]policykv.AuxInput   // aux input code -> record
+	auxOutputs     map[string]policykv.AuxOutput  // aux output code -> record
 
 	onChange func() // fired (off the lock) after each applied change and each sync
 
@@ -93,6 +95,8 @@ func NewPolicyStore(kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metric
 		controllers:    make(map[string]policykv.Controller),
 		bindings:       make(map[string]Binding),
 		holidayRecords: make(map[string]policykv.Holiday),
+		auxInputs:      make(map[string]policykv.AuxInput),
+		auxOutputs:     make(map[string]policykv.AuxOutput),
 		graph: policy.Policy{
 			Schedules: make(map[string]policy.Schedule),
 			Portals:   make(map[string]policy.Portal),
@@ -203,6 +207,43 @@ func (s *PolicyStore) Controller(code string) (policykv.Controller, bool) {
 	defer s.mu.RUnlock()
 	c, ok := s.controllers[code]
 	return c, ok
+}
+
+// AuxInputsForController returns the aux inputs bound to the given controller
+// code. The AuxManager uses it to decide which input lines this box arms. Returns
+// a fresh slice each call.
+func (s *PolicyStore) AuxInputsForController(controllerCode string) []policykv.AuxInput {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []policykv.AuxInput
+	for _, ai := range s.auxInputs {
+		if ai.Controller == controllerCode {
+			out = append(out, ai)
+		}
+	}
+	return out
+}
+
+// AuxOutputsForController returns the aux outputs bound to the given controller code.
+func (s *PolicyStore) AuxOutputsForController(controllerCode string) []policykv.AuxOutput {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []policykv.AuxOutput
+	for _, ao := range s.auxOutputs {
+		if ao.Controller == controllerCode {
+			out = append(out, ao)
+		}
+	}
+	return out
+}
+
+// AuxOutput returns an aux output record (for its pulse default) and whether it
+// is known.
+func (s *PolicyStore) AuxOutput(code string) (policykv.AuxOutput, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ao, ok := s.auxOutputs[code]
+	return ao, ok
 }
 
 // SetOnChange registers a callback fired (off the store lock) after each applied
@@ -485,6 +526,20 @@ func (s *PolicyStore) apply(key string, value []byte) {
 			ValidFrom: validFrom, ValidUntil: validUntil,
 		}
 
+	case strings.HasPrefix(key, policykv.PrefixAuxInput):
+		var w policykv.AuxInput
+		if !s.unmarshal(key, value, &w) {
+			return
+		}
+		s.auxInputs[w.Code] = w
+
+	case strings.HasPrefix(key, policykv.PrefixAuxOutput):
+		var w policykv.AuxOutput
+		if !s.unmarshal(key, value, &w) {
+			return
+		}
+		s.auxOutputs[w.Code] = w
+
 	default:
 		s.log.Warn("policystore: unknown key prefix, ignoring", "key", key)
 		return
@@ -519,6 +574,10 @@ func (s *PolicyStore) remove(key string) {
 		delete(s.graph.Users, strings.TrimPrefix(key, policykv.PrefixUser))
 	case strings.HasPrefix(key, policykv.PrefixCred):
 		delete(s.graph.Creds, strings.TrimPrefix(key, policykv.PrefixCred))
+	case strings.HasPrefix(key, policykv.PrefixAuxInput):
+		delete(s.auxInputs, strings.TrimPrefix(key, policykv.PrefixAuxInput))
+	case strings.HasPrefix(key, policykv.PrefixAuxOutput):
+		delete(s.auxOutputs, strings.TrimPrefix(key, policykv.PrefixAuxOutput))
 	default:
 		s.log.Warn("policystore: unknown key prefix on delete, ignoring", "key", key)
 		return

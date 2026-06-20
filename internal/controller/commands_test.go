@@ -55,10 +55,10 @@ func TestCommandPostureInvalidIgnored(t *testing.T) {
 	}
 }
 
-func TestCommandUnlockExplicitSeconds(t *testing.T) {
+func TestCommandGrantExplicitSeconds(t *testing.T) {
 	h, _, refs := handlerFor(t)
-	h.onUnlock(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.unlock",
+	h.onGrant(&nats.Msg{
+		Subject: "acc.hq.door.lobby-main.cmd.grant",
 		Data:    []byte(`{"seconds":7,"actor":"guard"}`),
 	})
 	if got := refs.lock.Pulses(); len(got) != 1 || got[0] != 7 {
@@ -66,10 +66,10 @@ func TestCommandUnlockExplicitSeconds(t *testing.T) {
 	}
 }
 
-func TestCommandUnlockDefaultsToPortalPulse(t *testing.T) {
+func TestCommandGrantDefaultsToPortalPulse(t *testing.T) {
 	h, _, refs := handlerFor(t)
-	h.onUnlock(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.unlock",
+	h.onGrant(&nats.Msg{
+		Subject: "acc.hq.door.lobby-main.cmd.grant",
 		Data:    []byte(`{}`),
 	})
 	if got := refs.lock.Pulses(); len(got) != 1 || got[0] != 5 {

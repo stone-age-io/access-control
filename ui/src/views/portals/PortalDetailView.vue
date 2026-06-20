@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { policyKey } from '@/utils/policyKey'
-import type { Portal, AccessGroup } from '@/types/pocketbase'
+import type { Portal, AccessGroup, PointStatus } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
@@ -23,8 +23,39 @@ const groups = ref<AccessGroup[]>([])
 const loading = ref(true)
 const deleting = ref(false)
 
+// Live status (ACC_STATUS device shadow, projected into point_status).
+const status = ref<PointStatus | null>(null)
+const commanding = ref(false)
+let unsubStatus: (() => void) | null = null
+
 const title = computed(() => record.value?.name || record.value?.code || 'Portal')
 const kvKey = computed(() => (record.value ? policyKey('portals', record.value) : ''))
+const statusKey = computed(() => (record.value ? `portal.${record.value.code}` : ''))
+
+const POSTURES: { value: string; label: string; danger?: boolean }[] = [
+  { value: 'secure', label: 'Secure' },
+  { value: 'unlocked', label: 'Unlocked' },
+  { value: 'free_access', label: 'Free access' },
+  { value: 'lockdown', label: 'Lockdown', danger: true },
+  { value: 'disabled', label: 'Disabled', danger: true },
+]
+
+const doorBadge = computed(() => {
+  switch (status.value?.state) {
+    case 'open':
+      return { cls: 'badge-error', text: 'Open' }
+    case 'closed':
+      return { cls: 'badge-success', text: 'Closed' }
+    default:
+      return { cls: 'badge-ghost', text: 'Unknown' }
+  }
+})
+
+function changedAt(): string {
+  if (!status.value?.changed) return '—'
+  const d = new Date(status.value.changed)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString()
+}
 
 async function load() {
   loading.value = true
@@ -35,11 +66,71 @@ async function load() {
     ])
     record.value = p
     groups.value = g
+    await loadStatus()
+    await subscribeStatus()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load portal')
     router.push('/portals')
   } finally {
     loading.value = false
+  }
+}
+
+// Fetch the current shadow row (if the controller has reported any).
+async function loadStatus() {
+  try {
+    status.value = await pb
+      .collection('point_status')
+      .getFirstListItem<PointStatus>(`key = "${statusKey.value}"`)
+  } catch {
+    status.value = null // no shadow yet (controller offline / not reporting)
+  }
+}
+
+// Live updates: point_status is small, so subscribe to all and filter by key.
+async function subscribeStatus() {
+  unsubStatus = await pb.collection('point_status').subscribe<PointStatus>('*', (e) => {
+    if (e.record.key !== statusKey.value) return
+    status.value = e.action === 'delete' ? null : e.record
+  })
+}
+
+// Issue a control command via the accessd bridge (fire-and-forget; the result
+// reconciles back through the live status subscription).
+async function sendGrant() {
+  commanding.value = true
+  try {
+    await pb.send(`/api/portals/${recordId}/grant`, { method: 'POST', body: {} })
+    toast.success('Grant sent')
+  } catch (err: any) {
+    toast.error(err?.message || 'Failed to send grant')
+  } finally {
+    commanding.value = false
+  }
+}
+
+async function setPosture(value: string, danger = false) {
+  if (danger) {
+    const confirmed = await confirm({
+      title: `Set posture: ${value}`,
+      message: `Set "${record.value?.code}" to ${value}?`,
+      details:
+        value === 'lockdown'
+          ? 'Lockdown denies all access, beating any valid credential, until cleared.'
+          : 'Disabled stops enforcement on this portal until cleared.',
+      confirmText: 'Set posture',
+      variant: 'warning',
+    })
+    if (!confirmed) return
+  }
+  commanding.value = true
+  try {
+    await pb.send(`/api/portals/${recordId}/posture`, { method: 'POST', body: { posture: value } })
+    toast.success(value === 'clear' ? 'Override cleared' : `Posture set: ${value}`)
+  } catch (err: any) {
+    toast.error(err?.message || 'Failed to set posture')
+  } finally {
+    commanding.value = false
   }
 }
 
@@ -66,6 +157,9 @@ async function handleDelete() {
 }
 
 onMounted(load)
+onBeforeUnmount(() => {
+  if (unsubStatus) unsubStatus()
+})
 </script>
 
 <template>
@@ -98,6 +192,58 @@ onMounted(load)
           </router-link>
           <span v-else class="opacity-40">—</span>
         </DataField>
+      </div>
+    </BaseCard>
+
+    <BaseCard title="Live status">
+      <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-6 gap-y-4">
+        <DataField label="Door">
+          <span class="badge badge-sm" :class="doorBadge.cls">{{ doorBadge.text }}</span>
+        </DataField>
+        <DataField label="Effective posture">
+          <span class="badge badge-sm badge-ghost">{{ status.posture || '—' }}</span>
+        </DataField>
+        <DataField label="Held open">
+          <span v-if="status.held" class="badge badge-sm badge-warning">Held</span>
+          <span v-else class="opacity-40">No</span>
+        </DataField>
+        <DataField label="Updated">{{ changedAt() }}</DataField>
+      </div>
+      <p v-else class="text-sm opacity-50">
+        No live status yet — the controller driving this portal hasn’t reported (offline or unassigned).
+      </p>
+    </BaseCard>
+
+    <BaseCard title="Controls">
+      <div class="space-y-4">
+        <div>
+          <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Momentary</div>
+          <button class="btn btn-sm btn-primary" :disabled="commanding" @click="sendGrant">
+            Grant (unlock once)
+          </button>
+        </div>
+        <div class="border-t border-base-200 pt-4">
+          <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Posture override</div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="p in POSTURES"
+              :key="p.value"
+              class="btn btn-sm"
+              :class="p.danger ? 'btn-outline btn-warning' : 'btn-outline'"
+              :disabled="commanding"
+              @click="setPosture(p.value, p.danger)"
+            >
+              {{ p.label }}
+            </button>
+            <button class="btn btn-sm btn-ghost" :disabled="commanding" @click="setPosture('clear')">
+              Clear override
+            </button>
+          </div>
+          <p class="text-xs opacity-50 mt-2">
+            A posture override is operational state on the controller — it is not saved to this record, and
+            “Clear” reverts to the scheduled or standing posture.
+          </p>
+        </div>
       </div>
     </BaseCard>
 

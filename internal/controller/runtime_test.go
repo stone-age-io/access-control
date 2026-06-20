@@ -177,7 +177,7 @@ func TestRuntimeIgnoresCommandsForUndrivenPortal(t *testing.T) {
 
 	rt.SetPosture("side-gate", policy.PostureLockdown, "guard", "incident", at)
 	rt.ClearPosture("side-gate", "guard", "all clear", at)
-	rt.Unlock("side-gate", 5, "guard", "buzz in")
+	rt.Grant("side-gate", 5, "guard", "buzz in")
 
 	if len(emit.events) != 0 {
 		t.Errorf("emitted %d events for an undriven portal, want 0: %+v", len(emit.events), emit.events)

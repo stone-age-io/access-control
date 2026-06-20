@@ -40,6 +40,7 @@ type LockDriver interface {
 const (
 	InputDPS = "dps" // door-position switch (open/closed)
 	InputREX = "rex" // request-to-exit (egress press)
+	InputAux = "aux" // named auxiliary input (observe-only)
 )
 
 // InputEvent is one digital-input transition for a portal. Kind selects which

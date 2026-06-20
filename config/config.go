@@ -40,6 +40,12 @@ const (
 	// here, so the stream can never drift from what the controllers publish.
 	DefaultEventsStream = "ACC_EVENTS"
 
+	// DefaultStatusBucket is the KV bucket carrying the upward "device shadow":
+	// live edge state (door open/closed, effective posture, aux I/O), one key per
+	// point. Controllers write it; accessd watches it into the point_status
+	// projection. The mirror image of ACC_POLICY (which flows the other way).
+	DefaultStatusBucket = "ACC_STATUS"
+
 	// DefaultDataDir is where accessd's embedded PocketBase stores its data.
 	DefaultDataDir = "./pb_data"
 )
@@ -53,6 +59,7 @@ type Config struct {
 	Metrics    MetricsConfig    `json:"metrics" yaml:"metrics" mapstructure:"metrics"`
 	Policy     PolicyConfig     `json:"policy" yaml:"policy" mapstructure:"policy"`
 	Events     EventsConfig     `json:"events" yaml:"events" mapstructure:"events"`
+	Status     StatusConfig     `json:"status" yaml:"status" mapstructure:"status"`
 	Subjects   SubjectsConfig   `json:"subjects" yaml:"subjects" mapstructure:"subjects"`
 	Accessd    AccessdConfig    `json:"accessd" yaml:"accessd" mapstructure:"accessd"`
 	Controller ControllerConfig `json:"controller" yaml:"controller" mapstructure:"controller"`
@@ -104,6 +111,14 @@ type PolicyConfig struct {
 // the subjects root (the {root}.evt.> subtree), not configured here.
 type EventsConfig struct {
 	Stream string `json:"stream" yaml:"stream" mapstructure:"stream"`
+}
+
+// StatusConfig names the KV bucket for the upward device-shadow channel. accessd
+// creates it and watches it into the point_status projection; controllers bind it
+// read-write and write their live state. accessd and every controller MUST use
+// the same bucket name.
+type StatusConfig struct {
+	Bucket string `json:"bucket" yaml:"bucket" mapstructure:"bucket"`
 }
 
 // SubjectsConfig sets the app-discriminator segment every NATS subject carries
@@ -184,7 +199,7 @@ func Load(path string) (*Config, error) {
 		"nats.tls.caFile", "nats.tls.insecure",
 		"logging.level", "logging.encoding", "logging.outputPath",
 		"metrics.enabled", "metrics.address", "metrics.path", "metrics.updateInterval",
-		"policy.bucket", "events.stream", "subjects.app",
+		"policy.bucket", "events.stream", "status.bucket", "subjects.app",
 		"accessd.dataDir", "accessd.controllerOfflineAfter",
 		"controller.code", "controller.location", "controller.heartbeatInterval",
 		"controller.driver", "controller.model",
@@ -252,6 +267,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Events.Stream == "" {
 		cfg.Events.Stream = DefaultEventsStream
 	}
+	if cfg.Status.Bucket == "" {
+		cfg.Status.Bucket = DefaultStatusBucket
+	}
 	if cfg.Subjects.App == "" {
 		cfg.Subjects.App = subjects.DefaultApp
 	}
@@ -314,6 +332,9 @@ func validate(cfg *Config) error {
 
 	if cfg.Policy.Bucket == "" {
 		return fmt.Errorf("policy.bucket cannot be empty")
+	}
+	if cfg.Status.Bucket == "" {
+		return fmt.Errorf("status.bucket cannot be empty")
 	}
 
 	// The app token must be a single NATS token: subject parsing compares it

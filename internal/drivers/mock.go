@@ -78,6 +78,38 @@ func (h *MockHardware) Disarm(code string) {
 	h.mu.Unlock()
 }
 
+// ArmOutput returns a fresh MockLock for an aux output relay (no physical line).
+// Keyed separately from portal locks so an aux code can't collide with a portal.
+func (h *MockHardware) ArmOutput(code string, _ int) (LockDriver, error) {
+	l := NewMockLock(code, h.log)
+	h.mu.Lock()
+	h.locks["auxout:"+code] = l
+	h.mu.Unlock()
+	return l, nil
+}
+
+// DisarmOutput forgets an aux output's mock lock.
+func (h *MockHardware) DisarmOutput(code string) {
+	h.mu.Lock()
+	delete(h.locks, "auxout:"+code)
+	h.mu.Unlock()
+}
+
+// ArmInput is a no-op for the mock backend (no physical input lines, so no aux
+// input transitions are ever emitted).
+func (h *MockHardware) ArmInput(_ string, _ int) error { return nil }
+
+// DisarmInput is a no-op for the mock backend.
+func (h *MockHardware) DisarmInput(_ string) {}
+
+// AuxOutputLock returns the mock lock armed for an aux output (for tests).
+func (h *MockHardware) AuxOutputLock(code string) (*MockLock, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	l, ok := h.locks["auxout:"+code]
+	return l, ok
+}
+
 // Lock returns the mock lock armed for a portal (for tests/inspection).
 func (h *MockHardware) Lock(code string) (*MockLock, bool) {
 	h.mu.Lock()

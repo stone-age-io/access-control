@@ -1,0 +1,88 @@
+// Package statuskv defines the on-the-wire JSON shapes and key scheme for the
+// upward "device shadow" channel: live edge state mirrored into NATS KV (bucket
+// ACC_STATUS), one key per point.
+//
+// It is the reverse of internal/policykv. Policy flows DOWN (accessd writes /
+// controller reads); status flows UP (controller writes / accessd reads). The
+// controller publishes the current state of each point it drives; accessd watches
+// the bucket and projects it into the rebuildable point_status collection behind
+// the UI. Keys use the same stable-code scheme as policykv so the bucket stays
+// human-readable and self-contained.
+//
+// Semantics are latest-wins per key (KV history 1): status is "what is true now,"
+// not a log of transitions — the history of record is the ACC_EVENTS stream. A
+// missed intermediate value is harmless; the newest value is always correct.
+package statuskv
+
+import "strings"
+
+// Key prefixes. One KV key per point: "<prefix><code>", e.g. "portal.lobby-main".
+// Aux prefixes are added in the aux-I/O phase.
+const (
+	PrefixPortal = "portal." // portal.<code>
+	PrefixAuxIn  = "auxin."  // auxin.<code>  (aux-I/O phase)
+	PrefixAuxOut = "auxout." // auxout.<code> (aux-I/O phase)
+)
+
+// Kind names used in the point_status projection (and the kind select field).
+const (
+	KindPortal    = "portal"
+	KindAuxInput  = "aux_input"
+	KindAuxOutput = "aux_output"
+)
+
+// Parse splits a status KV key into its projection kind and bare code. ok is
+// false for an unrecognized prefix (a foreign key the projector should skip).
+func Parse(key string) (kind, code string, ok bool) {
+	switch {
+	case strings.HasPrefix(key, PrefixPortal):
+		return KindPortal, strings.TrimPrefix(key, PrefixPortal), true
+	case strings.HasPrefix(key, PrefixAuxIn):
+		return KindAuxInput, strings.TrimPrefix(key, PrefixAuxIn), true
+	case strings.HasPrefix(key, PrefixAuxOut):
+		return KindAuxOutput, strings.TrimPrefix(key, PrefixAuxOut), true
+	default:
+		return "", "", false
+	}
+}
+
+// Door contact states carried in PortalStatus.Door. Stable strings (they flow
+// verbatim into the point_status projection and the UI).
+const (
+	DoorOpen    = "open"
+	DoorClosed  = "closed"
+	DoorUnknown = "unknown" // no door input wired, or before the first DPS edge
+)
+
+// PortalStatus is the live shadow of one portal the controller drives. Posture is
+// the current EFFECTIVE posture (command override / scheduled / standing, resolved
+// by the controller); Held reports an active held-open (DOTL) alarm. Location and
+// Controller are carried so the point_status projection is self-contained (no
+// lookup back into the policy graph), per the policykv convention.
+type PortalStatus struct {
+	Code       string `json:"code"`
+	Location   string `json:"location"`
+	Controller string `json:"controller"`
+	Door       string `json:"door"`      // DoorOpen | DoorClosed | DoorUnknown
+	Posture    string `json:"posture"`   // current effective posture
+	Held       bool   `json:"held"`      // held-open alarm active
+	UpdatedAt  string `json:"updatedAt"` // RFC3339 UTC
+}
+
+// AuxInputStatus is the live shadow of a named auxiliary input (observe-only).
+type AuxInputStatus struct {
+	Code       string `json:"code"`
+	Location   string `json:"location"`
+	Controller string `json:"controller"`
+	Active     bool   `json:"active"` // input line asserted
+	UpdatedAt  string `json:"updatedAt"`
+}
+
+// AuxOutputStatus is the live shadow of a named auxiliary output relay.
+type AuxOutputStatus struct {
+	Code       string `json:"code"`
+	Location   string `json:"location"`
+	Controller string `json:"controller"`
+	Energized  bool   `json:"energized"` // standing held state (on/off)
+	UpdatedAt  string `json:"updatedAt"`
+}

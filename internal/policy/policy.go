@@ -52,6 +52,7 @@ const (
 	ReasonAllowGrant             = "allow_grant"
 	ReasonAllowPostureUnlocked   = "allow_posture_unlocked"    // posture unlocked (B): credential not consulted
 	ReasonAllowPostureFreeAccess = "allow_posture_free_access" // posture free_access (A): any tap opens, no validation
+	ReasonAllowCommandGrant      = "allow_command_grant"       // operator-initiated grant (cmd.grant), no credential
 
 	ReasonDenyUnknownCredential = "deny_unknown_credential"
 	ReasonDenyRevoked           = "deny_revoked"

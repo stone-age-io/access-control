@@ -41,7 +41,8 @@ collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
 |---|---|---|---|
 | `acc.{location}.{type}.{thing}.tap` | → ctrl | core NATS | `{"cred":"..."}` or a bare credential string |
 | `acc.{location}.{type}.{thing}.cmd.posture` | → ctrl | core NATS | `{"posture":"…","actor":"…","reason":"…","until":"…"}` |
-| `acc.{location}.{type}.{thing}.cmd.unlock` | → ctrl | core NATS | `{"seconds":N,"actor":"…","reason":"…"}` |
+| `acc.{location}.{type}.{thing}.cmd.grant` | → ctrl | core NATS | `{"seconds":N,"actor":"…","reason":"…"}` |
+| `acc.{location}.auxout.{thing}.cmd.output` | → ctrl | core NATS | `{"action":"on"\|"off"\|"pulse","seconds":N,"actor":"…","reason":"…"}` |
 | `acc.{location}.evt.fire` | → ctrl | core NATS | `{"active":bool}` |
 | `acc.{location}.{type}.{thing}.evt.tap` | ctrl → | core NATS → JetStream | `{"cred","user","allow","reason","ts"}` |
 | `acc.{location}.{type}.{thing}.evt.state` | ctrl → | core NATS → JetStream | `{"posture","actor?","reason?","ts"}` |
@@ -52,7 +53,7 @@ collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
 
 Controllers subscribe per location with wildcards: taps via
 `acc.{location}.*.*.tap` and commands via `acc.{location}.*.*.cmd.posture` /
-`acc.{location}.*.*.cmd.unlock`. The audit surface is the `acc.*.…evt` subtree,
+`acc.{location}.*.*.cmd.grant`. The audit surface is the `acc.*.…evt` subtree,
 captured by `ACC_EVENTS` and projected into the `events` collection via **two
 stream subjects of different fixed arity** (JetStream forbids overlapping subjects,
 so the short one must not use a trailing `>`):
@@ -89,8 +90,16 @@ held-open DOTL timer and the scheduled-posture hold-eval ticker, below).
   ignored** — timed reversion must come from an external scheduler publishing a
   follow-up command. `free_access` opens on any tap without consulting the
   credential (strike pulses, door stays closed); `unlocked` holds the strike open.
-- **unlock** — a momentary strike pulse, distinct from a standing posture change.
+- **grant** — a momentary strike pulse (the same physical effect as a credential
+  grant, operator-initiated), distinct from a standing posture change.
   `seconds <= 0` (or omitted) falls back to the portal's configured `pulseSeconds`.
+  Emits an `evt.tap` with `allow=true`, `reason=allow_command_grant`, and `user`
+  set to the issuing actor, so the open is attributable in the audit trail.
+- **output** — drives a named auxiliary output relay (`auxout` type). `on`/`off`
+  set the standing held state; `pulse` energizes momentarily (`seconds<=0` falls
+  back to the aux output's configured `pulseSeconds`). Aux outputs are first-class
+  Things bound to a controller, addressed like portals; their live state flows up
+  the status channel (`auxout.{code}`).
 - **fire** — toggles a location's fire-alarm-input state. While active, the
   controller **suppresses alarm emission** for that location (forced/held-open
   events would be false alarms during evacuation). It never changes posture and
@@ -112,7 +121,7 @@ a **door-position switch** (DPS, `dpsInput`) and an optional **request-to-exit**
 | `held` | an authorized-open door stayed open past `heldOpenSeconds` (DOTL) |
 | `held_clear` | a previously-held door closed |
 
-A grant (an `allow` tap or an `unlock` command) and a REX press each open a short
+A grant (an `allow` tap or a `grant` command) and a REX press each open a short
 window during which a door-open reads as *authorized* (no `forced`), arming the
 held-open timer instead; the DOTL timer is a deliberate no-ticker exception. While
 a location's **fire** input is active, all alarm emission is suppressed
@@ -162,6 +171,8 @@ sole writer; controllers are read-only watchers.
 | `role.{code}` | `{"code","groups":["<group code>"]}` |
 | `user.{pbid}` | `{"id","status","roles":["<role code>"]}` |
 | `cred.{value}` | `{"value","user":"<cardholder pbid>","status","validFrom"?,"validUntil"?}` |
+| `auxin.{code}` | `{"code","location","controller"?,"inputIndex"?}` |
+| `auxout.{code}` | `{"code","location","controller"?,"relayIndex"?,"pulseSeconds"?}` |
 
 `type` is the portal kind (`door`/`turnstile`/`elevator`/`gate`/`logical`) and the
 `{type}` subject segment. `timezone` is an IANA name resolved once per location on
@@ -198,6 +209,27 @@ not-yet-synced role/group/schedule, a malformed value, or no policy at all all
 result in **deny**. A `WatchAll` re-delivers every key on (re)subscribe, so a
 reconnect performs a full re-sync.
 
+## Status KV (bucket `ACC_STATUS`)
+
+The upward "device shadow" — the live state of each point the edge drives, the
+mirror image of `ACC_POLICY`: **controllers write** (one key per point);
+**accessd watches** and projects into the rebuildable `point_status` collection
+(the UI subscribes for realtime). Latest-wins per key (KV history 1): this is
+"what is true now," not history — the history of record is `ACC_EVENTS`. accessd
+owns bucket creation; controllers bind it read-write. A controller deletes its
+keys on disarm; a reconnect re-publishes the whole shadow.
+
+| Key | Value shape |
+|---|---|
+| `portal.{code}` | `{"code","location","controller","door":"open"\|"closed"\|"unknown","posture","held","updatedAt"}` |
+| `auxin.{code}` | `{"code","location","controller","active","updatedAt"}` |
+| `auxout.{code}` | `{"code","location","controller","energized","updatedAt"}` |
+
+`door` is `unknown` on a controller without a DPS input wired (e.g. the mock
+driver) or before the first edge. `posture` is the current **effective** posture
+(command override / scheduled / standing). `energized` is an aux output's standing
+held state (a `pulse` is momentary and not reflected).
+
 ## Decision
 
 `policy.Decide` is a pure function evaluated locally per tap. Order is the
@@ -224,7 +256,7 @@ a runtime command override, else scheduled posture (`autoPosture` while
 |---|---|
 | Posture | `secure` · `free_access` · `unlocked` · `lockdown` · `disabled` |
 | Status (user/cred) | `active` (anything else denies: `suspended`, `revoked`) |
-| Reason codes | `allow_grant` · `allow_posture_unlocked` · `allow_posture_free_access` · `deny_unknown_credential` · `deny_revoked` · `deny_not_yet_valid` · `deny_expired` · `deny_no_access` · `deny_schedule_closed` · `deny_lockdown` · `deny_point_disabled` · `deny_unknown_point` |
+| Reason codes | `allow_grant` · `allow_posture_unlocked` · `allow_posture_free_access` · `allow_command_grant` · `deny_unknown_credential` · `deny_revoked` · `deny_not_yet_valid` · `deny_expired` · `deny_no_access` · `deny_schedule_closed` · `deny_lockdown` · `deny_point_disabled` · `deny_unknown_point` |
 
 Reason codes are **stable strings** — they flow verbatim into `tap` events and
 the `events` collection, so downstream consumers and dashboards depend on them.

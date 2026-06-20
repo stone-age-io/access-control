@@ -40,6 +40,18 @@ const routes: RouteRecordRaw[] = [
       { path: 'portals/:id', name: 'Portal', component: () => import('@/views/portals/PortalDetailView.vue'), meta: { title: 'Portal' } },
       { path: 'portals/:id/edit', name: 'PortalEdit', component: () => import('@/views/portals/PortalFormView.vue'), meta: { title: 'Edit Portal' } },
 
+      // Aux inputs (named observe-only digital inputs)
+      { path: 'aux-inputs', name: 'AuxInputs', component: () => import('@/views/aux/AuxInputListView.vue'), meta: { title: 'Aux Inputs' } },
+      { path: 'aux-inputs/new', name: 'AuxInputNew', component: () => import('@/views/aux/AuxInputFormView.vue'), meta: { title: 'New Aux Input' } },
+      { path: 'aux-inputs/:id', name: 'AuxInput', component: () => import('@/views/aux/AuxInputDetailView.vue'), meta: { title: 'Aux Input' } },
+      { path: 'aux-inputs/:id/edit', name: 'AuxInputEdit', component: () => import('@/views/aux/AuxInputFormView.vue'), meta: { title: 'Edit Aux Input' } },
+
+      // Aux outputs (named relays driven by cmd.output)
+      { path: 'aux-outputs', name: 'AuxOutputs', component: () => import('@/views/aux/AuxOutputListView.vue'), meta: { title: 'Aux Outputs' } },
+      { path: 'aux-outputs/new', name: 'AuxOutputNew', component: () => import('@/views/aux/AuxOutputFormView.vue'), meta: { title: 'New Aux Output' } },
+      { path: 'aux-outputs/:id', name: 'AuxOutput', component: () => import('@/views/aux/AuxOutputDetailView.vue'), meta: { title: 'Aux Output' } },
+      { path: 'aux-outputs/:id/edit', name: 'AuxOutputEdit', component: () => import('@/views/aux/AuxOutputFormView.vue'), meta: { title: 'Edit Aux Output' } },
+
       // Controllers
       { path: 'controllers', name: 'Controllers', component: () => import('@/views/controllers/ControllerListView.vue'), meta: { title: 'Controllers' } },
       { path: 'controllers/new', name: 'ControllerNew', component: () => import('@/views/controllers/ControllerFormView.vue'), meta: { title: 'New Controller' } },

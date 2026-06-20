@@ -21,7 +21,14 @@ type Driver interface {
 	Arm(code string, lockRelay, dpsInput, rexInput int) (drivers.LockDriver, error)
 	// Disarm releases every line requested for a portal.
 	Disarm(code string)
-	// Inputs is the shared door-input stream (DPS/REX edges) feeding the runtime.
+	// ArmOutput/DisarmOutput/ArmInput/DisarmInput arm auxiliary points (a bare
+	// relay or input line) — the controller.AuxHardware surface. Aux input edges
+	// flow into the same Inputs() stream with kind InputAux.
+	ArmOutput(code string, relayIndex int) (drivers.LockDriver, error)
+	DisarmOutput(code string)
+	ArmInput(code string, inputIndex int) error
+	DisarmInput(code string)
+	// Inputs is the shared door-input stream (DPS/REX/aux edges) feeding the runtime.
 	Inputs() <-chan drivers.InputEvent
 	// Close releases all lines and closes the input stream.
 	Close() error

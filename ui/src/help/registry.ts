@@ -72,6 +72,41 @@ const TOPICS: Record<string, HelpTopic> = {
       { body: 'A portal is a controllable opening — door, gate, turnstile, elevator, or logical. A controller drives it via the lock relay and the DPS/REX inputs.' },
       { heading: 'Postures', body: 'The standing posture is the default state. A scheduled posture (while its window is open) or a runtime command can override it on the controller.', items: POSTURES },
       { heading: 'Controller binding', body: 'A portal is bound to the controller whose code matches its Controller field — reassigning it takes effect without touching the edge box. Unassigned portals are armed by no box.' },
+      { heading: 'Live status', body: 'The detail view shows the controller’s live state — door open/closed, effective posture, and whether the door is held open — streamed up from the edge. “Unknown” means no controller is reporting (offline or unassigned), or no door sensor is wired.' },
+      {
+        heading: 'Controls',
+        body: 'Operator commands are sent to the controller (fire-and-forget); the live status reflects the result. They are operational state, never saved to the record.',
+        items: [
+          { term: 'Grant', def: 'Unlock once — a momentary strike pulse. The everyday “buzz someone in.”' },
+          { term: 'Posture override', def: 'Hold a standing state (e.g. Unlocked for the morning, Lockdown during an incident). Distinct from Grant: it persists until changed or cleared.' },
+          { term: 'Clear override', def: 'Drop the override and revert to the scheduled posture (if its window is open) or the standing posture.' },
+        ],
+      },
+    ],
+  },
+  'aux-inputs': {
+    title: 'Aux Inputs',
+    icon: '🔌',
+    sections: [
+      { body: 'A named auxiliary digital input wired to a controller — like a portal’s DPS/REX but standalone and observe-only (no door logic). Use it to surface a contact, a tamper, or any dry-contact signal.' },
+      { heading: 'Live status', body: 'The detail view shows the input’s current state (Active/Inactive), streamed up from the controller. “No live status” means the controller is offline or the input is unassigned.' },
+      { heading: 'Binding', body: 'An aux input is monitored by the controller whose code matches its Controller field; the Input index is a logical line the controller’s model maps to a physical pin.' },
+    ],
+  },
+  'aux-outputs': {
+    title: 'Aux Outputs',
+    icon: '🔆',
+    sections: [
+      { body: 'A named relay on a controller you can drive directly — a gate strike, a light, a siren. Not a portal: no credential logic, just an output.' },
+      {
+        heading: 'Controls',
+        body: 'Commands are fire-and-forget; the live status reflects the standing state.',
+        items: [
+          { term: 'On / Off', def: 'Set the standing held state — the relay stays energized (On) or released (Off) until changed.' },
+          { term: 'Pulse', def: 'Energize momentarily for the configured pulse seconds, then return to the standing state.' },
+        ],
+      },
+      { heading: 'Binding', body: 'An aux output is driven by the controller whose code matches its Controller field; the Relay index is a logical line the model maps to a physical relay.' },
     ],
   },
   controllers: {

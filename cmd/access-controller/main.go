@@ -74,12 +74,17 @@ func main() {
 	// handler — and matching accessd's, so policy/events flow between them.
 	subj := subjects.New(cfg.Subjects.App)
 
-	// resync is wired to the policy store after it exists; a reconnect before
-	// then is a harmless no-op.
+	// resync/statusResync are wired after the policy store and status writer exist;
+	// a reconnect before then is a harmless no-op. On reconnect we re-establish the
+	// policy watcher and re-publish the whole device shadow.
 	var resync func()
+	var statusResync func()
 	nc, err := natsx.Connect(&cfg.NATS, log, m, func() {
 		if resync != nil {
 			resync()
+		}
+		if statusResync != nil {
+			statusResync()
 		}
 	})
 	if err != nil {
@@ -92,6 +97,14 @@ func main() {
 	kv, err := nc.KVBucket(ctx, cfg.Policy.Bucket)
 	if err != nil {
 		log.Fatal("failed to open policy KV bucket", "error", err)
+	}
+
+	// Read-write bind to the upward status bucket: the controller publishes its
+	// device shadow here. accessd owns creation, so this fails fast if accessd has
+	// not yet created the bucket (same assumption as the policy bucket).
+	statusKV, err := nc.KVBucket(ctx, cfg.Status.Bucket)
+	if err != nil {
+		log.Fatal("failed to open status KV bucket", "error", err)
 	}
 
 	// PolicyStore watches ACC_POLICY into in-memory maps and decides locally.
@@ -116,6 +129,7 @@ func main() {
 	// relay/input indices itself, as portals are armed/disarmed by the reconciler.
 	var (
 		portalHW  controller.PortalHardware
+		auxHW     controller.AuxHardware
 		doorInput drivers.DoorInput // nil for mock (no door monitoring)
 	)
 	switch cfg.Controller.Driver {
@@ -131,18 +145,34 @@ func main() {
 		}
 		defer func() { _ = gpioHW.Close() }()
 		portalHW = gpioHW
+		auxHW = gpioHW
 		doorInput = gpioHW
 		log.Info("portal hardware driver: gpio", "model", cfg.Controller.Model)
 	default: // "mock" (validated by config)
-		portalHW = drivers.NewMockHardware(log)
+		mockHW := drivers.NewMockHardware(log)
+		portalHW = mockHW
+		auxHW = mockHW
 		log.Info("portal hardware driver: mock (no physical I/O)")
 	}
 
 	emit := controller.NewNATSEmitter(nc.NC)
 	rt := controller.NewRuntime(cfg.Controller.Location, store, reader, doorInput, nil, emit, subj, log, m)
 
+	// Upward status channel: the runtime publishes each driven portal's live shadow
+	// (door/posture/held) into ACC_STATUS for accessd to project.
+	statusWriter := controller.NewStatusWriter(statusKV, cfg.Controller.Code, log)
+	statusWriter.Start(ctx)
+	defer statusWriter.Stop()
+	rt.SetStatusWriter(statusWriter)
+	statusResync = statusWriter.Resync
+
 	mgr := controller.NewPortalManager(cfg.Controller.Code, cfg.Controller.Location, store, reader, rt, portalHW, log)
-	store.SetOnChange(mgr.Notify) // must be set before Watch
+	auxMgr := controller.NewAuxManager(cfg.Controller.Code, cfg.Controller.Location, store, rt, auxHW, log)
+	// Fan policy changes out to both reconcilers (portals and aux points).
+	store.SetOnChange(func() {
+		mgr.Notify()
+		auxMgr.Notify()
+	}) // must be set before Watch
 
 	if err := store.Watch(ctx); err != nil {
 		log.Fatal("failed to start policy watcher", "error", err)
@@ -151,10 +181,12 @@ func main() {
 
 	mgr.Start(ctx)
 	defer mgr.Stop()
+	auxMgr.Start(ctx)
+	defer auxMgr.Stop()
 
 	go func() { _ = rt.Run(ctx) }()
 
-	// Command handler: posture/unlock commands + location fire-alarm-input signal.
+	// Command handler: posture/grant commands + location fire-alarm-input signal.
 	cmds := controller.NewCommandHandler(cfg.Controller.Location, rt, subj, log)
 	if err := cmds.Start(nc.NC); err != nil {
 		log.Fatal("failed to start command handler", "error", err)

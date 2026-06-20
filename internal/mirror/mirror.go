@@ -30,6 +30,7 @@ const opTimeout = 5 * time.Second
 var mirroredCollections = []string{
 	"locations", "schedules", "controllers", "portals", "access_groups",
 	"roles", "cardholders", "credentials", "holidays",
+	"aux_input", "aux_output",
 }
 
 // Publisher writes policy records to the KV bucket.
@@ -176,6 +177,10 @@ func recordKey(r *core.Record) (string, error) {
 		return naturalKey(policykv.PrefixCred, r.GetString("value"))
 	case "holidays":
 		return naturalKey(policykv.PrefixHoliday, r.Id)
+	case "aux_input":
+		return naturalKey(policykv.PrefixAuxInput, r.GetString("code"))
+	case "aux_output":
+		return naturalKey(policykv.PrefixAuxOutput, r.GetString("code"))
 	default:
 		return "", fmt.Errorf("not a mirrored collection: %s", name)
 	}
@@ -288,6 +293,27 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			Location:  resolveCode(app, "locations", r.GetString("location")),
 			Date:      dateOnly(r, "date"),
 			Recurring: r.GetBool("recurring"),
+		}
+	case "aux_input":
+		if err := validToken("aux input code", r.GetString("code")); err != nil {
+			return "", nil, err
+		}
+		payload = policykv.AuxInput{
+			Code:       r.GetString("code"),
+			Location:   resolveCode(app, "locations", r.GetString("location")),
+			Controller: resolveCode(app, "controllers", r.GetString("controller")),
+			InputIndex: r.GetInt("input_index"),
+		}
+	case "aux_output":
+		if err := validToken("aux output code", r.GetString("code")); err != nil {
+			return "", nil, err
+		}
+		payload = policykv.AuxOutput{
+			Code:         r.GetString("code"),
+			Location:     resolveCode(app, "locations", r.GetString("location")),
+			Controller:   resolveCode(app, "controllers", r.GetString("controller")),
+			RelayIndex:   r.GetInt("relay_index"),
+			PulseSeconds: r.GetInt("pulse_seconds"),
 		}
 	default:
 		return "", nil, fmt.Errorf("not a mirrored collection: %s", r.Collection().Name)

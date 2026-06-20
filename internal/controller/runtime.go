@@ -9,6 +9,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/policy"
+	"github.com/stone-age-io/access-control/internal/statuskv"
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
@@ -43,10 +44,35 @@ var (
 // goroutine both touch it.
 type doorMonitor struct {
 	open       bool
+	dpsSeen    bool // a DPS edge has been observed (else door state is unknown)
 	grantUntil time.Time
 	rexUntil   time.Time
 	timer      *time.Timer
 	held       bool // a held-open alarm is currently active (for the clear)
+}
+
+// portalShadow is the last status the runtime published for a portal. The runtime
+// only writes status when these semantic fields change, so the periodic hold-eval
+// reconcile never churns the status bucket with timestamp-only updates.
+type portalShadow struct {
+	door    string
+	posture string
+	held    bool
+}
+
+// auxOutputState is the runtime's view of a driven aux output relay.
+type auxOutputState struct {
+	lock         drivers.LockDriver
+	location     string
+	pulseSeconds int
+	energized    bool // standing held state (on/off; a pulse is momentary, not tracked)
+}
+
+// auxInputState is the runtime's view of a driven aux input (location + last
+// published value for dedup).
+type auxInputState struct {
+	location string
+	active   bool
 }
 
 // Runtime is the edge controller's event loop. It is purely event-driven: it
@@ -71,6 +97,12 @@ type Runtime struct {
 	overrides map[string]string       // portal -> runtime posture override (command-driven)
 	fire      map[string]bool         // location -> fire-alarm-input active (suppresses alarms)
 	monitors  map[string]*doorMonitor // portal -> door-state machine
+	shadow    map[string]portalShadow // portal -> last status published (change detection)
+
+	auxOutputs map[string]*auxOutputState // aux output code -> driven relay
+	auxInputs  map[string]*auxInputState  // aux input code -> observed line
+
+	statusWriter *StatusWriter // upward live-state channel; nil = not publishing status
 }
 
 // NewRuntime wires the tap loop. locks maps portal code to its lock driver; it
@@ -84,20 +116,27 @@ func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver
 		owned[code] = lock
 	}
 	return &Runtime{
-		location:  location,
-		store:     store,
-		reader:    reader,
-		input:     input,
-		locks:     owned,
-		emit:      emit,
-		subs:      subs,
-		log:       log.With("component", "runtime"),
-		m:         m,
-		overrides: make(map[string]string),
-		fire:      make(map[string]bool),
-		monitors:  make(map[string]*doorMonitor),
+		location:   location,
+		store:      store,
+		reader:     reader,
+		input:      input,
+		locks:      owned,
+		emit:       emit,
+		subs:       subs,
+		log:        log.With("component", "runtime"),
+		m:          m,
+		overrides:  make(map[string]string),
+		fire:       make(map[string]bool),
+		monitors:   make(map[string]*doorMonitor),
+		shadow:     make(map[string]portalShadow),
+		auxOutputs: make(map[string]*auxOutputState),
+		auxInputs:  make(map[string]*auxInputState),
 	}
 }
+
+// SetStatusWriter attaches the upward status channel. Optional: when nil (e.g. in
+// tests) the runtime simply publishes no live state. Set once at wiring time.
+func (r *Runtime) SetStatusWriter(w *StatusWriter) { r.statusWriter = w }
 
 // SetLock arms (or replaces) the lock driver for a portal. Called by the portal
 // reconciler when a portal appears in or changes type within policy.
@@ -113,6 +152,7 @@ func (r *Runtime) SetLock(portal string, lock drivers.LockDriver) {
 func (r *Runtime) DeleteLock(portal string) {
 	r.mu.Lock()
 	delete(r.locks, portal)
+	delete(r.shadow, portal)
 	if m := r.monitors[portal]; m != nil {
 		if m.timer != nil {
 			m.timer.Stop()
@@ -120,6 +160,10 @@ func (r *Runtime) DeleteLock(portal string) {
 		delete(r.monitors, portal)
 	}
 	r.mu.Unlock()
+	// The writer owns its keys' lifecycle: drop the shadow when the portal leaves.
+	if r.statusWriter != nil {
+		r.statusWriter.DeletePortal(portal)
+	}
 }
 
 // lockFor returns the lock driver for a portal under the read lock. The tap loop
@@ -144,12 +188,49 @@ func (r *Runtime) applyHold(portal string, at time.Time) {
 		return
 	}
 	posture, resolved := r.effectivePosture(portal, at)
-	if !resolved {
-		return // keep previous hold
+	if resolved {
+		if err := lock.SetHeld(posture == policy.PostureUnlocked); err != nil {
+			r.log.Error("failed to set lock hold", "portal", portal, "error", err)
+		}
 	}
-	if err := lock.SetHeld(posture == policy.PostureUnlocked); err != nil {
-		r.log.Error("failed to set lock hold", "portal", portal, "error", err)
+	// Publish live status regardless of hold resolution: an unresolved posture
+	// still reports the safe standing value, and door/held are independent of it.
+	r.writeStatus(portal, at)
+}
+
+// writeStatus publishes a portal's current shadow to the upward status channel,
+// but only when its door/posture/held actually change — so the periodic hold-eval
+// reconcile never churns the bucket with timestamp-only updates. A no-op without
+// a status writer (e.g. in tests).
+func (r *Runtime) writeStatus(portal string, at time.Time) {
+	if r.statusWriter == nil {
+		return
 	}
+	posture, _ := r.effectivePosture(portal, at) // standing value if unresolved — a fine display value
+	location, _ := r.portalAddr(portal)
+
+	r.mu.Lock()
+	door := statuskv.DoorUnknown
+	held := false
+	if m := r.monitors[portal]; m != nil {
+		held = m.held
+		if r.input != nil && m.dpsSeen {
+			if m.open {
+				door = statuskv.DoorOpen
+			} else {
+				door = statuskv.DoorClosed
+			}
+		}
+	}
+	cur := portalShadow{door: door, posture: posture, held: held}
+	if prev, ok := r.shadow[portal]; ok && prev == cur {
+		r.mu.Unlock()
+		return // unchanged — skip the write (no churn on the hold-eval tick)
+	}
+	r.shadow[portal] = cur
+	r.mu.Unlock()
+
+	r.statusWriter.SetPortal(portal, location, door, posture, held, at)
 }
 
 // reconcileHolds reconciles every driven portal's strike hold to effective
@@ -259,6 +340,8 @@ func (r *Runtime) handleInput(ev drivers.InputEvent) {
 		if ev.Active {
 			r.noteREX(ev.Portal, ev.At)
 		}
+	case drivers.InputAux:
+		r.setAuxInput(ev.Portal, ev.Active, ev.At)
 	default:
 		r.log.Warn("unknown door input kind; ignoring", "portal", ev.Portal, "kind", ev.Kind)
 	}
@@ -275,24 +358,23 @@ func (r *Runtime) handleDPS(portal string, closed bool, at time.Time) {
 
 	r.mu.Lock()
 	m := r.monitorFor(portal)
-	if newOpen == m.open {
-		r.mu.Unlock()
-		return // no transition (duplicate / debounce)
-	}
-	m.open = newOpen
-	if newOpen {
-		if at.Before(m.grantUntil) || at.Before(m.rexUntil) {
-			r.scheduleDOTL(portal, m) // authorized: watch for held-open
+	m.dpsSeen = true // any edge resolves the door from "unknown"
+	if newOpen != m.open {
+		m.open = newOpen
+		if newOpen {
+			if at.Before(m.grantUntil) || at.Before(m.rexUntil) {
+				r.scheduleDOTL(portal, m) // authorized: watch for held-open
+			} else {
+				emitForced = true
+			}
 		} else {
-			emitForced = true
+			if m.timer != nil {
+				m.timer.Stop()
+				m.timer = nil
+			}
+			emitHeldClear = m.held
+			m.held = false
 		}
-	} else {
-		if m.timer != nil {
-			m.timer.Stop()
-			m.timer = nil
-		}
-		emitHeldClear = m.held
-		m.held = false
 	}
 	r.mu.Unlock()
 
@@ -302,6 +384,9 @@ func (r *Runtime) handleDPS(portal string, closed bool, at time.Time) {
 	if emitHeldClear {
 		r.EmitAlarm(portal, AlarmHeldClear, at)
 	}
+	// Publish the current door state (deduped): also surfaces the first edge of a
+	// non-transition (e.g. a "closed" report that confirms the unknown state).
+	r.writeStatus(portal, at)
 }
 
 // scheduleDOTL arms the door-open-too-long timer from the portal's binding. Must
@@ -332,7 +417,9 @@ func (r *Runtime) onDOTL(portal string) {
 	}
 	m.held = true
 	r.mu.Unlock()
-	r.EmitAlarm(portal, AlarmHeld, time.Now().UTC())
+	now := time.Now().UTC()
+	r.EmitAlarm(portal, AlarmHeld, now)
+	r.writeStatus(portal, now)
 }
 
 // noteGrant opens the authorized-open window after a grant or commanded unlock.
@@ -430,12 +517,13 @@ func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
 	r.emitState(portal, effective, actor, reason, at)
 }
 
-// Unlock momentarily energizes the strike for a portal (a command-driven pulse,
-// distinct from a standing posture change). A non-positive seconds falls back to
-// the portal's configured pulse.
-func (r *Runtime) Unlock(portal string, seconds int, actor, reason string) {
+// Grant momentarily energizes the strike for a portal (a command-driven pulse,
+// distinct from a standing posture change) and emits a tap-style audit event so
+// the operator-initiated open is attributable in the timeline. A non-positive
+// seconds falls back to the portal's configured pulse.
+func (r *Runtime) Grant(portal string, seconds int, actor, reason string) {
 	if !r.drives(portal) {
-		r.log.Debug("ignoring unlock command for portal not driven here", "portal", portal)
+		r.log.Debug("ignoring grant command for portal not driven here", "portal", portal)
 		return
 	}
 	if seconds <= 0 {
@@ -445,12 +533,144 @@ func (r *Runtime) Unlock(portal string, seconds int, actor, reason string) {
 	}
 	lock, _ := r.lockFor(portal) // drives() guaranteed presence above
 	if err := lock.Pulse(seconds); err != nil {
-		r.log.Error("command unlock pulse failed", "portal", portal, "error", err)
+		r.log.Error("command grant pulse failed", "portal", portal, "error", err)
 		return
 	}
-	// A commanded unlock is an authorized open, like a grant.
-	r.noteGrant(portal, time.Now().UTC())
-	r.log.Info("command unlock", "portal", portal, "seconds", seconds, "actor", actor, "reason", reason)
+	now := time.Now().UTC()
+	// A commanded grant is an authorized open, like a credential grant.
+	r.noteGrant(portal, now)
+	r.log.Info("command grant", "portal", portal, "seconds", seconds, "actor", actor, "reason", reason)
+
+	// Emit an audit event: operator-initiated grants belong in the access trail.
+	if location, ptype := r.portalAddr(portal); ptype != "" {
+		if err := r.emit.Emit(r.subs.EventTap(location, ptype, portal), TapEvent{
+			User:   actor,
+			Allow:  true,
+			Reason: policy.ReasonAllowCommandGrant,
+			TS:     now.Format(time.RFC3339),
+		}); err != nil {
+			r.log.Error("failed to emit command-grant event", "portal", portal, "error", err)
+		} else {
+			r.m.IncEventPublished("tap")
+		}
+	}
+}
+
+// SetAuxOutput arms (or replaces) a driven aux output relay and publishes its
+// initial (de-energized) status. Called by the AuxManager on arm.
+func (r *Runtime) SetAuxOutput(code, location string, pulseSeconds int, lock drivers.LockDriver) {
+	r.mu.Lock()
+	r.auxOutputs[code] = &auxOutputState{lock: lock, location: location, pulseSeconds: pulseSeconds}
+	r.mu.Unlock()
+	if r.statusWriter != nil {
+		r.statusWriter.SetAuxOutput(code, location, false, time.Now().UTC())
+	}
+}
+
+// DeleteAuxOutput disarms a driven aux output and drops its shadow key.
+func (r *Runtime) DeleteAuxOutput(code string) {
+	r.mu.Lock()
+	delete(r.auxOutputs, code)
+	r.mu.Unlock()
+	if r.statusWriter != nil {
+		r.statusWriter.DeleteAuxOutput(code)
+	}
+}
+
+// ArmAuxInput records a driven aux input and publishes its initial (inactive)
+// status. Called by the AuxManager on arm; transitions arrive via handleInput.
+func (r *Runtime) ArmAuxInput(code, location string) {
+	r.mu.Lock()
+	r.auxInputs[code] = &auxInputState{location: location}
+	r.mu.Unlock()
+	if r.statusWriter != nil {
+		r.statusWriter.SetAuxInput(code, location, false, time.Now().UTC())
+	}
+}
+
+// DeleteAuxInput disarms a driven aux input and drops its shadow key.
+func (r *Runtime) DeleteAuxInput(code string) {
+	r.mu.Lock()
+	delete(r.auxInputs, code)
+	r.mu.Unlock()
+	if r.statusWriter != nil {
+		r.statusWriter.DeleteAuxInput(code)
+	}
+}
+
+// DriveOutput drives a named aux output relay. "on"/"off" set the standing held
+// state; "pulse" energizes momentarily (seconds<=0 falls back to the configured
+// pulse). Ignored for aux outputs this controller does not drive (commands are
+// location-wildcarded, like posture/grant).
+func (r *Runtime) DriveOutput(code, action string, seconds int, actor, reason string) {
+	r.mu.RLock()
+	st, ok := r.auxOutputs[code]
+	r.mu.RUnlock()
+	if !ok {
+		r.log.Debug("ignoring output command for aux output not driven here", "code", code)
+		return
+	}
+	now := time.Now().UTC()
+	switch action {
+	case "on":
+		if err := st.lock.SetHeld(true); err != nil {
+			r.log.Error("aux output on failed", "code", code, "error", err)
+			return
+		}
+		r.setAuxEnergized(code, st, true, now)
+	case "off":
+		if err := st.lock.SetHeld(false); err != nil {
+			r.log.Error("aux output off failed", "code", code, "error", err)
+			return
+		}
+		r.setAuxEnergized(code, st, false, now)
+	case "pulse":
+		sec := seconds
+		if sec <= 0 {
+			sec = st.pulseSeconds
+		}
+		if err := st.lock.Pulse(sec); err != nil {
+			r.log.Error("aux output pulse failed", "code", code, "error", err)
+			return
+		}
+		// Momentary: the standing energized state is unchanged.
+	default:
+		r.log.Warn("unknown aux output action; ignoring", "code", code, "action", action)
+		return
+	}
+	r.log.Info("aux output driven", "code", code, "action", action, "actor", actor, "reason", reason)
+}
+
+// setAuxEnergized updates an aux output's standing state and publishes it.
+func (r *Runtime) setAuxEnergized(code string, st *auxOutputState, energized bool, at time.Time) {
+	r.mu.Lock()
+	st.energized = energized
+	loc := st.location
+	r.mu.Unlock()
+	if r.statusWriter != nil {
+		r.statusWriter.SetAuxOutput(code, loc, energized, at)
+	}
+}
+
+// setAuxInput records an aux input transition (deduped) and publishes it.
+func (r *Runtime) setAuxInput(code string, active bool, at time.Time) {
+	r.mu.Lock()
+	st, ok := r.auxInputs[code]
+	if !ok {
+		r.mu.Unlock()
+		r.log.Debug("aux input event for aux not driven here; ignoring", "code", code)
+		return
+	}
+	if st.active == active {
+		r.mu.Unlock()
+		return // no change
+	}
+	st.active = active
+	loc := st.location
+	r.mu.Unlock()
+	if r.statusWriter != nil {
+		r.statusWriter.SetAuxInput(code, loc, active, at)
+	}
 }
 
 // SetFire records a location's fire-alarm-input state. While active, the

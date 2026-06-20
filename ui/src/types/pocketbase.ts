@@ -84,6 +84,30 @@ export interface Portal extends BaseRecord {
   expand?: { location?: Location; controller?: Controller; auto_schedule?: Schedule }
 }
 
+/** A named auxiliary digital input bound to a controller (observe-only). */
+export interface AuxInput extends BaseRecord {
+  code: string
+  name: string
+  location: string
+  controller: string
+  /** Logical input index on the box; the model template maps it to a line. */
+  input_index: number
+  expand?: { location?: Location; controller?: Controller }
+}
+
+/** A named auxiliary output relay driven by the cmd.output command. */
+export interface AuxOutput extends BaseRecord {
+  code: string
+  name: string
+  location: string
+  controller: string
+  /** Logical relay index on the box. */
+  relay_index: number
+  /** Default momentary-pulse duration (seconds) for the "pulse" action. */
+  pulse_seconds: number
+  expand?: { location?: Location; controller?: Controller }
+}
+
 /** A set of portals under one schedule (an "access level"). */
 export interface AccessGroup extends BaseRecord {
   code: string
@@ -134,6 +158,33 @@ export interface Holiday extends BaseRecord {
   /** Match this month/day every year (for fixed-date holidays like Dec 25). */
   recurring: boolean
   expand?: { location?: Location }
+}
+
+export type DoorState = 'open' | 'closed' | 'unknown'
+export type PointKind = 'portal' | 'aux_input' | 'aux_output'
+
+/**
+ * Live "device shadow" projection of the ACC_STATUS KV bucket — the current state
+ * of each point the edge drives. Rebuildable read model, written by accessd's
+ * status projector; subscribe via PocketBase realtime for live updates.
+ */
+export interface PointStatus extends BaseRecord {
+  /** ACC_STATUS KV key, e.g. "portal.lobby-main" — the row identity. */
+  key: string
+  /** Bare point code (display). */
+  code: string
+  kind: PointKind | ''
+  /** Headline value: door open/closed/unknown for portals; aux state otherwise. */
+  state: string
+  /** Effective posture (portals only). */
+  posture: Posture | ''
+  /** Held-open alarm active (portals only). */
+  held: boolean
+  controller: string
+  location: string
+  /** Controller-stamped instant of the last change (ISO datetime). */
+  changed: string
+  payload: Record<string, any>
 }
 
 /** Queryable projection of the JetStream audit stream. */

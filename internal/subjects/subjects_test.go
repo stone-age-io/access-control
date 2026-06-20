@@ -11,10 +11,12 @@ func TestBuild(t *testing.T) {
 	}{
 		{"tap", s.Tap("hq", "door", "lobby-main"), "acc.hq.door.lobby-main.tap"},
 		{"posture", s.Posture("hq", "door", "lobby-main"), "acc.hq.door.lobby-main.cmd.posture"},
-		{"unlock", s.Unlock("hq", "door", "lobby-main"), "acc.hq.door.lobby-main.cmd.unlock"},
+		{"grant", s.Grant("hq", "door", "lobby-main"), "acc.hq.door.lobby-main.cmd.grant"},
 		{"tapWildcard", s.TapWildcard("hq"), "acc.hq.*.*.tap"},
 		{"postureWildcard", s.PostureWildcard("hq"), "acc.hq.*.*.cmd.posture"},
-		{"unlockWildcard", s.UnlockWildcard("hq"), "acc.hq.*.*.cmd.unlock"},
+		{"grantWildcard", s.GrantWildcard("hq"), "acc.hq.*.*.cmd.grant"},
+		{"output", s.Output("hq", "gate-1"), "acc.hq.auxout.gate-1.cmd.output"},
+		{"outputWildcard", s.OutputWildcard("hq"), "acc.hq.*.*.cmd.output"},
 		{"fire", s.Fire("hq"), "acc.hq.evt.fire"},
 		{"eventTap", s.EventTap("hq", "door", "lobby-main"), "acc.hq.door.lobby-main.evt.tap"},
 		{"eventState", s.EventState("hq", "door", "lobby-main"), "acc.hq.door.lobby-main.evt.state"},
@@ -53,20 +55,20 @@ func TestApp(t *testing.T) {
 func TestParseEvent(t *testing.T) {
 	s := Default()
 	cases := []struct {
-		subject                       string
+		subject                      string
 		location, ptype, thing, kind string
-		ok                            bool
+		ok                           bool
 	}{
 		{"acc.hq.door.lobby-main.evt.tap", "hq", "door", "lobby-main", "tap", true},
 		{"acc.hq.door.lobby-main.evt.state", "hq", "door", "lobby-main", "state", true},
 		{"acc.hq.door.lobby-main.evt.alarm", "hq", "door", "lobby-main", "alarm", true},
 		{"acc.hq.evt.fire", "hq", "", "", "fire", true},
-		{"acc.hq.evt.tap", "", "", "", "", false},                  // 4-token must be fire
-		{"acc.hq.evt", "", "", "", "", false},                      // too short
+		{"acc.hq.evt.tap", "", "", "", "", false},                      // 4-token must be fire
+		{"acc.hq.evt", "", "", "", "", false},                          // too short
 		{"warehouse.camera.cam-042.evt.motion", "", "", "", "", false}, // foreign Thing (not app-rooted)
-		{"acc.hq.door.lobby.cmd.posture", "", "", "", "", false},   // command, not event
-		{"pacs.hq.door.lobby.evt.tap", "", "", "", "", false},      // wrong app token
-		{"acc.hq.door.lobby.evt.tap.extra", "", "", "", "", false}, // too long
+		{"acc.hq.door.lobby.cmd.posture", "", "", "", "", false},       // command, not event
+		{"pacs.hq.door.lobby.evt.tap", "", "", "", "", false},          // wrong app token
+		{"acc.hq.door.lobby.evt.tap.extra", "", "", "", "", false},     // too long
 	}
 	for _, tc := range cases {
 		location, ptype, thing, kind, ok := s.ParseEvent(tc.subject)
@@ -80,12 +82,12 @@ func TestParseEvent(t *testing.T) {
 func TestParseCommand(t *testing.T) {
 	s := Default()
 	cases := []struct {
-		subject                         string
+		subject                        string
 		location, ptype, thing, action string
-		ok                              bool
+		ok                             bool
 	}{
 		{"acc.hq.door.lobby-main.cmd.posture", "hq", "door", "lobby-main", "posture", true},
-		{"acc.hq.door.lobby-main.cmd.unlock", "hq", "door", "lobby-main", "unlock", true},
+		{"acc.hq.door.lobby-main.cmd.grant", "hq", "door", "lobby-main", "grant", true},
 		{"acc.hq.door.lobby-main.evt.tap", "", "", "", "", false}, // event, not command
 		{"acc.hq.door.lobby-main.cmd", "", "", "", "", false},     // too short
 		{"pacs.hq.door.lobby.cmd.posture", "", "", "", "", false}, // wrong app token

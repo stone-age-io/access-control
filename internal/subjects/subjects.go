@@ -24,7 +24,7 @@
 //
 //	{app}.{location}.{type}.{thing}.tap          credential presentation (reader -> controller)
 //	{app}.{location}.{type}.{thing}.cmd.posture  set/clear a runtime posture override
-//	{app}.{location}.{type}.{thing}.cmd.unlock   momentary unlock pulse
+//	{app}.{location}.{type}.{thing}.cmd.grant    momentary grant pulse (operator-initiated)
 //	{app}.{location}.evt.fire                    fire-alarm input (location-scoped; control input + audited)
 //	{app}.{location}.{type}.{thing}.evt.tap      decision outcome
 //	{app}.{location}.{type}.{thing}.evt.state    effective-posture change
@@ -84,9 +84,10 @@ func (s Subjects) Posture(location, ptype, thing string) string {
 	return fmt.Sprintf("%s.%s.%s.%s.cmd.posture", s.App(), location, ptype, thing)
 }
 
-// Unlock is the subject an operator/issuer publishes an unlock command to.
-func (s Subjects) Unlock(location, ptype, thing string) string {
-	return fmt.Sprintf("%s.%s.%s.%s.cmd.unlock", s.App(), location, ptype, thing)
+// Grant is the subject an operator/issuer publishes a momentary grant command to
+// (the same physical effect as a policy grant: a one-shot strike pulse).
+func (s Subjects) Grant(location, ptype, thing string) string {
+	return fmt.Sprintf("%s.%s.%s.%s.cmd.grant", s.App(), location, ptype, thing)
 }
 
 // TapWildcard is the per-location subscription a controller uses to receive taps
@@ -101,10 +102,27 @@ func (s Subjects) PostureWildcard(location string) string {
 	return fmt.Sprintf("%s.%s.*.*.cmd.posture", s.App(), location)
 }
 
-// UnlockWildcard is the per-location subscription a controller uses to receive
-// unlock commands for any of its portals.
-func (s Subjects) UnlockWildcard(location string) string {
-	return fmt.Sprintf("%s.%s.*.*.cmd.unlock", s.App(), location)
+// GrantWildcard is the per-location subscription a controller uses to receive
+// grant commands for any of its portals.
+func (s Subjects) GrantWildcard(location string) string {
+	return fmt.Sprintf("%s.%s.*.*.cmd.grant", s.App(), location)
+}
+
+// AuxOutType is the fixed {type} subject segment for auxiliary outputs — they are
+// Things addressed like portals, with this reserved type token.
+const AuxOutType = "auxout"
+
+// Output is the subject an operator publishes an auxiliary-output command to
+// (on/off/pulse). Aux outputs ride the same {app}.{location}.{type}.{thing}
+// hierarchy as portals, with the fixed AuxOutType token.
+func (s Subjects) Output(location, thing string) string {
+	return fmt.Sprintf("%s.%s.%s.%s.cmd.output", s.App(), location, AuxOutType, thing)
+}
+
+// OutputWildcard is the per-location subscription a controller uses to receive
+// output commands for any of its aux outputs.
+func (s Subjects) OutputWildcard(location string) string {
+	return fmt.Sprintf("%s.%s.*.*.cmd.output", s.App(), location)
 }
 
 // Fire is the location-scoped fire-alarm-input subject. It lives under evt (not

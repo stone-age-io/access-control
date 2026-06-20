@@ -20,6 +20,8 @@ const (
 	PrefixCred       = "cred."
 	PrefixController = "controller."
 	PrefixHoliday    = "holiday."
+	PrefixAuxInput   = "auxin."
+	PrefixAuxOutput  = "auxout."
 )
 
 // Location carries the timezone (the controller resolves it once per evaluation)
@@ -88,6 +90,29 @@ type Controller struct {
 	Name     string `json:"name"`
 	Location string `json:"location"`
 	Model    string `json:"model"`
+}
+
+// AuxInput is a named auxiliary digital input bound to a controller — like a
+// portal's DPS/REX but standalone (observe-only, no door semantics). Location and
+// Controller are codes; InputIndex is a logical input index on the box (the model
+// template maps it to a physical line). Consumed only by the controller's
+// AuxManager/runtime, never by policy.Decide.
+type AuxInput struct {
+	Code       string `json:"code"`
+	Location   string `json:"location"`
+	Controller string `json:"controller,omitempty"`
+	InputIndex int    `json:"inputIndex,omitempty"`
+}
+
+// AuxOutput is a named auxiliary relay bound to a controller — driven by the
+// cmd.output command (on/off/pulse). RelayIndex is a logical relay index on the
+// box; PulseSeconds is the default momentary-pulse duration.
+type AuxOutput struct {
+	Code         string `json:"code"`
+	Location     string `json:"location"`
+	Controller   string `json:"controller,omitempty"`
+	RelayIndex   int    `json:"relayIndex,omitempty"`
+	PulseSeconds int    `json:"pulseSeconds,omitempty"`
 }
 
 // AccessGroup grants a set of portals (by code) under one schedule (by code).

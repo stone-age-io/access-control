@@ -14,6 +14,8 @@ const PREFIX: Record<string, string> = {
   cardholders: 'user.',
   credentials: 'cred.',
   holidays: 'holiday.',
+  aux_input: 'auxin.',
+  aux_output: 'auxout.',
 }
 
 /** Build the KV key for a record, or '' when the natural key isn't set yet. */

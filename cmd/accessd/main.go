@@ -26,11 +26,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/audit"
+	"github.com/stone-age-io/access-control/internal/commandapi"
 	"github.com/stone-age-io/access-control/internal/health"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/mirror"
 	"github.com/stone-age-io/access-control/internal/natsx"
+	"github.com/stone-age-io/access-control/internal/status"
 	"github.com/stone-age-io/access-control/internal/subjects"
 	"github.com/stone-age-io/access-control/internal/webui"
 
@@ -77,6 +79,7 @@ func main() {
 		collector  *metrics.Collector
 		auditC     *audit.Consumer
 		healthMon  *health.Monitor
+		statusProj *status.Projector
 	)
 
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -119,13 +122,26 @@ func main() {
 			}()
 		}
 
-		nc, err = natsx.Connect(&cfg.NATS, log, m, nil)
+		// On reconnect, re-establish the status watcher (WatchAll re-delivers every
+		// key = full re-sync). statusProj is assigned below, before any reconnect
+		// can fire.
+		nc, err = natsx.Connect(&cfg.NATS, log, m, func() {
+			if statusProj != nil {
+				statusProj.Resync()
+			}
+		})
 		if err != nil {
 			return err
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		kv, err := nc.EnsureKVBucket(ctx, cfg.Policy.Bucket)
+		if err != nil {
+			return err
+		}
+		// The upward device-shadow bucket: accessd owns its creation; controllers
+		// bind it read-write to publish their live state.
+		statusKV, err := nc.EnsureKVBucket(ctx, cfg.Status.Bucket)
 		if err != nil {
 			return err
 		}
@@ -158,8 +174,21 @@ func main() {
 			return err
 		}
 
+		// Command bridge: superuser-only HTTP routes → control-plane NATS commands
+		// (cmd.grant / cmd.posture). The UI's only way to drive a portal.
+		commandapi.Register(e, nc.NC, subj, log)
+
+		// Status projector: ACC_STATUS device shadow → point_status projection (UI
+		// live state). Watches on a background context so it outlives this setup
+		// (the 2-minute ctx above is cancelled on return); stopped in OnTerminate.
+		statusProj = status.New(e.App, statusKV, log, m)
+		if err := statusProj.Start(context.Background()); err != nil {
+			return err
+		}
+
 		log.Info("accessd serving",
 			"policyBucket", cfg.Policy.Bucket,
+			"statusBucket", cfg.Status.Bucket,
 			"eventsStream", cfg.Events.Stream,
 			"subjectsApp", cfg.Subjects.App,
 			"dataDir", cfg.Accessd.DataDir)
@@ -168,6 +197,9 @@ func main() {
 
 	pb.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		log.Info("accessd terminating")
+		if statusProj != nil {
+			statusProj.Stop()
+		}
 		if healthMon != nil {
 			healthMon.Stop()
 		}

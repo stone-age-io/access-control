@@ -38,11 +38,13 @@ type Hardware struct {
 	closed bool
 }
 
-// portLines is the set of lines requested for one portal.
+// portLines is the set of lines requested for one portal (or one aux point). For
+// an aux output only lock is set; for an aux input only aux is set.
 type portLines struct {
 	lock *gpioLock
 	dps  *gpiocdev.Line
 	rex  *gpiocdev.Line
+	aux  *gpiocdev.Line
 }
 
 // New creates a GPIO hardware backend for the given model profile. It allocates
@@ -106,15 +108,76 @@ func (h *Hardware) Arm(code string, lockRelay, dpsInput, rexInput int) (drivers.
 
 // Disarm releases every line requested for a portal. Unknown portals are a no-op.
 func (h *Hardware) Disarm(code string) {
+	h.disarmKey(code, "portal")
+}
+
+// ArmOutput requests a relay line for an aux output and returns its lock driver.
+// Keyed under an "auxout:" namespace so an aux code can't collide with a portal.
+func (h *Hardware) ArmOutput(code string, relayIndex int) (drivers.LockDriver, error) {
 	h.mu.Lock()
-	p := h.ports[code]
-	delete(h.ports, code)
+	defer h.mu.Unlock()
+	if h.closed {
+		return nil, fmt.Errorf("gpio hardware closed")
+	}
+	key := "auxout:" + code
+	if _, ok := h.ports[key]; ok {
+		return nil, fmt.Errorf("aux output %q already armed", code)
+	}
+	spec, ok := h.profile.Relay(relayIndex)
+	if !ok {
+		return nil, fmt.Errorf("aux output %q: relay index %d not defined for model %q", code, relayIndex, h.profile.Model)
+	}
+	lock, err := h.newLock(code, spec)
+	if err != nil {
+		return nil, fmt.Errorf("aux output %q: arm relay %d: %w", code, relayIndex, err)
+	}
+	h.ports[key] = &portLines{lock: lock}
+	h.log.Info("aux output hardware armed", "code", code, "relay", relayIndex)
+	return lock, nil
+}
+
+// DisarmOutput releases an aux output's relay line.
+func (h *Hardware) DisarmOutput(code string) {
+	h.disarmKey("auxout:"+code, "aux-output")
+}
+
+// ArmInput requests an input line for an aux input; its edges flow into the same
+// Inputs() channel with kind InputAux.
+func (h *Hardware) ArmInput(code string, inputIndex int) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return fmt.Errorf("gpio hardware closed")
+	}
+	key := "auxin:" + code
+	if _, ok := h.ports[key]; ok {
+		return fmt.Errorf("aux input %q already armed", code)
+	}
+	line, err := h.armInput(code, drivers.InputAux, inputIndex)
+	if err != nil {
+		return fmt.Errorf("aux input %q: arm input %d: %w", code, inputIndex, err)
+	}
+	h.ports[key] = &portLines{aux: line}
+	h.log.Info("aux input hardware armed", "code", code, "input", inputIndex)
+	return nil
+}
+
+// DisarmInput releases an aux input's line.
+func (h *Hardware) DisarmInput(code string) {
+	h.disarmKey("auxin:"+code, "aux-input")
+}
+
+// disarmKey releases the lines held under one ports key. Unknown keys are a no-op.
+func (h *Hardware) disarmKey(key, what string) {
+	h.mu.Lock()
+	p := h.ports[key]
+	delete(h.ports, key)
 	h.mu.Unlock()
 	if p == nil {
 		return
 	}
 	h.release(p)
-	h.log.Info("portal hardware disarmed", "portal", code)
+	h.log.Info(what+" hardware disarmed", "key", key)
 }
 
 // Close releases all lines and closes the input stream. Releasing the input lines
@@ -150,6 +213,9 @@ func (h *Hardware) release(p *portLines) {
 	}
 	if p.rex != nil {
 		_ = p.rex.Close()
+	}
+	if p.aux != nil {
+		_ = p.aux.Close()
 	}
 }
 
