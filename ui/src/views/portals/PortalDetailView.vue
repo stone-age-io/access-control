@@ -83,7 +83,7 @@ onMounted(load)
       <button class="btn btn-sm btn-ghost text-error" :disabled="deleting" @click="handleDelete">Delete</button>
     </template>
 
-    <BaseCard title="Portal">
+    <BaseCard>
       <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
         <DataField label="Code">
           <code class="text-sm">{{ record.code }}</code>

@@ -85,7 +85,7 @@ onMounted(load)
     </template>
 
     <!-- Summary -->
-    <BaseCard title="Access Group">
+    <BaseCard>
       <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
         <DataField label="Code">
           <code class="text-sm">{{ record.code }}</code>

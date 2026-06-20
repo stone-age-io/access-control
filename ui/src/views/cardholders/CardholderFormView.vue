@@ -7,6 +7,7 @@ import type { Cardholder, CardholderStatus, Role } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
+import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -106,28 +107,23 @@ onMounted(async () => {
       <BaseCard title="Cardholder">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Name</span></label>
+            <FormField label="Name">
               <input v-model="form.name" type="text" placeholder="Alice Smith" class="input input-bordered" />
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Email</span></label>
+            </FormField>
+            <FormField label="Email">
               <input v-model="form.email" type="email" placeholder="alice@example.com" class="input input-bordered" />
-            </div>
+            </FormField>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">External ID</span></label>
+            <FormField label="External ID" hint="Optional IdP/LDAP/CSV key.">
               <input v-model="form.external_id" type="text" placeholder="ldap-12345" class="input input-bordered font-mono" />
-              <label class="label"><span class="label-text-alt">Optional IdP/LDAP/CSV key.</span></label>
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Status</span></label>
+            </FormField>
+            <FormField label="Status">
               <select v-model="form.status" class="select select-bordered">
                 <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
               </select>
-            </div>
+            </FormField>
           </div>
         </div>
       </BaseCard>

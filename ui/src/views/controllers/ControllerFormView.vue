@@ -8,6 +8,7 @@ import type { Controller, Location, ControllerModel } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
+import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -105,35 +106,27 @@ onMounted(async () => {
       <BaseCard title="Controller">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Code *</span></label>
+            <FormField label="Code" required hint="Set this as controller.code in the edge box's config.">
               <input v-model="form.code" type="text" placeholder="ctrl-hq-1" class="input input-bordered font-mono" required />
-              <label class="label"><span class="label-text-alt">Set this as <code>controller.code</code> in the edge box's config.</span></label>
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Name</span></label>
+            </FormField>
+            <FormField label="Name">
               <input v-model="form.name" type="text" placeholder="HQ Controller 1" class="input input-bordered" />
-            </div>
+            </FormField>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Location *</span></label>
+            <FormField label="Location" required>
               <select v-model="form.location" class="select select-bordered" required>
                 <option value="">Select a location...</option>
                 <option v-for="l in locations" :key="l.id" :value="l.id">{{ l.code }} — {{ l.name || l.code }}</option>
               </select>
-              <label v-if="locations.length === 0" class="label">
-                <span class="label-text-alt text-warning">No locations exist yet — create one first.</span>
-              </label>
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Model</span></label>
+              <p v-if="locations.length === 0" class="text-xs text-warning">No locations exist yet — create one first.</p>
+            </FormField>
+            <FormField label="Model" hint="Hardware template that maps logical relay/input indices to physical lines.">
               <select v-model="form.model" class="select select-bordered">
                 <option v-for="mo in MODELS" :key="mo" :value="mo">{{ mo }}</option>
               </select>
-              <label class="label"><span class="label-text-alt">Hardware template that maps logical relay/input indices to physical lines.</span></label>
-            </div>
+            </FormField>
           </div>
         </div>
       </BaseCard>

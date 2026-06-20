@@ -8,6 +8,7 @@ import type { Role, AccessGroup } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
+import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -97,17 +98,13 @@ onMounted(async () => {
       :breadcrumbs="[{ label: 'Roles', to: '/roles' }, { label: isEdit ? 'Edit' : 'New' }]"
     >
       <BaseCard title="Role">
-        <div class="space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Code *</span></label>
-              <input v-model="form.code" type="text" placeholder="staff" class="input input-bordered font-mono" required />
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Name</span></label>
-              <input v-model="form.name" type="text" placeholder="Staff" class="input input-bordered" />
-            </div>
-          </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <FormField label="Code" required>
+            <input v-model="form.code" type="text" placeholder="staff" class="input input-bordered font-mono" required />
+          </FormField>
+          <FormField label="Name">
+            <input v-model="form.name" type="text" placeholder="Staff" class="input input-bordered" />
+          </FormField>
         </div>
       </BaseCard>
 

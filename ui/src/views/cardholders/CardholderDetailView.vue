@@ -114,7 +114,7 @@ onMounted(load)
     </template>
 
     <!-- Summary -->
-    <BaseCard title="Cardholder">
+    <BaseCard>
       <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
         <DataField label="Name">{{ record.name || '—' }}</DataField>
         <DataField label="Email">{{ record.email || '—' }}</DataField>

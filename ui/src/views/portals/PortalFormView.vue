@@ -8,6 +8,7 @@ import type { Portal, Location, Controller, Schedule, Posture, PortalType } from
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
+import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -156,82 +157,64 @@ onMounted(async () => {
       <BaseCard title="Portal">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Code *</span></label>
+            <FormField label="Code" required>
               <input v-model="form.code" type="text" placeholder="lobby-main" class="input input-bordered font-mono" required />
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Name</span></label>
+            </FormField>
+            <FormField label="Name">
               <input v-model="form.name" type="text" placeholder="Main Lobby Door" class="input input-bordered" />
-            </div>
+            </FormField>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Type *</span></label>
+            <FormField label="Type" required>
               <select v-model="form.type" class="select select-bordered" required>
                 <option v-for="t in TYPES" :key="t" :value="t">{{ t }}</option>
               </select>
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Location *</span></label>
+            </FormField>
+            <FormField label="Location" required>
               <select v-model="form.location" class="select select-bordered" required>
                 <option value="">Select a location...</option>
                 <option v-for="l in locations" :key="l.id" :value="l.id">{{ l.code }} — {{ l.name || l.code }}</option>
               </select>
-              <label v-if="locations.length === 0" class="label">
-                <span class="label-text-alt text-warning">No locations exist yet — create one first.</span>
-              </label>
-            </div>
+              <p v-if="locations.length === 0" class="text-xs text-warning">No locations exist yet — create one first.</p>
+            </FormField>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Standing Posture</span></label>
+            <FormField label="Standing Posture" hint="Default state; a runtime command or scheduled posture can override it on the controller.">
               <select v-model="form.posture" class="select select-bordered">
                 <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
               </select>
-              <label class="label"><span class="label-text-alt">Default state; a runtime command or scheduled posture can override it on the controller.</span></label>
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Pulse (seconds)</span></label>
+            </FormField>
+            <FormField label="Pulse (seconds)" hint="How long the lock releases on a grant.">
               <input v-model.number="form.pulse_seconds" type="number" min="0" class="input input-bordered" />
-              <label class="label"><span class="label-text-alt">How long the lock releases on a grant.</span></label>
-            </div>
+            </FormField>
           </div>
         </div>
       </BaseCard>
 
       <BaseCard title="Controller &amp; hardware">
         <div class="space-y-4">
-          <div class="form-control">
-            <label class="label"><span class="label-text">Controller</span></label>
+          <FormField label="Controller" hint="The edge box that drives this portal. Unassigned portals (e.g. logical) are not armed by any box.">
             <select v-model="form.controller" class="select select-bordered">
               <option value="">Unassigned</option>
               <option v-for="c in controllers" :key="c.id" :value="c.id">{{ c.code }} — {{ c.name || c.code }}</option>
             </select>
-            <label class="label">
-              <span class="label-text-alt">The edge box that drives this portal. Unassigned portals (e.g. logical) are not armed by any box.</span>
-            </label>
-          </div>
+          </FormField>
 
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Lock relay</span></label>
+            <FormField label="Lock relay">
               <input v-model.number="form.lock_relay" type="number" min="0" class="input input-bordered" />
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">DPS input</span></label>
+            </FormField>
+            <FormField label="DPS input">
               <input v-model.number="form.dps_input" type="number" min="0" class="input input-bordered" />
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">REX input</span></label>
+            </FormField>
+            <FormField label="REX input">
               <input v-model.number="form.rex_input" type="number" min="0" class="input input-bordered" />
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Held-open (s)</span></label>
+            </FormField>
+            <FormField label="Held-open (s)">
               <input v-model.number="form.held_open_seconds" type="number" min="0" class="input input-bordered" />
-            </div>
+            </FormField>
           </div>
           <p class="text-xs opacity-50">
             Logical relay/input indices on the controller; its model template maps them to physical lines.
@@ -247,23 +230,19 @@ onMounted(async () => {
             (a runtime command still overrides both). Set both, or leave both blank for no automation.
           </p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Posture</span></label>
+            <FormField label="Posture">
               <select v-model="form.auto_posture" class="select select-bordered">
                 <option value="">— None —</option>
                 <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
               </select>
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Schedule</span></label>
+            </FormField>
+            <FormField label="Schedule">
               <select v-model="form.auto_schedule" class="select select-bordered">
                 <option value="">— None —</option>
                 <option v-for="s in schedules" :key="s.id" :value="s.id">{{ s.code }} — {{ s.name || s.code }}</option>
               </select>
-              <label v-if="schedules.length === 0" class="label">
-                <span class="label-text-alt text-warning">No schedules exist yet — create one first.</span>
-              </label>
-            </div>
+              <p v-if="schedules.length === 0" class="text-xs text-warning">No schedules exist yet — create one first.</p>
+            </FormField>
           </div>
         </div>
       </BaseCard>

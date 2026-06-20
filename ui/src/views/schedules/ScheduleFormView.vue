@@ -8,6 +8,7 @@ import type { Schedule, ScheduleWindow } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
+import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -129,23 +130,17 @@ onMounted(() => {
       <BaseCard title="Schedule">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Code *</span></label>
+            <FormField label="Code" required>
               <input v-model="code" type="text" placeholder="business-hours" class="input input-bordered font-mono" required />
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Name</span></label>
+            </FormField>
+            <FormField label="Name">
               <input v-model="name" type="text" placeholder="Business Hours" class="input input-bordered" />
-            </div>
+            </FormField>
           </div>
 
-          <div class="form-control">
-            <label class="label cursor-pointer justify-start gap-3">
-              <input v-model="observeHolidays" type="checkbox" class="toggle toggle-primary" />
-              <span class="label-text">Observe holidays</span>
-            </label>
-            <label class="label"><span class="label-text-alt">Closes every window on a holiday of the portal's location.</span></label>
-          </div>
+          <FormField inline label="Observe holidays" hint="Closes every window on a holiday of the portal's location.">
+            <input v-model="observeHolidays" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
         </div>
       </BaseCard>
 

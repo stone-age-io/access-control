@@ -8,6 +8,7 @@ import type { AccessGroup, Portal, Schedule } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
+import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -109,26 +110,21 @@ onMounted(async () => {
       <BaseCard title="Access Group">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Code *</span></label>
+            <FormField label="Code" required>
               <input v-model="form.code" type="text" placeholder="lobby-group" class="input input-bordered font-mono" required />
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Name</span></label>
+            </FormField>
+            <FormField label="Name">
               <input v-model="form.name" type="text" placeholder="Lobby Access" class="input input-bordered" />
-            </div>
+            </FormField>
           </div>
 
-          <div class="form-control">
-            <label class="label"><span class="label-text">Schedule *</span></label>
+          <FormField label="Schedule" required>
             <select v-model="form.schedule" class="select select-bordered" required>
               <option value="">Select a schedule...</option>
               <option v-for="s in schedules" :key="s.id" :value="s.id">{{ s.code }} — {{ s.name || s.code }}</option>
             </select>
-            <label v-if="schedules.length === 0" class="label">
-              <span class="label-text-alt text-warning">No schedules exist yet — create one first.</span>
-            </label>
-          </div>
+            <p v-if="schedules.length === 0" class="text-xs text-warning">No schedules exist yet — create one first.</p>
+          </FormField>
         </div>
       </BaseCard>
 

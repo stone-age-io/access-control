@@ -8,6 +8,7 @@ import type { Location } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
+import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -113,33 +114,24 @@ onMounted(() => {
     >
       <BaseCard title="Location">
         <div class="space-y-4">
-          <div class="form-control">
-            <label class="label"><span class="label-text">Code *</span></label>
+          <FormField label="Code" required hint="Stable slug used in NATS subjects and as the KV key. Avoid spaces.">
             <input v-model="form.code" type="text" placeholder="hq" class="input input-bordered font-mono" required />
-            <label class="label"><span class="label-text-alt">Stable slug used in NATS subjects and as the KV key. Avoid spaces.</span></label>
-          </div>
+          </FormField>
 
-          <div class="form-control">
-            <label class="label"><span class="label-text">Name</span></label>
+          <FormField label="Name">
             <input v-model="form.name" type="text" placeholder="Headquarters" class="input input-bordered" />
-          </div>
+          </FormField>
 
-          <div class="form-control">
-            <label class="label"><span class="label-text">Timezone *</span></label>
+          <FormField label="Timezone" required hint="IANA timezone name. Used to evaluate schedule windows in local time (handles DST).">
             <input v-model="form.timezone" list="tz-list" type="text" placeholder="America/New_York" class="input input-bordered font-mono" required />
             <datalist id="tz-list">
               <option v-for="tz in commonTimezones" :key="tz" :value="tz" />
             </datalist>
-            <label class="label"><span class="label-text-alt">IANA timezone name. Used to evaluate schedule windows in local time (handles DST).</span></label>
-          </div>
+          </FormField>
 
-          <div class="form-control">
-            <label class="label cursor-pointer justify-start gap-3">
-              <input v-model="form.fai_suppress" type="checkbox" class="toggle toggle-primary" />
-              <span class="label-text">Suppress alarms while fire input is active (FAI)</span>
-            </label>
-            <label class="label"><span class="label-text-alt">Hardware owns egress; software only suppresses false forced/held-open alarms during fire.</span></label>
-          </div>
+          <FormField inline label="Suppress alarms while fire input is active (FAI)" hint="Hardware owns egress; software only suppresses false forced/held-open alarms during fire.">
+            <input v-model="form.fai_suppress" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
         </div>
       </BaseCard>
 

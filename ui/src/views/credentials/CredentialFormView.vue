@@ -8,6 +8,7 @@ import type { Credential, CredentialType, CredentialStatus, Cardholder } from '@
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
+import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -134,54 +135,42 @@ onMounted(async () => {
     >
       <BaseCard title="Credential">
         <div class="space-y-4">
-          <div class="form-control">
-            <label class="label"><span class="label-text">Value *</span></label>
+          <FormField label="Value" required hint="The exact string presented at the reader. Used as the KV key — avoid spaces.">
             <input v-model="form.value" type="text" placeholder="CARD-001" class="input input-bordered font-mono" required />
-            <label class="label"><span class="label-text-alt">The exact string presented at the reader. Used as the KV key — avoid spaces.</span></label>
-          </div>
+          </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Type</span></label>
+            <FormField label="Type">
               <select v-model="form.type" class="select select-bordered">
                 <option v-for="t in TYPES" :key="t" :value="t">{{ t }}</option>
               </select>
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Status</span></label>
+            </FormField>
+            <FormField label="Status">
               <select v-model="form.status" class="select select-bordered">
                 <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
               </select>
-            </div>
+            </FormField>
           </div>
 
-          <div class="form-control">
-            <label class="label"><span class="label-text">Cardholder *</span></label>
+          <FormField label="Cardholder" required>
             <select v-model="form.user" class="select select-bordered" required>
               <option value="">Select a cardholder...</option>
               <option v-for="c in cardholders" :key="c.id" :value="c.id">{{ c.name || c.email || c.id }}</option>
             </select>
-            <label v-if="cardholders.length === 0" class="label">
-              <span class="label-text-alt text-warning">No cardholders exist yet — create one first.</span>
-            </label>
-          </div>
+            <p v-if="cardholders.length === 0" class="text-xs text-warning">No cardholders exist yet — create one first.</p>
+          </FormField>
 
-          <div class="form-control">
-            <label class="label"><span class="label-text">Label</span></label>
+          <FormField label="Label">
             <input v-model="form.label" type="text" placeholder="Alice's badge" class="input input-bordered" />
-          </div>
+          </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label"><span class="label-text">Valid from</span></label>
+            <FormField label="Valid from" hint="Leave blank for no bound.">
               <input v-model="form.valid_from" type="datetime-local" class="input input-bordered" />
-              <label class="label"><span class="label-text-alt">Leave blank for no bound.</span></label>
-            </div>
-            <div class="form-control">
-              <label class="label"><span class="label-text">Valid until</span></label>
+            </FormField>
+            <FormField label="Valid until" hint="Leave blank for no bound.">
               <input v-model="form.valid_until" type="datetime-local" class="input input-bordered" />
-              <label class="label"><span class="label-text-alt">Leave blank for no bound.</span></label>
-            </div>
+            </FormField>
           </div>
         </div>
       </BaseCard>
