@@ -91,8 +91,17 @@ controller:
   #          an MCP23017 I2C expander (kincony-pi5r8). Requires `model`. Linux only.
   driver: "mock"
   # Hardware model — selects the profile mapping a portal's logical relay/input
-  # indices to physical lines AND the transport (GPIO vs I2C). Required when driver
-  # is "gpio"; must match a registered model (kincony-server-mini | kincony-pi5r8)
-  # and the controllers record. Relay/input wiring polarity is in the profile, not
-  # here.
+  # indices to physical lines AND the transport (GPIO vs I2C), and the RS485 serial
+  # port for the OSDP reader. Required when driver is "gpio" OR reader is "osdp";
+  # must match a registered model (kincony-server-mini | kincony-pi5r8) and the
+  # controllers record. Relay/input wiring polarity is in the profile, not here.
   # model: "kincony-server-mini"
+
+  # Credential reader (independent of the lock/door driver above):
+  #   nats — simulated (default). Taps arrive by publishing
+  #          {app}.{location}.{type}.{thing}.tap; drive it with `nats pub` for dev.
+  #   osdp — a real OSDP reader polled on the model's RS485 bus (e.g. /dev/ttyAMA2
+  #          on the Pi5R8). Requires `model`. The lock strike and DPS/REX stay on
+  #          the GPIO/I2C driver above. Each portal's PD address on the bus is its
+  #          `reader_address` field in policy (default 0 — the single-reader case).
+  reader: "nats"

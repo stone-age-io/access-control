@@ -45,12 +45,27 @@ type LineSpec struct {
 	Pin  int
 }
 
+// SerialPort describes a model's RS485 serial port — where an OSDP reader bus is
+// wired and at what line rate. Board-specific, like the relay/input lines, so it
+// lives in the profile rather than in per-controller config.
+type SerialPort struct {
+	Device string // Linux device path, e.g. /dev/ttyAMA2
+	Baud   int    // line rate; OSDP defaults to 9600
+}
+
 // Profile is one model's logical→physical mapping. Relay/Input look-ups are by
 // the 1-based logical index stored on portal records.
 type Profile struct {
 	Model  string
 	relays map[int]LineSpec
 	inputs map[int]LineSpec
+	serial SerialPort
+}
+
+// Serial returns the model's RS485 serial port for the OSDP reader and whether
+// the model defines one. A model with no serial port cannot drive an OSDP reader.
+func (p Profile) Serial() (SerialPort, bool) {
+	return p.serial, p.serial.Device != ""
 }
 
 // Relay returns the physical line for a logical relay index (1-based) and whether
@@ -154,6 +169,8 @@ var registry = map[string]Profile{
 			1: gpioInput(18), 2: gpioInput(23), 3: gpioInput(24), 4: gpioInput(25),
 			5: gpioInput(12), 6: gpioInput(16), 7: gpioInput(20), 8: gpioInput(21),
 		},
+		// RS485 on the CM4 primary UART (GPIO14/15), exposed as /dev/ttyAMA0.
+		serial: SerialPort{Device: "/dev/ttyAMA0", Baud: 9600},
 	},
 
 	// KinCony Pi5R8 (Raspberry Pi CM5): all 16 relay/input lines are on a single
@@ -178,5 +195,7 @@ var registry = map[string]Profile{
 			5: i2cLine(1, 0x20, 4, true), 6: i2cLine(1, 0x20, 5, true),
 			7: i2cLine(1, 0x20, 6, true), 8: i2cLine(1, 0x20, 7, true),
 		},
+		// RS485 on the CM5 UART2 (GPIO4/5), exposed as /dev/ttyAMA2.
+		serial: SerialPort{Device: "/dev/ttyAMA2", Baud: 9600},
 	},
 }

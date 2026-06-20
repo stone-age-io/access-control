@@ -65,8 +65,10 @@ type Holiday struct {
 // Controller is the code of the edge box that drives this portal (empty if
 // unassigned); LockRelay/DpsInput/RexInput are *logical* hardware indices on
 // that box (the box's model template maps them to physical lines); HeldOpenSeconds
-// is the door-open-too-long threshold. These hardware fields are consumed only by
-// the controller's PortalManager/runtime, never by the pure policy.Decide.
+// is the door-open-too-long threshold. ReaderAddress is the OSDP PD address of
+// this portal's reader on the controller's RS485 bus (used only when the
+// controller's reader is "osdp"). These hardware fields are consumed only by the
+// controller's PortalManager/runtime, never by the pure policy.Decide.
 type Portal struct {
 	Code            string `json:"code"`
 	Type            string `json:"type"`
@@ -80,6 +82,7 @@ type Portal struct {
 	DpsInput        int    `json:"dpsInput,omitempty"`
 	RexInput        int    `json:"rexInput,omitempty"`
 	HeldOpenSeconds int    `json:"heldOpenSeconds,omitempty"`
+	ReaderAddress   int    `json:"readerAddress,omitempty"` // OSDP PD address (reader=="osdp")
 }
 
 // Controller is an edge box. It references its location by code; Model selects

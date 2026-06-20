@@ -49,6 +49,7 @@ type Binding struct {
 	DpsInput        int
 	RexInput        int
 	HeldOpenSeconds int
+	ReaderAddress   int // OSDP PD address of this portal's reader (reader=="osdp")
 }
 
 // PolicyStore holds the whole-org policy graph in plain maps behind an RWMutex
@@ -464,7 +465,7 @@ func (s *PolicyStore) apply(key string, value []byte) {
 		s.bindings[w.Code] = Binding{
 			Controller: w.Controller, LockRelay: w.LockRelay,
 			DpsInput: w.DpsInput, RexInput: w.RexInput,
-			HeldOpenSeconds: w.HeldOpenSeconds,
+			HeldOpenSeconds: w.HeldOpenSeconds, ReaderAddress: w.ReaderAddress,
 		}
 
 	case strings.HasPrefix(key, policykv.PrefixController):

@@ -159,9 +159,15 @@ type ControllerConfig struct {
 	// hardware) or "gpio" (real relays/inputs via the Linux GPIO character device).
 	Driver string `json:"driver" yaml:"driver" mapstructure:"driver"`
 	// Model is the controller hardware model, selecting the GPIO hardware profile
-	// (logical relay/input index → physical line). Required when Driver is "gpio";
-	// must match a model the hardware registry knows and the controllers record.
+	// (logical relay/input index → physical line) and the RS485 serial port for the
+	// OSDP reader. Required when Driver is "gpio" or Reader is "osdp"; must match a
+	// model the hardware registry knows and the controllers record.
 	Model string `json:"model" yaml:"model" mapstructure:"model"`
+	// Reader selects the credential reader: "nats" (default — simulated taps over
+	// NATS, for dev) or "osdp" (a real OSDP reader on the model's RS485 bus). The
+	// reader is independent of Driver: an "osdp" reader can pair with any lock/door
+	// driver (the lock relay and DPS/REX stay on GPIO/I2C). "osdp" requires Model.
+	Reader string `json:"reader" yaml:"reader" mapstructure:"reader"`
 }
 
 // Load reads configuration from the given file path, layering in env vars
@@ -202,7 +208,7 @@ func Load(path string) (*Config, error) {
 		"policy.bucket", "events.stream", "status.bucket", "subjects.app",
 		"accessd.dataDir", "accessd.controllerOfflineAfter",
 		"controller.code", "controller.location", "controller.heartbeatInterval",
-		"controller.driver", "controller.model",
+		"controller.driver", "controller.model", "controller.reader",
 	} {
 		_ = v.BindEnv(key)
 	}
@@ -287,6 +293,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Controller.Driver == "" {
 		cfg.Controller.Driver = "mock"
 	}
+	if cfg.Controller.Reader == "" {
+		cfg.Controller.Reader = "nats"
+	}
 }
 
 func validate(cfg *Config) error {
@@ -354,6 +363,18 @@ func validate(cfg *Config) error {
 		}
 	default:
 		return fmt.Errorf("invalid controller.driver %q (want \"mock\" or \"gpio\")", cfg.Controller.Driver)
+	}
+
+	// Credential reader. The default ("nats") is set in setDefaults; "osdp" needs a
+	// model (its RS485 serial port lives in the model profile, resolved in main).
+	switch cfg.Controller.Reader {
+	case "", "nats":
+	case "osdp":
+		if cfg.Controller.Model == "" {
+			return fmt.Errorf("controller.model is required when controller.reader is \"osdp\"")
+		}
+	default:
+		return fmt.Errorf("invalid controller.reader %q (want \"nats\" or \"osdp\")", cfg.Controller.Reader)
 	}
 	return nil
 }

@@ -14,8 +14,9 @@ way see `CLAUDE.md`.
 | KinCony Server-Mini (Pi CM4) | `kincony-server-mini` | native GPIO char device | 8 | 8 | pin map verified; polarity bench-item |
 | KinCony Pi5R8 (Pi CM5) | `kincony-pi5r8` | MCP23017 over I2C | 8 | 8 | topology from KinCony flow; polarity + 2nd expander bench-items |
 
-Both run on Linux edge hardware only. The reader is **simulated** on both (see
-[below](#the-reader-is-simulated-v1)).
+Both run on Linux edge hardware only. Each supports two **reader** options — a
+simulated NATS reader (default) and a real OSDP reader on the board's RS485 bus
+(see [below](#readers-nats-or-osdp)).
 
 ## The model
 
@@ -83,9 +84,9 @@ The pin map is **verified against KinCony's published CM4 pin definition**. Rela
 and input **polarity** follows the board's wiring convention — confirm on the
 bench before production.
 
-Other peripherals the board breaks out (not driven today, relevant to the future
-reader): **RS485** on BCM 14/15 (`TXD0`/`RXD0`), **I2C-1** on BCM 2/3, a 433 MHz
-receiver on BCM 27.
+Other peripherals the board breaks out: **RS485** on BCM 14/15 (`TXD0`/`RXD0`),
+exposed as `/dev/ttyAMA0` — the OSDP reader bus for this model; **I2C-1** on BCM
+2/3; a 433 MHz receiver on BCM 27.
 
 ## KinCony Pi5R8 (CM5) — `kincony-pi5r8`
 
@@ -113,17 +114,32 @@ active-high), and a **second MCP23017 at `0x22`** that appears in the flow but i
 wired to nothing — likely an expansion variant; only `0x20` is modelled.
 
 Other devices on the same bus (the driver claims only `0x20`): an ADS1115 ADC at
-`0x48`, an SSD1306 OLED at `0x3C`. Serial for the future reader: **RS485** on
-`/dev/ttyAMA2`, **RS232** on `/dev/ttyAMA0`.
+`0x48`, an SSD1306 OLED at `0x3C`. Serial: **RS485** on `/dev/ttyAMA2` — the OSDP
+reader bus for this model; **RS232** on `/dev/ttyAMA0`.
 
-## The reader is simulated (v1)
+## Readers: NATS or OSDP
 
-No physical credential reader is driven yet. Taps arrive over NATS by publishing
-to `acc.{location}.{type}.{thing}.tap` (see [`protocol.md`](protocol.md)); the
-controller decides locally and pulses the lock. A real OSDP/Wiegand `ReaderDriver`
-slots in behind the `drivers.ReaderDriver` interface later without touching the
-tap loop or the decision core — the RS485 ports noted on both boards are the
-intended path.
+`controller.reader` picks how credentials arrive, independent of the lock/door
+driver (the strike and DPS/REX stay on GPIO/I2C either way):
+
+- **`nats`** (default) — simulated taps published to
+  `acc.{location}.{type}.{thing}.tap` (see [`protocol.md`](protocol.md)); drive it
+  with `nats pub` for dev and integration. No reader hardware.
+- **`osdp`** — a real OSDP reader (the controller is the ACU/CP) polled on the
+  model's RS485 bus (`/dev/ttyAMA2` on the Pi5R8, `/dev/ttyAMA0` on the
+  Server-Mini). All readers on the bus share the one port; each portal's reader sits
+  at its `reader_address` (OSDP PD address, default 0). Pure-Go, no cgo
+  (`internal/drivers/osdp`, mirroring libosdp's CP design). **v1 is clear-text;**
+  OSDP Secure Channel (SCBK/AES) is a planned fast-follow.
+
+**Bench items for OSDP:** (a) **RS485 direction** — v1 assumes the board's
+auto-direction transceiver; if a board needs explicit DE/RE toggling, add the
+`TIOCSRS485` ioctl at port open (`internal/drivers/osdp/transport_linux.go`).
+(b) **Credential format** — a card read maps to the lowercase hex of the raw card
+bytes; decimal/Wiegand decoding depends on the reader's bit order and is deferred
+until confirmed against a physical reader. (c) Many readers ship
+**secure-channel-required**; v1 bring-up may need the reader in clear-text / install
+mode.
 
 ## Adding a board
 

@@ -157,13 +157,21 @@ hold: the strike is energized while either is active, so a habitual tap during a
 auto-unlock window pulses harmlessly. On controller shutdown/crash the strike
 de-energizes (fail-secure: the door re-locks; egress stays hardware-owned).
 
-> **v1 status:** the **reader is still simulated** — taps arrive by publishing to
-> `acc.{location}.{type}.{thing}.tap` (the legacy/integration path; a real OSDP/
-> Wiegand `ReaderDriver` slots in later). The **lock and door inputs have real
-> drivers**: `controller.driver: mock` (default — no physical I/O, no door
-> monitoring) or `gpio` (relays + DPS/REX on real hardware, the `controller.model`
-> profile selecting the transport — native GPIO char device or an MCP23017 I2C
-> expander; Linux edge hardware).
+> **Reader options** (`controller.reader`): `nats` (default) — taps arrive by
+> publishing to `acc.{location}.{type}.{thing}.tap`, the simulated/integration path,
+> driven with `nats pub`; or `osdp` — a real OSDP reader polled on the model's RS485
+> bus (clear-text in v1; OSDP Secure Channel is a planned fast-follow). The reader is
+> independent of the lock/door driver: an `osdp` reader pairs with any
+> `controller.driver` (the strike and DPS/REX stay on GPIO/I2C). The **lock and door
+> inputs have real drivers**: `controller.driver: mock` (default — no physical I/O,
+> no door monitoring) or `gpio` (relays + DPS/REX on real hardware, the
+> `controller.model` profile selecting the transport — native GPIO char device or an
+> MCP23017 I2C expander; Linux edge hardware).
+>
+> An OSDP card read becomes a credential string via the **lowercase hex of the raw
+> card bytes** (`internal/drivers/osdp/wire`): lossless and format-agnostic, so
+> enrollment mirrors what the bench observes. Decimal/Wiegand decoding depends on the
+> reader's bit order and is deferred until confirmed against physical hardware.
 
 ## Policy KV (bucket `ACC_POLICY`)
 
@@ -176,7 +184,7 @@ sole writer; controllers are read-only watchers.
 |---|---|
 | `location.{code}` | `{"code","name","timezone","faiSuppress"}` |
 | `sched.{code}` | `{"code","windows":[{"days":[1..7],"start":"HH:MM","end":"HH:MM"}],"observeHolidays"}` |
-| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?}` |
+| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?,"readerAddress"?}` |
 | `controller.{code}` | `{"code","name","location","model"}` |
 | `holiday.{pbid}` | `{"location":"<location code>","date":"YYYY-MM-DD","recurring"}` |
 | `group.{code}` | `{"code","portals":["<portal code>"],"schedule":"<sched code>"}` |
@@ -210,7 +218,9 @@ A portal's hardware binding (the `?`-marked fields, omitted when unset) is **cen
 state**, carried in policy so a box is stateless and swappable: `controller` is the
 code of the edge box that drives the portal; `lockRelay`/`dpsInput`/`rexInput` are
 *logical* relay/input indices on that box; `heldOpenSeconds` is the held-open (DOTL)
-threshold. The box maps the logical indices to physical lines via its `model`'s
+threshold; `readerAddress` is the reader's OSDP PD address on the box's RS485 bus
+(used only when `controller.reader: osdp`; default 0 — the single-reader case). The
+box maps the logical indices to physical lines via its `model`'s
 hardware profile (`internal/drivers/hardware`); the indices and `controller`/`model`
 are consumed only by the controller's PortalManager/runtime, never by the pure
 `policy.Decide`. `controllers.last_seen`/`status` are **not** mirrored — accessd

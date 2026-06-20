@@ -77,6 +77,8 @@ export interface Portal extends BaseRecord {
   rex_input: number
   /** Door-open-too-long threshold (seconds). */
   held_open_seconds: number
+  /** OSDP PD address of this portal's reader on the controller's RS485 bus (used when reader=="osdp"). */
+  reader_address: number
   /** While auto_schedule's window is open, the controller adopts this posture instead of the standing one ('' = no automation). */
   auto_posture: Posture | ''
   /** Schedules relation id that gates auto_posture ('' = no automation). Both-or-neither with auto_posture. */

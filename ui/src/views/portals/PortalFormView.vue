@@ -39,6 +39,7 @@ const form = ref({
   dps_input: 0,
   rex_input: 0,
   held_open_seconds: 30,
+  reader_address: 0,
   auto_posture: '' as Posture | '',
   auto_schedule: '',
 })
@@ -83,6 +84,7 @@ async function loadRecord() {
       dps_input: p.dps_input || 0,
       rex_input: p.rex_input || 0,
       held_open_seconds: p.held_open_seconds || 0,
+      reader_address: p.reader_address || 0,
       auto_posture: (p.auto_posture || '') as Posture | '',
       auto_schedule: p.auto_schedule || '',
     }
@@ -120,6 +122,7 @@ async function handleSubmit() {
       dps_input: Number(form.value.dps_input) || 0,
       rex_input: Number(form.value.rex_input) || 0,
       held_open_seconds: Number(form.value.held_open_seconds) || 0,
+      reader_address: Number(form.value.reader_address) || 0,
       auto_posture: form.value.auto_posture,
       auto_schedule: form.value.auto_schedule,
     }
@@ -248,10 +251,14 @@ onMounted(async () => {
             <FormField label="Held-open (s)">
               <input v-model.number="form.held_open_seconds" type="number" min="0" class="input input-bordered" />
             </FormField>
+            <FormField label="Reader address (OSDP)">
+              <input v-model.number="form.reader_address" type="number" min="0" max="126" class="input input-bordered" />
+            </FormField>
           </div>
           <p class="text-xs opacity-50">
             Logical relay/input indices on the controller; its model template maps them to physical lines.
             Door-position (DPS) and request-to-exit (REX) drive forced/held-open detection. Ignored for logical portals.
+            Reader address is the OSDP PD address on the controller's RS485 bus (used only when the controller's reader is OSDP; 0 for a single reader).
           </p>
         </div>
       </BaseCard>

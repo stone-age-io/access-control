@@ -252,6 +252,7 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			DpsInput:        r.GetInt("dps_input"),
 			RexInput:        r.GetInt("rex_input"),
 			HeldOpenSeconds: r.GetInt("held_open_seconds"),
+			ReaderAddress:   r.GetInt("reader_address"),
 		}
 	case "controllers":
 		if err := validToken("controller code", r.GetString("code")); err != nil {

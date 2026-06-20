@@ -16,13 +16,20 @@ Two Go binaries plus a Vue 3 management UI:
   hardware, runs a per-door forced/held-open state machine, emits access events to JetStream, and publishes a
   liveness heartbeat.
 
-v1 status: the **reader is simulated** — taps arrive by publishing to `acc.{location}.{type}.{thing}.tap` (a real
-OSDP/Wiegand `ReaderDriver` slots in later). The **lock and door inputs have real drivers**: `internal/drivers`
-holds the interfaces + mocks; the two real backends sit behind a per-model profile in `internal/drivers/hardware`
-and are chosen by that profile's `Transport()` — `internal/drivers/gpio` (no-cgo Linux GPIO char device) for the
-KinCony Server-Mini (CM4), `internal/drivers/i2c` (no-cgo MCP23017 over I2C, via periph.io, inputs read by
-polling) for the Pi5R8 (CM5). A controller picks `mock` (default) or `gpio` via `controller.driver`; under `gpio`
-the `model`'s profile decides GPIO-vs-I2C transport, so neither the binary nor config changes per board.
+v1 status: the reader is selectable via `controller.reader` (orthogonal to the lock/door driver) — `nats` (default;
+simulated taps published to `acc.{location}.{type}.{thing}.tap`, for dev) or `osdp` (a real OSDP reader on the
+model's RS485 bus). The OSDP reader is the controller acting as ACU/CP: `internal/drivers/osdp` is a no-cgo CP
+engine (per-PD `INIT→CAPDET→ONLINE→OFFLINE` state machine round-robined over one bus, mirroring libosdp's design)
+built on the clear-text packet codec in `internal/drivers/osdp/wire`; OSDP Secure Channel is a deliberate v1
+omission (fast-follow). The reader plugs in behind `drivers.ReaderDriver` (a card read becomes a `Tap`), so
+`policy.Decide`, the lock-pulse path, and the door state machine are untouched. The **lock and door inputs have
+real drivers**: `internal/drivers` holds the interfaces + mocks; the two real backends sit behind a per-model
+profile in `internal/drivers/hardware` and are chosen by that profile's `Transport()` — `internal/drivers/gpio`
+(no-cgo Linux GPIO char device) for the KinCony Server-Mini (CM4), `internal/drivers/i2c` (no-cgo MCP23017 over
+I2C, via periph.io, inputs read by polling) for the Pi5R8 (CM5). A controller picks `mock` (default) or `gpio` via
+`controller.driver`; under `gpio` the `model`'s profile decides GPIO-vs-I2C transport, so neither the binary nor
+config changes per board. The same `model` profile also carries the RS485 serial port (e.g. `/dev/ttyAMA2`) the
+OSDP reader uses, and each portal's `reader_address` is its OSDP PD address on that bus.
 
 ## Build & run
 
@@ -127,7 +134,7 @@ a shared NATS account, a stream subject that *led with a wildcard* (e.g. `*.*.*.
 stream rooted at a literal first token (`things.>`, `cameras.>`, `kiosk.*.event.>`, …), and JetStream rejects
 overlapping stream subjects (err 10065). Leading with `acc` keeps our subject space disjoint from theirs.
 
-- `acc.{location}.{type}.{thing}.tap` — credential presentation (v1: simulated reader publishes here)
+- `acc.{location}.{type}.{thing}.tap` — credential presentation (the `nats` reader subscribes here; the `osdp` reader reads RS485 instead)
 - `acc.{location}.{type}.{thing}.evt.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS
 - `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget)
 - `acc.{location}.ctrl.{code}.heartbeat` — controller liveness. A controller is addressed under the reserved
@@ -176,9 +183,10 @@ user-pass); `*.creds` and `config/local*.yaml` are gitignored — never commit c
 
 A controller's config is just its identity and hardware selection: `controller.code` (which portals it drives,
 matched against the policy graph), `controller.location` (timezone + command/fire subscription scope),
-`controller.driver` (`mock`|`gpio`), `controller.model` (required for `gpio`; selects the hardware profile), and
-`controller.heartbeatInterval`. accessd's `accessd.controllerOfflineAfter` sets how long a silent controller stays
-"online" before the health sweep marks it offline.
+`controller.driver` (`mock`|`gpio`), `controller.model` (required for `gpio` or `reader: osdp`; selects the hardware
+profile + RS485 serial port), `controller.reader` (`nats`|`osdp`), and `controller.heartbeatInterval`. accessd's
+`accessd.controllerOfflineAfter` sets how long a silent controller stays "online" before the health sweep marks it
+offline.
 
 ## Conventions
 

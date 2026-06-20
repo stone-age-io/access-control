@@ -11,6 +11,7 @@ require (
 	github.com/warthog618/go-gpiocdev v0.9.1
 	go.uber.org/zap v1.27.1
 	go.uber.org/zap/exp v0.3.0
+	golang.org/x/sys v0.45.0
 	periph.io/x/conn/v3 v3.7.3
 	periph.io/x/host/v3 v3.8.5
 )
@@ -58,7 +59,6 @@ require (
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	modernc.org/libc v1.72.3 // indirect

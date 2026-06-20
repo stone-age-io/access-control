@@ -179,7 +179,7 @@ func (pm *PortalManager) arm(ap policy.Portal) {
 		pm.log.Error("failed to arm portal hardware; will retry on next policy change", "portal", ap.Code, "error", err)
 		return
 	}
-	if err := pm.armer.Arm(Portal{Code: ap.Code, Type: ap.Type, Location: ap.Location}); err != nil {
+	if err := pm.armer.Arm(Portal{Code: ap.Code, Type: ap.Type, Location: ap.Location, Address: b.ReaderAddress}); err != nil {
 		pm.hw.Disarm(ap.Code) // roll back the hardware we just armed
 		pm.log.Error("failed to arm portal reader; will retry on next policy change", "portal", ap.Code, "error", err)
 		return

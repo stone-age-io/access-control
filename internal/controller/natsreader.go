@@ -18,10 +18,15 @@ import (
 // {location} segment). The controller resolves these from the PolicyStore, so it
 // can build exact {app}.{location}.{type}.{thing}.tap subjects. Location comes
 // from the portal record (binding is central), not the controller's own config.
+//
+// Address is the portal reader's OSDP PD address on the controller's RS485 bus.
+// It is set by the reconciler from the portal binding and used only by the OSDP
+// reader; the NATS reader ignores it.
 type Portal struct {
 	Code     string
 	Type     string
 	Location string
+	Address  int
 }
 
 // NATSReader is the v1 "reader": instead of OSDP/RS485 hardware, it turns NATS

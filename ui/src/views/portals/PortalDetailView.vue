@@ -287,6 +287,7 @@ onBeforeUnmount(() => {
         <DataField label="Lock relay">{{ record.lock_relay }}</DataField>
         <DataField label="DPS input">{{ record.dps_input }}</DataField>
         <DataField label="REX input">{{ record.rex_input }}</DataField>
+        <DataField label="Reader address (OSDP)">{{ record.reader_address }}</DataField>
       </div>
     </BaseCard>
 

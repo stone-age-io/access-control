@@ -125,7 +125,8 @@ portals it drives, and their relay/input bindings, live in policy, not here**
 | `controller.location` | `""` | `SA_CONTROLLER_LOCATION` | location code: selects the timezone and scopes the command/fire subscriptions. |
 | `controller.heartbeatInterval` | `15s` | `SA_CONTROLLER_HEARTBEATINTERVAL` | liveness cadence to `acc.{location}.ctrl.{code}.heartbeat`. |
 | `controller.driver` | `mock` | `SA_CONTROLLER_DRIVER` | `mock` (simulated, no I/O, no door monitoring) or `gpio` (real relays + DPS/REX; Linux only). Under `gpio` the `model` picks the physical transport: native GPIO char device or an MCP23017 I2C expander. |
-| `controller.model` | `""` | `SA_CONTROLLER_MODEL` | hardware profile — maps a portal's logical relay/input indices to physical lines **and** selects the transport: `kincony-server-mini` (CM4, native GPIO) · `kincony-pi5r8` (CM5, MCP23017 over I2C). **Required when `driver: gpio`.** Must match the `controllers` record. |
+| `controller.model` | `""` | `SA_CONTROLLER_MODEL` | hardware profile — maps a portal's logical relay/input indices to physical lines, selects the lock/input transport (native GPIO char device or MCP23017 over I2C), **and** provides the OSDP RS485 serial port: `kincony-server-mini` (CM4, GPIO, `/dev/ttyAMA0`) · `kincony-pi5r8` (CM5, I2C, `/dev/ttyAMA2`). **Required when `driver: gpio` or `reader: osdp`.** Must match the `controllers` record. |
+| `controller.reader` | `nats` | `SA_CONTROLLER_READER` | credential reader: `nats` (simulated taps published to `acc.{location}.{type}.{thing}.tap`, for dev) or `osdp` (a real OSDP reader on the model's RS485 bus, clear-text in v1). Independent of `driver` — the lock/door stay on GPIO/I2C. **`osdp` requires `model`.** Each portal's PD address is its `reader_address`. |
 
 ## What gets rejected
 
@@ -141,6 +142,7 @@ everything else falls back to a default:
 - `policy.bucket` or `status.bucket` empty
 - `subjects.app` empty or not a single NATS token
 - `controller.driver` not `mock`/`gpio`, or `gpio` with no `controller.model`
+- `controller.reader` not `nats`/`osdp`, or `osdp` with no `controller.model`
 
 ## Which binary reads what
 

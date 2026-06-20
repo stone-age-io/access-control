@@ -10,12 +10,13 @@ graph (`internal/policy`), not a rules engine. The central app (`accessd`) is th
 system of record (PocketBase) and mirrors policy to NATS KV one key per record;
 edge controllers (`access-controller`) watch that keyspace and decide locally.
 
-> v1 status: the **reader is simulated** (taps arrive over NATS; a real OSDP/
-> Wiegand driver slots in later), but the **lock and door inputs have real
-> drivers** alongside the mocks, selectable per controller: native GPIO
-> (`internal/drivers/gpio`, KinCony Server-Mini / CM4) and MCP23017 over I2C
-> (`internal/drivers/i2c`, KinCony Pi5R8 / CM5). Door monitoring (forced /
-> held-open) and controller heartbeat/health are implemented.
+> v1 status: the reader is selectable per controller (`controller.reader`) — a
+> **simulated NATS reader** (default; taps arrive over NATS, for dev) or a real
+> **OSDP reader** on the model's RS485 bus (pure-Go, no cgo, clear-text in v1;
+> Secure Channel is a fast-follow). The **lock and door inputs have real drivers**
+> alongside the mocks: native GPIO (`internal/drivers/gpio`, KinCony Server-Mini /
+> CM4) and MCP23017 over I2C (`internal/drivers/i2c`, KinCony Pi5R8 / CM5). Door
+> monitoring (forced / held-open) and controller heartbeat/health are implemented.
 
 ## Docs
 
@@ -37,6 +38,7 @@ internal/drivers/       ReaderDriver / LockDriver / DoorInput / FAIInput interfa
 internal/drivers/hardware/  per-model hardware Profile: logical relay/input index → physical line + transport
 internal/drivers/gpio/  native GPIO lock + door-input backend (go-gpiocdev, no cgo; Linux only)
 internal/drivers/i2c/   MCP23017 lock + door-input backend over I2C (periph.io, no cgo; polled inputs)
+internal/drivers/osdp/  OSDP reader: RS485 CP engine (pure-Go, no cgo) + wire codec (osdp/wire); controller.reader: osdp
 internal/health/        accessd-side heartbeat subscriber → controllers.last_seen/status
 internal/audit/         JetStream consumer → PocketBase events collection
 internal/natsx/         NATS connection + KV helpers

@@ -75,6 +75,7 @@ func init() {
 			"name": "Lobby Main Entrance", "posture": "secure", "pulse_seconds": 5,
 			"controller": controller.Id,
 			"lock_relay": 1, "dps_input": 1, "rex_input": 2, "held_open_seconds": 30,
+			"reader_address": 0,
 		})
 		if err != nil {
 			return err

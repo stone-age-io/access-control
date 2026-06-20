@@ -23,6 +23,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/drivers/gpio"
 	"github.com/stone-age-io/access-control/internal/drivers/hardware"
 	"github.com/stone-age-io/access-control/internal/drivers/i2c"
+	"github.com/stone-age-io/access-control/internal/drivers/osdp"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/natsx"
@@ -116,11 +117,44 @@ func main() {
 		log.Warn("no controller code configured; no portals will be armed", "hint", "set controller.code to a controllers record")
 	}
 
-	// The reader starts with no subscriptions and the runtime with no locks; the
-	// portal manager arms each as it appears in policy and disarms it when it
-	// leaves. Portal types/existence live in the system of record and can change
-	// after boot, so arming is watch-driven rather than resolved once at startup.
-	reader := controller.NewNATSReader(nc.NC, cfg.Controller.Location, subj, log, m)
+	// Resolve the hardware profile once if anything needs it: the lock/input driver
+	// (gpio) and/or the OSDP reader (whose RS485 serial port lives in the profile).
+	var profile hardware.Profile
+	if cfg.Controller.Driver == "gpio" || cfg.Controller.Reader == "osdp" {
+		p, ok := hardware.ProfileFor(cfg.Controller.Model)
+		if !ok {
+			log.Fatal("unknown controller model", "model", cfg.Controller.Model, "known", hardware.Models())
+		}
+		profile = p
+	}
+
+	// The reader starts armed for nothing and the runtime with no locks; the portal
+	// manager arms each as it appears in policy and disarms it when it leaves.
+	// Portal existence/bindings live in the system of record and can change after
+	// boot, so arming is watch-driven rather than resolved once at startup.
+	//   nats — simulated taps published to {app}.{loc}.{type}.{thing}.tap (dev).
+	//   osdp — a real OSDP reader polled on the model's RS485 bus; all armed portals
+	//          share the one bus, addressed by each portal's reader_address.
+	var reader controller.Reader
+	switch cfg.Controller.Reader {
+	case "osdp":
+		sp, ok := profile.Serial()
+		if !ok {
+			log.Fatal("controller model defines no RS485 serial port for the osdp reader",
+				"model", cfg.Controller.Model)
+		}
+		transceiver, err := osdp.OpenSerial(sp.Device, sp.Baud)
+		if err != nil {
+			log.Fatal("failed to open OSDP serial port", "device", sp.Device, "error", err)
+		}
+		osdpReader := controller.NewOSDPReader(osdp.NewBus(transceiver, log), log, m)
+		osdpReader.Start(ctx)
+		reader = osdpReader
+		log.Info("reader: osdp", "device", sp.Device, "baud", sp.Baud)
+	default: // "nats" (validated by config)
+		reader = controller.NewNATSReader(nc.NC, cfg.Controller.Location, subj, log, m)
+		log.Info("reader: nats (simulated taps)")
+	}
 	defer reader.Stop()
 
 	// Portal hardware backend. mock (default) drives no physical I/O — taps are
@@ -135,14 +169,9 @@ func main() {
 	)
 	switch cfg.Controller.Driver {
 	case "gpio":
-		profile, ok := hardware.ProfileFor(cfg.Controller.Model)
-		if !ok {
-			log.Fatal("unknown controller model for gpio driver",
-				"model", cfg.Controller.Model, "known", hardware.Models())
-		}
-		// The model profile decides the transport: native GPIO lines (CM4
-		// Server-Mini) vs an MCP23017 I2C expander (CM5 Pi5R8). Both backends
-		// satisfy the same portal/aux/door-input surface.
+		// profile was resolved above. The model profile decides the transport:
+		// native GPIO lines (CM4 Server-Mini) vs an MCP23017 I2C expander (CM5
+		// Pi5R8). Both backends satisfy the same portal/aux/door-input surface.
 		switch profile.Transport() {
 		case hardware.BackendI2C:
 			i2cHW, err := i2c.New(profile, log)
