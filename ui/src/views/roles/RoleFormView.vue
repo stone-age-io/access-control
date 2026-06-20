@@ -5,9 +5,8 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
 import type { Role, AccessGroup } from '@/types/pocketbase'
-import DetailLayout from '@/components/ui/DetailLayout.vue'
+import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
-import RailCard from '@/components/ui/RailCard.vue'
 import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
@@ -93,9 +92,11 @@ onMounted(async () => {
   </div>
 
   <form v-else @submit.prevent="handleSubmit">
-    <DetailLayout
+    <FormLayout
       :title="isEdit ? 'Edit Role' : 'New Role'"
       :breadcrumbs="[{ label: 'Roles', to: '/roles' }, { label: isEdit ? 'Edit' : 'New' }]"
+      :kv-key="kvKey"
+      :kv-placeholder="'role.<code>'"
     >
       <BaseCard title="Role">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -123,21 +124,13 @@ onMounted(async () => {
         </div>
       </BaseCard>
 
-      <template #rail>
-        <RailCard title="Policy KV key" icon="🔑">
-          <code v-if="kvKey" class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block">{{ kvKey }}</code>
-          <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">role.&lt;code&gt;</code>
-          <p class="text-xs opacity-50">The mirror writes this role to the policy bucket under this key.</p>
-        </RailCard>
-      </template>
-
-      <template #footer>
+      <template #actions>
         <button type="button" @click="router.back()" class="btn btn-ghost" :disabled="loading">Cancel</button>
         <button type="submit" class="btn btn-primary" :disabled="loading">
           <span v-if="loading" class="loading loading-spinner"></span>
           <span v-else>{{ isEdit ? 'Update' : 'Create' }} Role</span>
         </button>
       </template>
-    </DetailLayout>
+    </FormLayout>
   </form>
 </template>

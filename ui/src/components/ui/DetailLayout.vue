@@ -1,11 +1,10 @@
 <script setup lang="ts">
 /**
- * Two-column detail / form shell.
+ * Two-column detail shell.
  *
  * Header (breadcrumbs + title + #actions) above a responsive grid: the main
  * column (default slot, 2/3) and a sticky #rail (1/3) that fills what used to be
- * dead whitespace with context. An optional #footer renders as a sticky action
- * bar — wrap the whole thing in a <form> and put the submit button there.
+ * dead whitespace with context. Create/edit forms use FormLayout instead.
  */
 import HelpButton from './HelpButton.vue'
 
@@ -22,7 +21,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="space-y-6 max-w-6xl">
+  <div class="space-y-6">
     <!-- Header -->
     <div>
       <div v-if="breadcrumbs?.length" class="breadcrumbs text-sm">
@@ -53,14 +52,6 @@ defineProps<{
       <aside v-if="$slots.rail" class="lg:col-span-1 space-y-4 lg:sticky lg:top-6">
         <slot name="rail" />
       </aside>
-    </div>
-
-    <!-- Sticky action bar (forms) -->
-    <div
-      v-if="$slots.footer"
-      class="sticky bottom-0 z-10 -mx-4 -mb-4 lg:-mx-6 lg:-mb-6 px-4 lg:px-6 py-3 flex flex-col sm:flex-row justify-end gap-2 sm:gap-3 border-t border-base-300 bg-base-100/85 backdrop-blur"
-    >
-      <slot name="footer" />
     </div>
   </div>
 </template>

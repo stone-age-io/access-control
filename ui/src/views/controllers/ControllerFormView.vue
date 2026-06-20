@@ -5,9 +5,8 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
 import type { Controller, Location, ControllerModel } from '@/types/pocketbase'
-import DetailLayout from '@/components/ui/DetailLayout.vue'
+import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
-import RailCard from '@/components/ui/RailCard.vue'
 import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
@@ -99,9 +98,11 @@ onMounted(async () => {
   </div>
 
   <form v-else @submit.prevent="handleSubmit">
-    <DetailLayout
+    <FormLayout
       :title="isEdit ? 'Edit Controller' : 'New Controller'"
       :breadcrumbs="[{ label: 'Controllers', to: '/controllers' }, { label: isEdit ? 'Edit' : 'New' }]"
+      :kv-key="kvKey"
+      :kv-placeholder="'controller.<code>'"
     >
       <BaseCard title="Controller">
         <div class="space-y-4">
@@ -131,21 +132,13 @@ onMounted(async () => {
         </div>
       </BaseCard>
 
-      <template #rail>
-        <RailCard title="Policy KV key" icon="🔑">
-          <code v-if="kvKey" class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block">{{ kvKey }}</code>
-          <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">controller.&lt;code&gt;</code>
-          <p class="text-xs opacity-50">The edge box reads its own record and the portals assigned to it from policy.</p>
-        </RailCard>
-      </template>
-
-      <template #footer>
+      <template #actions>
         <button type="button" @click="router.back()" class="btn btn-ghost" :disabled="loading">Cancel</button>
         <button type="submit" class="btn btn-primary" :disabled="loading">
           <span v-if="loading" class="loading loading-spinner"></span>
           <span v-else>{{ isEdit ? 'Update' : 'Create' }} Controller</span>
         </button>
       </template>
-    </DetailLayout>
+    </FormLayout>
   </form>
 </template>

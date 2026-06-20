@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The shell (MainLayout) owns the viewport height; this keeps the themed
+   background behind everything so short pages never reveal the dark loader
+   background painted on <body> in index.html. */
+body {
+  background-color: oklch(var(--b2));
+}
+
 /* Custom scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

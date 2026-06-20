@@ -5,14 +5,16 @@ import HelpPanel from '@/components/ui/HelpPanel.vue'
 </script>
 
 <template>
-  <div class="drawer lg:drawer-open">
+  <div class="drawer lg:drawer-open h-dvh">
     <input id="sidebar-drawer" type="checkbox" class="drawer-toggle" />
 
     <!-- Main content -->
-    <div class="drawer-content flex flex-col">
+    <div class="drawer-content flex flex-col min-h-0">
       <AppHeader />
-      <main class="flex-1 overflow-y-auto p-4 lg:p-6 bg-base-200">
-        <router-view />
+      <main class="flex-1 min-h-0 overflow-y-auto bg-base-200">
+        <div class="mx-auto w-full max-w-7xl p-4 lg:p-6">
+          <router-view />
+        </div>
       </main>
     </div>
 

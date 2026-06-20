@@ -5,9 +5,8 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
 import type { Schedule, ScheduleWindow } from '@/types/pocketbase'
-import DetailLayout from '@/components/ui/DetailLayout.vue'
+import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
-import RailCard from '@/components/ui/RailCard.vue'
 import FormField from '@/components/ui/FormField.vue'
 
 const router = useRouter()
@@ -123,9 +122,11 @@ onMounted(() => {
   </div>
 
   <form v-else @submit.prevent="handleSubmit">
-    <DetailLayout
+    <FormLayout
       :title="isEdit ? 'Edit Schedule' : 'New Schedule'"
       :breadcrumbs="[{ label: 'Schedules', to: '/schedules' }, { label: isEdit ? 'Edit' : 'New' }]"
+      :kv-key="kvKey"
+      :kv-placeholder="'sched.<code>'"
     >
       <BaseCard title="Schedule">
         <div class="space-y-4">
@@ -200,21 +201,13 @@ onMounted(() => {
         </div>
       </BaseCard>
 
-      <template #rail>
-        <RailCard title="Policy KV key" icon="🔑">
-          <code v-if="kvKey" class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block">{{ kvKey }}</code>
-          <code v-else class="text-xs font-mono break-all bg-base-200 px-2 py-1 rounded block opacity-60">sched.&lt;code&gt;</code>
-          <p class="text-xs opacity-50">The mirror writes this schedule to the ACC_POLICY bucket under this key.</p>
-        </RailCard>
-      </template>
-
-      <template #footer>
+      <template #actions>
         <button type="button" @click="router.back()" class="btn btn-ghost" :disabled="loading">Cancel</button>
         <button type="submit" class="btn btn-primary" :disabled="loading">
           <span v-if="loading" class="loading loading-spinner"></span>
           <span v-else>{{ isEdit ? 'Update' : 'Create' }} Schedule</span>
         </button>
       </template>
-    </DetailLayout>
+    </FormLayout>
   </form>
 </template>
