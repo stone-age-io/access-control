@@ -84,7 +84,7 @@ onMounted(load)
     </template>
 
     <BaseCard title="Portal">
-      <div class="grid grid-cols-2 gap-x-6 gap-y-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
         <DataField label="Code">
           <code class="text-sm">{{ record.code }}</code>
         </DataField>
@@ -106,7 +106,7 @@ onMounted(load)
     </BaseCard>
 
     <BaseCard title="Controller &amp; hardware">
-      <div class="grid grid-cols-2 gap-x-6 gap-y-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
         <DataField label="Controller">
           <router-link v-if="record.expand?.controller" :to="`/controllers/${record.expand.controller.id}`" class="link link-primary">
             {{ record.expand.controller.code }}
@@ -124,7 +124,7 @@ onMounted(load)
       <div v-if="!record.auto_posture && !record.auto_schedule" class="text-sm opacity-50">
         No scheduled posture — the standing posture always applies.
       </div>
-      <div v-else class="grid grid-cols-2 gap-x-6 gap-y-4">
+      <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
         <DataField label="Posture">
           <span class="badge badge-sm badge-ghost">{{ record.auto_posture || '—' }}</span>
         </DataField>

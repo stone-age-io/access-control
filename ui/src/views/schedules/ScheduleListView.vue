@@ -11,6 +11,8 @@ import type { Schedule, ScheduleWindow } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
+import ListLayout from '@/components/ui/ListLayout.vue'
+import ListPagination from '@/components/ui/ListPagination.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -75,44 +77,31 @@ onMounted(reload)
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-      <div>
-        <h1 class="text-3xl font-bold">Schedules</h1>
-        <p class="text-base-content/70 mt-1">Reusable weekly time windows. Evaluated in each location's local time.</p>
-      </div>
+  <ListLayout
+    v-model:search="searchQuery"
+    title="Schedules"
+    subtitle="Reusable weekly time windows. Evaluated in each location's local time."
+    search-placeholder="Search by code or name..."
+    :loading="loading"
+    :error="error"
+    :is-empty="schedules.length === 0"
+    :has-query="!!searchQuery"
+    empty-icon="🗓️"
+    empty-title="No schedules yet"
+    empty-message="Create a schedule to define when access groups are open."
+    error-title="Failed to load schedules"
+    @retry="reload"
+  >
+    <template #actions>
       <router-link to="/schedules/new" class="btn btn-primary w-full sm:w-auto">
         <span class="text-lg">+</span><span>New Schedule</span>
       </router-link>
-    </div>
+    </template>
+    <template #empty-action>
+      <router-link to="/schedules/new" class="btn btn-primary">Create Schedule</router-link>
+    </template>
 
-    <div class="form-control">
-      <input v-model="searchQuery" type="text" placeholder="Search by code or name..." class="input input-bordered w-full" />
-    </div>
-
-    <div v-if="loading && schedules.length === 0" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <BaseCard v-else-if="error && schedules.length === 0">
-      <div class="text-center py-12">
-        <span class="text-6xl">&#9888;</span>
-        <h3 class="text-xl font-bold mt-4">Failed to load schedules</h3>
-        <p class="text-base-content/70 mt-2">{{ error }}</p>
-        <button @click="reload" class="btn btn-primary mt-4">Retry</button>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else-if="schedules.length === 0 && !searchQuery">
-      <div class="text-center py-12">
-        <span class="text-6xl">🗓️</span>
-        <h3 class="text-xl font-bold mt-4">No schedules yet</h3>
-        <p class="text-base-content/70 mt-2">Create a schedule to define when access groups are open.</p>
-        <router-link to="/schedules/new" class="btn btn-primary mt-4">Create Schedule</router-link>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else :no-padding="true">
+    <BaseCard :no-padding="true">
       <ResponsiveList :items="schedules" :columns="columns" :loading="loading" @row-click="(s) => router.push(`/schedules/${s.id}`)">
         <template #cell-code="{ item }"><code class="text-xs font-bold text-primary">{{ item.code }}</code></template>
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>
@@ -131,14 +120,9 @@ onMounted(reload)
         </template>
       </ResponsiveList>
 
-      <div class="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t border-base-300">
-        <span class="text-sm text-base-content/60">{{ schedules.length }} of {{ totalItems }} schedule(s)</span>
-        <div v-if="totalPages > 1" class="join">
-          <button class="join-item btn btn-sm" :disabled="page === 1 || loading" @click="prevPage(queryOpts())">«</button>
-          <button class="join-item btn btn-sm">{{ page }} / {{ totalPages }}</button>
-          <button class="join-item btn btn-sm" :disabled="page === totalPages || loading" @click="nextPage(queryOpts())">»</button>
-        </div>
-      </div>
+      <ListPagination :page="page" :total-pages="totalPages" :loading="loading" @prev="prevPage(queryOpts())" @next="nextPage(queryOpts())">
+        {{ schedules.length }} of {{ totalItems }} schedule(s)
+      </ListPagination>
     </BaseCard>
-  </div>
+  </ListLayout>
 </template>

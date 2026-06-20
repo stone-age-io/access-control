@@ -30,6 +30,14 @@ function get(obj: any, path: string): any {
 function handleClick(item: T) {
   if (props.clickable) emit('row-click', item)
 }
+
+function handleKey(e: KeyboardEvent, item: T) {
+  if (!props.clickable) return
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    emit('row-click', item)
+  }
+}
 </script>
 
 <template>
@@ -50,8 +58,11 @@ function handleClick(item: T) {
             v-for="item in items"
             :key="item.id"
             :class="{ 'hover cursor-pointer': clickable }"
-            class="border-b border-base-200/50 last:border-0"
+            class="border-b border-base-200/50 last:border-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/60"
+            :tabindex="clickable ? 0 : undefined"
+            :role="clickable ? 'button' : undefined"
             @click="handleClick(item)"
+            @keydown="handleKey($event, item)"
           >
             <td v-for="col in columns" :key="col.key" :class="col.class" class="py-3">
               <slot :name="`cell-${col.key}`" :item="item" :value="get(item, col.key)">
@@ -77,9 +88,12 @@ function handleClick(item: T) {
         :key="item.id"
         :class="[
           'card bg-base-100 border border-base-300 shadow-sm transition-all duration-200',
-          { 'cursor-pointer active:scale-[0.98] hover:border-primary/40': clickable },
+          { 'cursor-pointer active:scale-[0.98] hover:border-primary/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/60': clickable },
         ]"
+        :tabindex="clickable ? 0 : undefined"
+        :role="clickable ? 'button' : undefined"
         @click="handleClick(item)"
+        @keydown="handleKey($event, item)"
       >
         <div class="card-body p-3">
           <div class="mb-1.5">

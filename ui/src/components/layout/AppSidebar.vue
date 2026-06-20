@@ -87,6 +87,7 @@ async function handleLogout() {
           @click="uiStore.toggleCompact"
           class="btn btn-ghost btn-sm btn-square opacity-60 hover:opacity-100 transition-opacity"
           :title="uiStore.sidebarCompact ? 'Expand sidebar' : 'Collapse sidebar'"
+          :aria-label="uiStore.sidebarCompact ? 'Expand sidebar' : 'Collapse sidebar'"
         >
           <span v-if="uiStore.sidebarCompact">»</span>
           <span v-else>«</span>
@@ -137,6 +138,7 @@ async function handleLogout() {
         @click="uiStore.toggleTheme"
         class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-200 transition-all text-sm"
         :class="{ 'justify-center': effectiveCompact }"
+        aria-label="Toggle light/dark theme"
       >
         <span class="w-6 text-center text-lg">{{ uiStore.theme === 'dark' ? '☀️' : '🌙' }}</span>
         <span v-show="!effectiveCompact" class="font-medium">{{ uiStore.theme === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
@@ -160,6 +162,7 @@ async function handleLogout() {
           @click="handleLogout"
           class="btn btn-ghost btn-xs text-error"
           title="Log out"
+          aria-label="Log out"
         >
           🚪
         </button>
@@ -170,6 +173,7 @@ async function handleLogout() {
         @click="handleLogout"
         class="flex items-center justify-center w-full p-2 rounded-lg hover:bg-error/10 text-error transition-all"
         title="Log out"
+        aria-label="Log out"
       >
         🚪
       </button>

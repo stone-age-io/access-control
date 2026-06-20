@@ -75,7 +75,7 @@ onMounted(async () => {
         v-for="s in stats"
         :key="s.collection"
         :to="s.path"
-        class="card bg-base-100 shadow-xl hover:shadow-2xl hover:border-primary/40 border border-transparent transition-all"
+        class="card bg-base-100 border border-base-300 shadow-sm hover:shadow-md hover:border-primary/40 transition-all"
       >
         <div class="card-body p-4">
           <div class="flex items-center justify-between">

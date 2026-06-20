@@ -10,6 +10,8 @@ import type { AccessGroup, Portal } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
+import ListLayout from '@/components/ui/ListLayout.vue'
+import ListPagination from '@/components/ui/ListPagination.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -68,44 +70,31 @@ onMounted(reload)
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-      <div>
-        <h1 class="text-3xl font-bold">Access Groups</h1>
-        <p class="text-base-content/70 mt-1">A set of portals opened under one schedule (an "access level").</p>
-      </div>
+  <ListLayout
+    v-model:search="searchQuery"
+    title="Access Groups"
+    subtitle="A set of portals opened under one schedule (an &quot;access level&quot;)."
+    search-placeholder="Search by code or name..."
+    :loading="loading"
+    :error="error"
+    :is-empty="groups.length === 0"
+    :has-query="!!searchQuery"
+    empty-icon="🗝️"
+    empty-title="No access groups yet"
+    empty-message="Group portals under a schedule, then assign groups to roles."
+    error-title="Failed to load access groups"
+    @retry="reload"
+  >
+    <template #actions>
       <router-link to="/access-groups/new" class="btn btn-primary w-full sm:w-auto">
         <span class="text-lg">+</span><span>New Access Group</span>
       </router-link>
-    </div>
+    </template>
+    <template #empty-action>
+      <router-link to="/access-groups/new" class="btn btn-primary">Create Access Group</router-link>
+    </template>
 
-    <div class="form-control">
-      <input v-model="searchQuery" type="text" placeholder="Search by code or name..." class="input input-bordered w-full" />
-    </div>
-
-    <div v-if="loading && groups.length === 0" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <BaseCard v-else-if="error && groups.length === 0">
-      <div class="text-center py-12">
-        <span class="text-6xl">&#9888;</span>
-        <h3 class="text-xl font-bold mt-4">Failed to load access groups</h3>
-        <p class="text-base-content/70 mt-2">{{ error }}</p>
-        <button @click="reload" class="btn btn-primary mt-4">Retry</button>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else-if="groups.length === 0 && !searchQuery">
-      <div class="text-center py-12">
-        <span class="text-6xl">🗝️</span>
-        <h3 class="text-xl font-bold mt-4">No access groups yet</h3>
-        <p class="text-base-content/70 mt-2">Group portals under a schedule, then assign groups to roles.</p>
-        <router-link to="/access-groups/new" class="btn btn-primary mt-4">Create Access Group</router-link>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else :no-padding="true">
+    <BaseCard :no-padding="true">
       <ResponsiveList :items="groups" :columns="columns" :loading="loading" @row-click="(g) => router.push(`/access-groups/${g.id}`)">
         <template #cell-code="{ item }"><code class="text-xs font-bold text-primary">{{ item.code }}</code></template>
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>
@@ -153,14 +142,9 @@ onMounted(reload)
         </template>
       </ResponsiveList>
 
-      <div class="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t border-base-300">
-        <span class="text-sm text-base-content/60">{{ groups.length }} of {{ totalItems }} access group(s)</span>
-        <div v-if="totalPages > 1" class="join">
-          <button class="join-item btn btn-sm" :disabled="page === 1 || loading" @click="prevPage(queryOpts())">«</button>
-          <button class="join-item btn btn-sm">{{ page }} / {{ totalPages }}</button>
-          <button class="join-item btn btn-sm" :disabled="page === totalPages || loading" @click="nextPage(queryOpts())">»</button>
-        </div>
-      </div>
+      <ListPagination :page="page" :total-pages="totalPages" :loading="loading" @prev="prevPage(queryOpts())" @next="nextPage(queryOpts())">
+        {{ groups.length }} of {{ totalItems }} access group(s)
+      </ListPagination>
     </BaseCard>
-  </div>
+  </ListLayout>
 </template>

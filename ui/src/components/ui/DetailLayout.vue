@@ -7,6 +7,8 @@
  * dead whitespace with context. An optional #footer renders as a sticky action
  * bar — wrap the whole thing in a <form> and put the submit button there.
  */
+import HelpButton from './HelpButton.vue'
+
 interface Crumb {
   label: string
   to?: string
@@ -36,8 +38,9 @@ defineProps<{
           <h1 class="text-3xl font-bold break-words">{{ title }}</h1>
           <p v-if="subtitle" class="text-base-content/70 mt-1">{{ subtitle }}</p>
         </div>
-        <div v-if="$slots.actions" class="flex items-center gap-2 flex-shrink-0">
+        <div class="flex items-center gap-2 flex-shrink-0">
           <slot name="actions" />
+          <HelpButton />
         </div>
       </div>
     </div>

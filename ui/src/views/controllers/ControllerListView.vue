@@ -11,6 +11,8 @@ import type { Controller } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
+import ListLayout from '@/components/ui/ListLayout.vue'
+import ListPagination from '@/components/ui/ListPagination.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -67,44 +69,31 @@ onMounted(reload)
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-      <div>
-        <h1 class="text-3xl font-bold">Controllers</h1>
-        <p class="text-base-content/70 mt-1">Edge boxes that drive the portals assigned to them.</p>
-      </div>
+  <ListLayout
+    v-model:search="searchQuery"
+    title="Controllers"
+    subtitle="Edge boxes that drive the portals assigned to them."
+    search-placeholder="Search by code or name..."
+    :loading="loading"
+    :error="error"
+    :is-empty="controllers.length === 0"
+    :has-query="!!searchQuery"
+    empty-icon="⚙️"
+    empty-title="No controllers yet"
+    empty-message="Register an edge box, then assign portals to it."
+    error-title="Failed to load controllers"
+    @retry="reload"
+  >
+    <template #actions>
       <router-link to="/controllers/new" class="btn btn-primary w-full sm:w-auto">
         <span class="text-lg">+</span><span>New Controller</span>
       </router-link>
-    </div>
+    </template>
+    <template #empty-action>
+      <router-link to="/controllers/new" class="btn btn-primary">Create Controller</router-link>
+    </template>
 
-    <div class="form-control">
-      <input v-model="searchQuery" type="text" placeholder="Search by code or name..." class="input input-bordered w-full" />
-    </div>
-
-    <div v-if="loading && controllers.length === 0" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <BaseCard v-else-if="error && controllers.length === 0">
-      <div class="text-center py-12">
-        <span class="text-6xl">&#9888;</span>
-        <h3 class="text-xl font-bold mt-4">Failed to load controllers</h3>
-        <p class="text-base-content/70 mt-2">{{ error }}</p>
-        <button @click="reload" class="btn btn-primary mt-4">Retry</button>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else-if="controllers.length === 0 && !searchQuery">
-      <div class="text-center py-12">
-        <span class="text-6xl">⚙️</span>
-        <h3 class="text-xl font-bold mt-4">No controllers yet</h3>
-        <p class="text-base-content/70 mt-2">Register an edge box, then assign portals to it.</p>
-        <router-link to="/controllers/new" class="btn btn-primary mt-4">Create Controller</router-link>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else :no-padding="true">
+    <BaseCard :no-padding="true">
       <ResponsiveList :items="controllers" :columns="columns" :loading="loading" @row-click="(c) => router.push(`/controllers/${c.id}`)">
         <template #cell-code="{ item }"><code class="text-xs font-bold text-primary">{{ item.code }}</code></template>
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>
@@ -158,14 +147,9 @@ onMounted(reload)
         </template>
       </ResponsiveList>
 
-      <div class="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t border-base-300">
-        <span class="text-sm text-base-content/60">{{ controllers.length }} of {{ totalItems }} controller(s)</span>
-        <div v-if="totalPages > 1" class="join">
-          <button class="join-item btn btn-sm" :disabled="page === 1 || loading" @click="prevPage(queryOpts())">«</button>
-          <button class="join-item btn btn-sm">{{ page }} / {{ totalPages }}</button>
-          <button class="join-item btn btn-sm" :disabled="page === totalPages || loading" @click="nextPage(queryOpts())">»</button>
-        </div>
-      </div>
+      <ListPagination :page="page" :total-pages="totalPages" :loading="loading" @prev="prevPage(queryOpts())" @next="nextPage(queryOpts())">
+        {{ controllers.length }} of {{ totalItems }} controller(s)
+      </ListPagination>
     </BaseCard>
-  </div>
+  </ListLayout>
 </template>

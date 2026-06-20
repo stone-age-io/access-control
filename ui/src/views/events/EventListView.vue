@@ -6,6 +6,8 @@ import type { AccessEvent, EventKind } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
+import ListLayout from '@/components/ui/ListLayout.vue'
+import ListPagination from '@/components/ui/ListPagination.vue'
 
 const { items: events, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
   usePagination<AccessEvent>('events', 25)
@@ -56,42 +58,29 @@ onMounted(loadEvents)
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div>
-      <h1 class="text-3xl font-bold">Events</h1>
-      <p class="text-base-content/70 mt-1">Audit timeline — the queryable projection of the ACC_EVENTS stream.</p>
-    </div>
-
-    <div class="flex flex-col sm:flex-row gap-3">
+  <ListLayout
+    v-model:search="searchQuery"
+    title="Events"
+    subtitle="Audit timeline — the queryable projection of the ACC_EVENTS stream."
+    search-placeholder="Filter this page by location, portal, credential, user, reason..."
+    :loading="loading"
+    :error="error"
+    :is-empty="events.length === 0"
+    :has-query="!!searchQuery || !!kindFilter"
+    empty-icon="📋"
+    empty-title="No events"
+    empty-message="Events appear once controllers publish taps, state changes, and alarms."
+    error-title="Failed to load events"
+    @retry="loadEvents"
+  >
+    <template #toolbar>
       <select v-model="kindFilter" class="select select-bordered sm:w-48" @change="loadEvents">
         <option value="">All kinds</option>
         <option v-for="k in KINDS" :key="k" :value="k">{{ formatConstant(k) }}</option>
       </select>
-      <input v-model="searchQuery" type="text" placeholder="Filter this page by location, portal, credential, user, reason..." class="input input-bordered flex-1" />
-    </div>
+    </template>
 
-    <div v-if="loading && events.length === 0" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <BaseCard v-else-if="error && events.length === 0">
-      <div class="text-center py-12">
-        <span class="text-6xl">&#9888;</span>
-        <h3 class="text-xl font-bold mt-4">Failed to load events</h3>
-        <p class="text-base-content/70 mt-2">{{ error }}</p>
-        <button @click="loadEvents" class="btn btn-primary mt-4">Retry</button>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else-if="events.length === 0">
-      <div class="text-center py-12">
-        <span class="text-6xl">📋</span>
-        <h3 class="text-xl font-bold mt-4">No events</h3>
-        <p class="text-base-content/70 mt-2">Events appear once controllers publish taps, state changes, and alarms.</p>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else :no-padding="true">
+    <BaseCard :no-padding="true">
       <ResponsiveList :items="filtered" :columns="columns" :loading="loading" @row-click="(e) => selected = e">
         <template #cell-kind="{ item }"><span class="badge badge-sm" :class="kindBadge(item)">{{ item.kind || '—' }}</span></template>
         <template #card-kind="{ item }"><span class="badge badge-sm" :class="kindBadge(item)">{{ item.kind || '—' }}</span></template>
@@ -102,17 +91,13 @@ onMounted(loadEvents)
         </template>
       </ResponsiveList>
 
-      <div class="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t border-base-300">
-        <span class="text-sm text-base-content/70">{{ events.length }} of {{ totalItems }} events</span>
-        <div class="join">
-          <button class="join-item btn btn-sm" :disabled="page === 1 || loading" @click="prevPage(queryOpts())">«</button>
-          <button class="join-item btn btn-sm">{{ page }} / {{ totalPages }}</button>
-          <button class="join-item btn btn-sm" :disabled="page === totalPages || loading" @click="nextPage(queryOpts())">»</button>
-        </div>
-      </div>
+      <ListPagination :page="page" :total-pages="totalPages" :loading="loading" @prev="prevPage(queryOpts())" @next="nextPage(queryOpts())">
+        {{ events.length }} of {{ totalItems }} events
+      </ListPagination>
     </BaseCard>
+  </ListLayout>
 
-    <!-- Detail modal -->
+  <!-- Detail modal -->
     <Teleport to="body">
       <dialog class="modal" :class="{ 'modal-open': !!selected }">
         <div class="modal-box max-w-2xl" v-if="selected">
@@ -149,5 +134,4 @@ onMounted(loadEvents)
         <div class="modal-backdrop" @click="selected = null"></div>
       </dialog>
     </Teleport>
-  </div>
 </template>

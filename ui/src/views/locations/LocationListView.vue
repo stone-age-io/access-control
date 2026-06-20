@@ -11,6 +11,8 @@ import type { Location } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
+import ListLayout from '@/components/ui/ListLayout.vue'
+import ListPagination from '@/components/ui/ListPagination.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -66,44 +68,31 @@ onMounted(reload)
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-      <div>
-        <h1 class="text-3xl font-bold">Locations</h1>
-        <p class="text-base-content/70 mt-1">Buildings/campuses — each owns a timezone.</p>
-      </div>
+  <ListLayout
+    v-model:search="searchQuery"
+    title="Locations"
+    subtitle="Buildings/campuses — each owns a timezone."
+    search-placeholder="Search by code, name, or timezone..."
+    :loading="loading"
+    :error="error"
+    :is-empty="locations.length === 0"
+    :has-query="!!searchQuery"
+    empty-icon="🏢"
+    empty-title="No locations yet"
+    empty-message="Create your first location to anchor portals and timezones."
+    error-title="Failed to load locations"
+    @retry="reload"
+  >
+    <template #actions>
       <router-link to="/locations/new" class="btn btn-primary w-full sm:w-auto">
         <span class="text-lg">+</span><span>New Location</span>
       </router-link>
-    </div>
+    </template>
+    <template #empty-action>
+      <router-link to="/locations/new" class="btn btn-primary">Create Location</router-link>
+    </template>
 
-    <div class="form-control">
-      <input v-model="searchQuery" type="text" placeholder="Search by code, name, or timezone..." class="input input-bordered w-full" />
-    </div>
-
-    <div v-if="loading && locations.length === 0" class="flex justify-center p-12">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <BaseCard v-else-if="error && locations.length === 0">
-      <div class="text-center py-12">
-        <span class="text-6xl">&#9888;</span>
-        <h3 class="text-xl font-bold mt-4">Failed to load locations</h3>
-        <p class="text-base-content/70 mt-2">{{ error }}</p>
-        <button @click="reload" class="btn btn-primary mt-4">Retry</button>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else-if="locations.length === 0 && !searchQuery">
-      <div class="text-center py-12">
-        <span class="text-6xl">🏢</span>
-        <h3 class="text-xl font-bold mt-4">No locations yet</h3>
-        <p class="text-base-content/70 mt-2">Create your first location to anchor portals and timezones.</p>
-        <router-link to="/locations/new" class="btn btn-primary mt-4">Create Location</router-link>
-      </div>
-    </BaseCard>
-
-    <BaseCard v-else :no-padding="true">
+    <BaseCard :no-padding="true">
       <ResponsiveList :items="locations" :columns="columns" :loading="loading" @row-click="(l) => router.push(`/locations/${l.id}`)">
         <template #cell-code="{ item }"><code class="text-xs font-bold text-primary">{{ item.code }}</code></template>
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>
@@ -134,14 +123,9 @@ onMounted(reload)
         </template>
       </ResponsiveList>
 
-      <div class="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t border-base-300">
-        <span class="text-sm text-base-content/60">{{ locations.length }} of {{ totalItems }} location(s)</span>
-        <div v-if="totalPages > 1" class="join">
-          <button class="join-item btn btn-sm" :disabled="page === 1 || loading" @click="prevPage(queryOpts())">«</button>
-          <button class="join-item btn btn-sm">{{ page }} / {{ totalPages }}</button>
-          <button class="join-item btn btn-sm" :disabled="page === totalPages || loading" @click="nextPage(queryOpts())">»</button>
-        </div>
-      </div>
+      <ListPagination :page="page" :total-pages="totalPages" :loading="loading" @prev="prevPage(queryOpts())" @next="nextPage(queryOpts())">
+        {{ locations.length }} of {{ totalItems }} location(s)
+      </ListPagination>
     </BaseCard>
-  </div>
+  </ListLayout>
 </template>
