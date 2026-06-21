@@ -62,7 +62,7 @@ function onInput(e: Event) {
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m1.35-5.65a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
         <input :value="search" type="text" class="grow" :placeholder="searchPlaceholder" @input="onInput" />
-        <button v-if="search" type="button" class="opacity-40 hover:opacity-100 transition-opacity" aria-label="Clear search" @click="emit('update:search', '')">
+        <button v-if="search" type="button" class="shrink-0 -mr-2 flex h-11 w-11 items-center justify-center rounded-full opacity-40 hover:opacity-100 transition-opacity" aria-label="Clear search" @click="emit('update:search', '')">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>

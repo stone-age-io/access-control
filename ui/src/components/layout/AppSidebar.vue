@@ -85,7 +85,7 @@ async function handleLogout() {
 
 <template>
   <aside
-    class="bg-base-100 h-screen flex flex-col border-r border-base-300 transition-all duration-300 ease-in-out z-20"
+    class="bg-base-100 h-dvh flex flex-col border-r border-base-300 transition-all duration-300 ease-in-out z-20 pad-safe-top"
     :class="effectiveCompact ? 'w-20 min-w-[5rem]' : 'w-72 min-w-[18rem]'"
   >
     <!-- TOP: brand + collapse toggle -->

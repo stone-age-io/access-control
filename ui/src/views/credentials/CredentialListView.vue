@@ -99,8 +99,8 @@ onMounted(reload)
 
     <BaseCard :no-padding="true">
       <ResponsiveList :items="credentials" :columns="columns" :loading="loading" @row-click="(c) => router.push(`/credentials/${c.id}`)">
-        <template #cell-value="{ item }"><code class="text-xs font-bold text-primary">{{ item.value }}</code></template>
-        <template #card-value="{ item }"><code class="text-sm font-bold text-primary">{{ item.value }}</code></template>
+        <template #cell-value="{ item }"><code class="text-xs font-bold text-primary" :title="item.value">{{ item.value }}</code></template>
+        <template #card-value="{ item }"><code class="text-sm font-bold text-primary" :title="item.value">{{ item.value }}</code></template>
 
         <template #cell-type="{ item }">
           <span class="badge badge-ghost badge-sm">{{ item.type || '-' }}</span>

@@ -9,6 +9,34 @@ body {
   background-color: oklch(var(--b2));
 }
 
+/* The app shell is the only scroller (MainLayout's <main> is overflow-y-auto).
+   Killing overscroll at the root stops the mobile rubber-band that "pulls up"
+   the shell and reveals a bar of the page background behind it. */
+html,
+body {
+  overscroll-behavior: none;
+}
+
+/* Device safe areas: with viewport-fit=cover the page draws under the notch /
+   home indicator, so chrome that lives at the edges opts back in. env() resolves
+   to 0 on devices without insets, so these are no-ops elsewhere. */
+.pad-safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.pad-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Comfortable touch targets on small screens, where only the stacked/card layout
+   shows (the dense desktop table is hidden below lg, so its sizing is untouched).
+   min-height wins over DaisyUI's fixed btn height when it's the larger value. */
+@media (max-width: 1023px) {
+  .btn-xs,
+  .btn-sm {
+    min-height: 2.75rem;
+  }
+}
+
 /* Custom scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

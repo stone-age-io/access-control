@@ -11,8 +11,8 @@ import HelpPanel from '@/components/ui/HelpPanel.vue'
     <!-- Main content -->
     <div class="drawer-content flex flex-col min-h-0">
       <AppHeader />
-      <main class="flex-1 min-h-0 overflow-y-auto bg-base-200">
-        <div class="mx-auto w-full max-w-7xl p-4 lg:p-6">
+      <main class="flex-1 min-h-0 overflow-y-auto overscroll-y-contain bg-base-200">
+        <div class="mx-auto w-full max-w-7xl p-4 lg:p-6 pad-safe-bottom">
           <router-view />
         </div>
       </main>

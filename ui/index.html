@@ -2,7 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- Allow pinch-zoom (a11y: WCAG 1.4.4); inputs are 16px so iOS won't focus-zoom.
+         viewport-fit=cover lets us pad for notches/home indicator via env() safe-area insets. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Stone Access</title>
     <meta name="theme-color" content="#0a0a0a">
     <style>
@@ -10,7 +12,10 @@
       body {
         margin: 0;
         background: #0a0a0a;
-        min-height: 100vh;
+        /* dvh (not vh) so the body matches the app shell's h-dvh on mobile and
+           never grows past the visible viewport, which would expose a strip of
+           background behind the shell on scroll. */
+        min-height: 100dvh;
       }
       .app-loader {
         position: fixed;
