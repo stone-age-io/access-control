@@ -17,6 +17,20 @@ body {
   overscroll-behavior: none;
 }
 
+/* Snappy taps on touch screens. We intentionally allow pinch-zoom (no
+   user-scalable=no), which on mobile browsers re-enables the legacy ~300ms
+   double-tap-zoom delay — making icon buttons (header, help) feel like a tap
+   has to "land just right". `manipulation` disables double-tap zoom on these
+   controls (page pinch-zoom still works) so taps register immediately. */
+.btn,
+button,
+a,
+label,
+summary,
+[role='button'] {
+  touch-action: manipulation;
+}
+
 /* Device safe areas: with viewport-fit=cover the page draws under the notch /
    home indicator, so chrome that lives at the edges opts back in. env() resolves
    to 0 on devices without insets, so these are no-ops elsewhere. */

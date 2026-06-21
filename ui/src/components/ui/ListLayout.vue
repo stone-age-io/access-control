@@ -57,7 +57,11 @@ function onInput(e: Event) {
     <!-- Toolbar + search -->
     <div v-if="searchPlaceholder || $slots.toolbar" class="flex flex-col sm:flex-row gap-3">
       <slot name="toolbar" />
-      <label v-if="searchPlaceholder" class="input input-bordered flex items-center gap-2 flex-1">
+      <!-- min-h-[3rem] is load-bearing: on mobile the parent is flex-col, so flex-1
+           sets the label's flex-basis on the *vertical* axis and would otherwise
+           override DaisyUI's .input height, collapsing the bar until it has content.
+           The min-height floor keeps it at full height empty or filled. -->
+      <label v-if="searchPlaceholder" class="input input-bordered flex items-center gap-2 flex-1 min-h-[3rem]">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-40 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m1.35-5.65a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
