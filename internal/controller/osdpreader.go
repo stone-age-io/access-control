@@ -95,7 +95,7 @@ func (r *OSDPReader) translate() {
 			r.log.Warn("card read from unmapped PD address; dropping", "addr", card.Addr)
 			continue
 		}
-		tap := drivers.Tap{Portal: code, Credential: card.Credential, At: card.At}
+		tap := drivers.Tap{Portal: code, Credential: card.Credential, At: card.At, Source: drivers.SourceOSDP}
 		// Non-blocking, like NATSReader: a full queue means we're saturated; drop
 		// and count rather than wedge the bus goroutine (a dropped tap denies).
 		select {

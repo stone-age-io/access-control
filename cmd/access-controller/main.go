@@ -121,9 +121,10 @@ func main() {
 	}
 
 	// Resolve the hardware profile once if anything needs it: the lock/input driver
-	// (gpio) and/or the OSDP reader (whose RS485 serial port lives in the profile).
+	// (gpio) and/or the OSDP reader (whose RS485 serial port lives in the profile;
+	// used by reader "osdp" and "both").
 	var profile hardware.Profile
-	if cfg.Controller.Driver == "gpio" || cfg.Controller.Reader == "osdp" {
+	if cfg.Controller.Driver == "gpio" || cfg.Controller.Reader == "osdp" || cfg.Controller.Reader == "both" {
 		p, ok := hardware.ProfileFor(cfg.Controller.Model)
 		if !ok {
 			log.Fatal("unknown controller model", "model", cfg.Controller.Model, "known", hardware.Models())
@@ -138,22 +139,16 @@ func main() {
 	//   nats — simulated taps published to {app}.{loc}.{type}.{thing}.tap (dev).
 	//   osdp — a real OSDP reader polled on the model's RS485 bus; all armed portals
 	//          share the one bus, addressed by each portal's reader_address.
+	//   both — NATS taps for every portal plus OSDP for portals that have a reader
+	//          (reader_address >= 0). The composite fans both streams into one.
 	var reader controller.Reader
 	switch cfg.Controller.Reader {
 	case "osdp":
-		sp, ok := profile.Serial()
-		if !ok {
-			log.Fatal("controller model defines no RS485 serial port for the osdp reader",
-				"model", cfg.Controller.Model)
-		}
-		transceiver, err := osdp.OpenSerial(sp.Device, sp.Baud)
-		if err != nil {
-			log.Fatal("failed to open OSDP serial port", "device", sp.Device, "error", err)
-		}
-		osdpReader := controller.NewOSDPReader(osdp.NewBus(transceiver, log), log, m)
-		osdpReader.Start(ctx)
-		reader = osdpReader
-		log.Info("reader: osdp", "device", sp.Device, "baud", sp.Baud)
+		reader = newOSDPReader(ctx, cfg, profile, log, m)
+	case "both":
+		natsReader := controller.NewNATSReader(nc.NC, cfg.Controller.Location, subj, log, m)
+		reader = controller.NewMultiReader(natsReader, newOSDPReader(ctx, cfg, profile, log, m), log)
+		log.Info("reader: both (nats for every portal + osdp for portals with a reader)")
 	default: // "nats" (validated by config)
 		reader = controller.NewNATSReader(nc.NC, cfg.Controller.Location, subj, log, m)
 		log.Info("reader: nats (simulated taps)")
@@ -295,4 +290,23 @@ func main() {
 		_ = diagSrv.Shutdown(shutdownCtx)
 		c()
 	}
+}
+
+// newOSDPReader opens the model's RS485 serial port and starts a polled OSDP
+// reader on it. Shared by the "osdp" and "both" reader modes. Fatal on a missing
+// serial port or open failure — an OSDP-configured box can't run without its bus.
+func newOSDPReader(ctx context.Context, cfg *config.Config, profile hardware.Profile, log *logger.Logger, m *metrics.Metrics) *controller.OSDPReader {
+	sp, ok := profile.Serial()
+	if !ok {
+		log.Fatal("controller model defines no RS485 serial port for the osdp reader",
+			"model", cfg.Controller.Model)
+	}
+	transceiver, err := osdp.OpenSerial(sp.Device, sp.Baud)
+	if err != nil {
+		log.Fatal("failed to open OSDP serial port", "device", sp.Device, "error", err)
+	}
+	r := controller.NewOSDPReader(osdp.NewBus(transceiver, log), log, m)
+	r.Start(ctx)
+	log.Info("reader: osdp", "device", sp.Device, "baud", sp.Baud)
+	return r
 }

@@ -115,6 +115,7 @@ func (c *Consumer) recordFrom(subject string, data []byte) (*core.Record, bool, 
 		rec.Set("allow", allow)
 	}
 	rec.Set("reason", str(body["reason"]))
+	rec.Set("source", str(body["source"]))
 	if ts := str(body["ts"]); ts != "" {
 		rec.Set("ts", ts)
 	}

@@ -17,8 +17,12 @@ Two Go binaries plus a Vue 3 management UI:
   liveness heartbeat.
 
 v1 status: the reader is selectable via `controller.reader` (orthogonal to the lock/door driver) — `nats` (default;
-simulated taps published to `acc.{location}.{type}.{thing}.tap`, for dev) or `osdp` (a real OSDP reader on the
-model's RS485 bus). The OSDP reader is the controller acting as ACU/CP: `internal/drivers/osdp` is a no-cgo CP
+simulated taps published to `acc.{location}.{type}.{thing}.tap`, for dev), `osdp` (a real OSDP reader on the
+model's RS485 bus), or `both` (NATS for every portal **plus** OSDP for the portals that have a physical reader).
+Under `both` a portal opts into OSDP per-portal via its `reader_address` (`>= 0` = OSDP reader at that PD address,
+`-1` = NATS-only); the `internal/controller` `multiReader` composes the two readers behind one `Reader` interface,
+dispatching `Arm` by address and fanning both tap streams into one. Each `evt.tap` carries a `source` (`nats`/`osdp`)
+so a physical read is distinguishable from a NATS-published tap in the audit trail. The OSDP reader is the controller acting as ACU/CP: `internal/drivers/osdp` is a no-cgo CP
 engine (per-PD `INIT→CAPDET→ONLINE→OFFLINE` state machine round-robined over one bus, mirroring libosdp's design)
 built on the clear-text packet codec in `internal/drivers/osdp/wire`; OSDP Secure Channel is a deliberate v1
 omission (fast-follow). The reader plugs in behind `drivers.ReaderDriver` (a card read becomes a `Tap`), so
@@ -134,7 +138,7 @@ a shared NATS account, a stream subject that *led with a wildcard* (e.g. `*.*.*.
 stream rooted at a literal first token (`things.>`, `cameras.>`, `kiosk.*.event.>`, …), and JetStream rejects
 overlapping stream subjects (err 10065). Leading with `acc` keeps our subject space disjoint from theirs.
 
-- `acc.{location}.{type}.{thing}.tap` — credential presentation (the `nats` reader subscribes here; the `osdp` reader reads RS485 instead)
+- `acc.{location}.{type}.{thing}.tap` — credential presentation (the `nats` reader subscribes here; the `osdp` reader reads RS485 instead; under `both`, NATS for every portal and RS485 for the reader portals)
 - `acc.{location}.{type}.{thing}.evt.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS
 - `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget)
 - `acc.{location}.ctrl.{code}.heartbeat` — controller liveness. A controller is addressed under the reserved
@@ -183,8 +187,9 @@ user-pass); `*.creds` and `config/local*.yaml` are gitignored — never commit c
 
 A controller's config is just its identity and hardware selection: `controller.code` (which portals it drives,
 matched against the policy graph), `controller.location` (timezone + command/fire subscription scope),
-`controller.driver` (`mock`|`gpio`), `controller.model` (required for `gpio` or `reader: osdp`; selects the hardware
-profile + RS485 serial port), `controller.reader` (`nats`|`osdp`), and `controller.heartbeatInterval`. accessd's
+`controller.driver` (`mock`|`gpio`), `controller.model` (required for `gpio`, `reader: osdp`, or `reader: both`;
+selects the hardware profile + RS485 serial port), `controller.reader` (`nats`|`osdp`|`both`), and
+`controller.heartbeatInterval`. accessd's
 `accessd.controllerOfflineAfter` sets how long a silent controller stays "online" before the health sweep marks it
 offline. An optional, **off-by-default** read-only diagnostics endpoint (`diagnostics.enabled`/`diagnostics.address`,
 controller-only, localhost by default) serves a self-contained local `/status` page (+ `/status.json`) of this box's

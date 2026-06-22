@@ -42,6 +42,9 @@ const form = ref({
   dps_input: 0,
   rex_input: 0,
   held_open_seconds: 30,
+  // OSDP reader: off => NATS-only (reader_address -1); on => a physical reader at
+  // reader_address (0..126) on the controller's RS485 bus. New portals default off.
+  osdpEnabled: false,
   reader_address: 0,
   auto_posture: '' as Posture | '',
   auto_schedule: '',
@@ -94,7 +97,9 @@ async function loadRecord() {
       dps_input: p.dps_input || 0,
       rex_input: p.rex_input || 0,
       held_open_seconds: p.held_open_seconds || 0,
-      reader_address: p.reader_address || 0,
+      // reader_address >= 0 means a physical OSDP reader; -1 (or absent) is NATS-only.
+      osdpEnabled: typeof p.reader_address === 'number' && p.reader_address >= 0,
+      reader_address: typeof p.reader_address === 'number' && p.reader_address >= 0 ? p.reader_address : 0,
       auto_posture: (p.auto_posture || '') as Posture | '',
       auto_schedule: p.auto_schedule || '',
     }
@@ -116,6 +121,13 @@ async function handleSubmit() {
   }
   if (form.value.auto_schedule && !form.value.auto_posture) {
     toast.error('Scheduled posture: pick a posture, or clear the schedule'); return
+  }
+  // An OSDP reader needs a valid PD address (0..126); off means NATS-only.
+  if (form.value.osdpEnabled) {
+    const a = Number(form.value.reader_address)
+    if (!Number.isInteger(a) || a < 0 || a > 126) {
+      toast.error('OSDP reader address must be a whole number 0–126'); return
+    }
   }
   // DPS and REX are distinct functions; they can't share one input line.
   if (form.value.dps_input && form.value.dps_input === form.value.rex_input) {
@@ -147,7 +159,8 @@ async function handleSubmit() {
       dps_input: Number(form.value.dps_input) || 0,
       rex_input: Number(form.value.rex_input) || 0,
       held_open_seconds: Number(form.value.held_open_seconds) || 0,
-      reader_address: Number(form.value.reader_address) || 0,
+      // -1 disables OSDP (NATS-only); otherwise the PD address on the RS485 bus.
+      reader_address: form.value.osdpEnabled ? (Number(form.value.reader_address) || 0) : -1,
       auto_posture: form.value.auto_posture,
       auto_schedule: form.value.auto_schedule,
     }
@@ -278,14 +291,22 @@ onMounted(async () => {
             <FormField label="Held-open (s)">
               <input v-model.number="form.held_open_seconds" type="number" min="0" class="input input-bordered" />
             </FormField>
-            <FormField label="Reader address (OSDP)">
-              <input v-model.number="form.reader_address" type="number" min="0" max="126" class="input input-bordered" />
+          </div>
+
+          <div class="border-t border-base-200 pt-4 space-y-3">
+            <FormField inline label="OSDP reader"
+                       hint="On = a physical OSDP reader on the controller's RS485 bus. Off = NATS-only (taps published over NATS). The controller polls this reader only when its reader mode is “osdp” or “both”.">
+              <input v-model="form.osdpEnabled" type="checkbox" class="toggle toggle-primary" />
+            </FormField>
+            <FormField v-if="form.osdpEnabled" label="Reader address (OSDP PD)" hint="PD address on the controller's RS485 bus, 0–126; a single-reader bus uses 0.">
+              <input v-model.number="form.reader_address" type="number" min="0" max="126" class="input input-bordered md:w-48" />
             </FormField>
           </div>
+
           <p class="text-xs opacity-50">
             Relay/input pickers list the assigned controller model's lines and flag any already in use on that box.
             Door-position (DPS) and request-to-exit (REX) drive forced/held-open detection; leave at “none” if unmonitored. Ignored for logical portals.
-            Pick a controller to see its lines (otherwise enter the raw index). Reader address is the OSDP PD address on the controller's RS485 bus (used only when the controller's reader is OSDP; 0 for a single reader).
+            Pick a controller to see its lines (otherwise enter the raw index).
           </p>
         </div>
       </BaseCard>

@@ -25,7 +25,7 @@ func newConsumer(t *testing.T) (*Consumer, *tests.TestApp) {
 // collection schema, including the kind select).
 func TestRecordFromTap(t *testing.T) {
 	c, app := newConsumer(t)
-	data := []byte(`{"cred":"CARD-001","user":"u_alice","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z"}`)
+	data := []byte(`{"cred":"CARD-001","user":"u_alice","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z","source":"osdp"}`)
 
 	rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
 	if err != nil || !ok {
@@ -41,6 +41,9 @@ func TestRecordFromTap(t *testing.T) {
 	}
 	if !rec.GetBool("allow") || rec.GetString("reason") != "allow_grant" {
 		t.Errorf("allow/reason = (%v,%q)", rec.GetBool("allow"), rec.GetString("reason"))
+	}
+	if rec.GetString("source") != "osdp" {
+		t.Errorf("source = %q, want osdp", rec.GetString("source"))
 	}
 
 	// It must persist (proves it validates against the events schema).

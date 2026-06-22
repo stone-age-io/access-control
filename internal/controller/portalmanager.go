@@ -37,7 +37,7 @@ type PortalHardware interface {
 // change (via PolicyStore.SetOnChange):
 //
 //   - portal newly assigned here, resolvable (has a type), not armed -> arm
-//   - armed portal's type changed                                    -> re-arm
+//   - armed portal's type or reader address changed                  -> re-arm
 //   - armed portal reassigned elsewhere / removed                    -> disarm
 //
 // This is also what lets the controller boot before policy is available: it
@@ -62,7 +62,17 @@ type PortalManager struct {
 	wg     sync.WaitGroup
 
 	// Goroutine-confined to the reconcile loop; no lock needed.
-	armed map[string]string // code -> armed type
+	armed map[string]armedPortal // code -> what it was armed with
+}
+
+// armedPortal records the binding a portal is currently armed with, so the
+// reconciler can re-arm when the parts it depends on change. typ drives the tap
+// subject; addr is the OSDP reader address (>= 0 = OSDP, -1 = NATS-only), so a
+// change here means an operator toggled the portal's OSDP reader on/off or
+// re-addressed it and the reader must be re-bound.
+type armedPortal struct {
+	typ  string
+	addr int
 }
 
 // NewPortalManager builds a reconciler for the controller with the given code; it
@@ -79,7 +89,7 @@ func NewPortalManager(code, location string, store *PolicyStore, armer portalArm
 		hw:       hw,
 		log:      log.With("component", "portal-manager"),
 		dirty:    make(chan struct{}, 1),
-		armed:    make(map[string]string),
+		armed:    make(map[string]armedPortal),
 	}
 }
 
@@ -147,9 +157,10 @@ func (pm *PortalManager) reconcile() {
 		}
 	}
 
-	// Arm new portals; re-arm any whose type changed.
+	// Arm new portals; re-arm any whose type or reader address changed.
 	for code, ap := range desired {
-		curType, isArmed := pm.armed[code]
+		cur, isArmed := pm.armed[code]
+		b, _ := pm.store.Binding(code)
 
 		if ap.Location != "" && ap.Location != pm.location {
 			// Commands and the fire signal are subscribed on the controller's home
@@ -161,8 +172,13 @@ func (pm *PortalManager) reconcile() {
 		switch {
 		case !isArmed:
 			pm.arm(ap)
-		case curType != ap.Type:
-			pm.log.Info("portal type changed; re-arming", "portal", code, "from", curType, "to", ap.Type)
+		case cur.typ != ap.Type:
+			pm.log.Info("portal type changed; re-arming", "portal", code, "from", cur.typ, "to", ap.Type)
+			pm.disarm(code)
+			pm.arm(ap)
+		case cur.addr != b.ReaderAddress:
+			// OSDP reader toggled on/off (or re-addressed) for this portal.
+			pm.log.Info("portal reader address changed; re-arming", "portal", code, "from", cur.addr, "to", b.ReaderAddress)
 			pm.disarm(code)
 			pm.arm(ap)
 		}
@@ -185,7 +201,7 @@ func (pm *PortalManager) arm(ap policy.Portal) {
 		return
 	}
 	pm.rt.SetLock(ap.Code, lock)
-	pm.armed[ap.Code] = ap.Type
+	pm.armed[ap.Code] = armedPortal{typ: ap.Type, addr: b.ReaderAddress}
 	// Set the strike's standing hold to match effective posture right away, so a
 	// scheduled-/standing-unlocked portal opens on arm without waiting for the
 	// next hold-eval tick.

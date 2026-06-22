@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { usePagination } from '@/composables/usePagination'
 import { formatDate, formatConstant } from '@/utils/format'
-import type { AccessEvent, EventKind } from '@/types/pocketbase'
+import type { AccessEvent, EventKind, EventSource } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
@@ -13,14 +13,18 @@ const { items: events, page, totalPages, totalItems, loading, error, load, nextP
   usePagination<AccessEvent>('events', 25)
 
 const kindFilter = ref<EventKind | ''>('')
+const sourceFilter = ref<EventSource | ''>('')
 const searchQuery = ref('')
 const selected = ref<AccessEvent | null>(null)
 
 const KINDS: EventKind[] = ['tap', 'state', 'alarm', 'fire', 'command']
+const SOURCES: EventSource[] = ['nats', 'osdp']
 
 function queryOpts() {
-  const filter = kindFilter.value ? `kind = "${kindFilter.value}"` : ''
-  return { sort: '-ts,-created', filter }
+  const clauses: string[] = []
+  if (kindFilter.value) clauses.push(`kind = "${kindFilter.value}"`)
+  if (sourceFilter.value) clauses.push(`source = "${sourceFilter.value}"`)
+  return { sort: '-ts,-created', filter: clauses.join(' && ') }
 }
 
 function loadEvents() {
@@ -43,6 +47,7 @@ const filtered = computed(() => {
 const columns: Column<AccessEvent>[] = [
   { key: 'ts', label: 'Time', format: (v, item) => formatDate(v || item.created, 'PP p') },
   { key: 'kind', label: 'Kind' },
+  { key: 'source', label: 'Source' },
   { key: 'location', label: 'Location' },
   { key: 'portal', label: 'Portal', mobileLabel: 'Portal' },
   { key: 'reason', label: 'Reason', format: (v) => (v ? formatConstant(v) : '-') },
@@ -66,7 +71,7 @@ onMounted(loadEvents)
     :loading="loading"
     :error="error"
     :is-empty="events.length === 0"
-    :has-query="!!searchQuery || !!kindFilter"
+    :has-query="!!searchQuery || !!kindFilter || !!sourceFilter"
     empty-icon="📋"
     empty-title="No events"
     empty-message="Events appear once controllers publish taps, state changes, and alarms."
@@ -78,12 +83,18 @@ onMounted(loadEvents)
         <option value="">All kinds</option>
         <option v-for="k in KINDS" :key="k" :value="k">{{ formatConstant(k) }}</option>
       </select>
+      <select v-model="sourceFilter" class="select select-bordered sm:w-40" @change="loadEvents">
+        <option value="">All sources</option>
+        <option v-for="s in SOURCES" :key="s" :value="s">{{ formatConstant(s) }}</option>
+      </select>
     </template>
 
     <BaseCard :no-padding="true">
       <ResponsiveList :items="filtered" :columns="columns" :loading="loading" @row-click="(e) => selected = e">
         <template #cell-kind="{ item }"><span class="badge badge-sm" :class="kindBadge(item)">{{ item.kind || '—' }}</span></template>
         <template #card-kind="{ item }"><span class="badge badge-sm" :class="kindBadge(item)">{{ item.kind || '—' }}</span></template>
+        <template #cell-source="{ item }"><span v-if="item.source" class="badge badge-sm badge-ghost">{{ item.source }}</span><span v-else class="opacity-40">—</span></template>
+        <template #card-source="{ item }"><span v-if="item.source" class="badge badge-sm badge-ghost">{{ item.source }}</span><span v-else class="opacity-40">—</span></template>
         <template #cell-location="{ item }"><code class="text-xs">{{ item.location || '-' }}</code></template>
 
         <template #actions="{ item }">
@@ -119,6 +130,10 @@ onMounted(loadEvents)
             </div>
             <div><span class="opacity-50 text-xs uppercase block">Credential</span><code>{{ selected.credential || '-' }}</code></div>
             <div><span class="opacity-50 text-xs uppercase block">User</span><code>{{ selected.user || '-' }}</code></div>
+            <div><span class="opacity-50 text-xs uppercase block">Source</span>
+              <span v-if="selected.source" class="badge badge-sm badge-ghost">{{ selected.source }}</span>
+              <span v-else class="opacity-40">n/a</span>
+            </div>
             <div class="col-span-2"><span class="opacity-50 text-xs uppercase block">Reason</span>{{ selected.reason ? formatConstant(selected.reason) : '-' }}</div>
           </div>
 

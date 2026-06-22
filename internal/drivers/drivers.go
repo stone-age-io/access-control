@@ -8,13 +8,23 @@ package drivers
 
 import "time"
 
+// Reader source markers for Tap.Source: which transport produced the tap. They
+// flow verbatim onto the tap event so an operator can tell a physical OSDP read
+// from a NATS-published tap forensically.
+const (
+	SourceNATS = "nats"
+	SourceOSDP = "osdp"
+)
+
 // Tap is a single credential presentation at a reader: which portal, what
-// opaque credential value, and when (UTC). The reader stamps At so tests can
-// drive deterministic instants.
+// opaque credential value, when (UTC), and which reader produced it. The reader
+// stamps At so tests can drive deterministic instants and sets Source to one of
+// the Source* constants.
 type Tap struct {
 	Portal     string
 	Credential string
 	At         time.Time
+	Source     string
 }
 
 // ReaderDriver emits taps. The returned channel is closed when the reader stops.

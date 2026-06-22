@@ -56,7 +56,7 @@ collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
 | `acc.{location}.{type}.{thing}.cmd.grant` | → ctrl | core NATS | `{"seconds":N,"actor":"…","reason":"…"}` |
 | `acc.{location}.auxout.{thing}.cmd.output` | → ctrl | core NATS | `{"action":"on"\|"off"\|"pulse","seconds":N,"actor":"…","reason":"…"}` |
 | `acc.{location}.evt.fire` | → ctrl | core NATS | `{"active":bool}` |
-| `acc.{location}.{type}.{thing}.evt.tap` | ctrl → | core NATS → JetStream | `{"cred","user","allow","reason","ts"}` |
+| `acc.{location}.{type}.{thing}.evt.tap` | ctrl → | core NATS → JetStream | `{"cred","user","allow","reason","ts","source"}` |
 | `acc.{location}.{type}.{thing}.evt.state` | ctrl → | core NATS → JetStream | `{"posture","actor?","reason?","ts"}` |
 | `acc.{location}.{type}.{thing}.evt.alarm` | ctrl → | core NATS → JetStream | `{"type","ts"}` |
 | `acc.{location}.ctrl.{code}.heartbeat` | ctrl → accessd | core NATS (**not** JetStream) | `{"code","location","ts"}` |
@@ -159,8 +159,14 @@ de-energizes (fail-secure: the door re-locks; egress stays hardware-owned).
 
 > **Reader options** (`controller.reader`): `nats` (default) — taps arrive by
 > publishing to `acc.{location}.{type}.{thing}.tap`, the simulated/integration path,
-> driven with `nats pub`; or `osdp` — a real OSDP reader polled on the model's RS485
-> bus (clear-text in v1; OSDP Secure Channel is a planned fast-follow). The reader is
+> driven with `nats pub`; `osdp` — a real OSDP reader polled on the model's RS485
+> bus (clear-text in v1; OSDP Secure Channel is a planned fast-follow); or `both` —
+> the NATS reader for **every** portal plus the OSDP reader for the portals that
+> have a physical reader. In `both` a portal opts into OSDP via its `readerAddress`:
+> `>= 0` means a reader at that PD address, `-1` (or absent → 0 is treated as PD 0)
+> means NATS-only. `osdp` and `both` require `controller.model` (its RS485 serial
+> port). Each emitted `evt.tap` carries a `source` (`nats`/`osdp`) so a physical read
+> is distinguishable from a NATS-published tap. The reader is
 > independent of the lock/door driver: an `osdp` reader pairs with any
 > `controller.driver` (the strike and DPS/REX stay on GPIO/I2C). The **lock and door
 > inputs have real drivers**: `controller.driver: mock` (default — no physical I/O,
@@ -226,7 +232,9 @@ state**, carried in policy so a box is stateless and swappable: `controller` is 
 code of the edge box that drives the portal; `lockRelay`/`dpsInput`/`rexInput` are
 *logical* relay/input indices on that box; `heldOpenSeconds` is the held-open (DOTL)
 threshold; `readerAddress` is the reader's OSDP PD address on the box's RS485 bus
-(used only when `controller.reader: osdp`; default 0 — the single-reader case). The
+(used when `controller.reader` is `osdp` or `both`). It doubles as the per-portal
+OSDP enable: `>= 0` is a reader at that PD address (0 = the single-reader case),
+`-1` is NATS-only (no OSDP). The UI writes `-1` when a portal's OSDP reader is off. The
 box maps the logical indices to physical lines via its `model`'s
 hardware profile (`internal/drivers/hardware`); the indices and `controller`/`model`
 are consumed only by the controller's PortalManager/runtime, never by the pure
@@ -316,6 +324,7 @@ consumer (`acc-audit`) delivers from the start of the stream and is
 |---|---|
 | `location`, `type`, `portal`, `kind` | parsed from the subject (`kind` ∈ `tap`/`state`/`alarm`/`fire`) |
 | `credential`, `user`, `allow`, `reason`, `ts` | corresponding body fields |
+| `source` | tap body field (`nats`/`osdp`) — which reader produced a tap; empty for non-tap and legacy rows |
 | `payload` | the full event body (JSON) |
 
 For `acc.{location}.evt.fire`, `portal` and `type` are empty and `kind` is `fire`.

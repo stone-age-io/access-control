@@ -85,7 +85,7 @@ func (r *NATSReader) Arm(p Portal) error {
 	subject := r.subj.Tap(location, p.Type, p.Code)
 	code := p.Code // capture
 	sub, err := r.nc.Subscribe(subject, func(msg *nats.Msg) {
-		tap := drivers.Tap{Portal: code, Credential: parseCred(msg.Data), At: time.Now().UTC()}
+		tap := drivers.Tap{Portal: code, Credential: parseCred(msg.Data), At: time.Now().UTC(), Source: drivers.SourceNATS}
 		// Non-blocking: never wedge the NATS delivery goroutine if the runtime
 		// stalls. A full queue means we're already saturated; drop and count it
 		// rather than block (and fail safe — a dropped tap is a denied entry).
