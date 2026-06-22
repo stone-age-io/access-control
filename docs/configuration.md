@@ -134,6 +134,7 @@ See [`protocol.md`](protocol.md) for what each carries.
 |---|---|---|---|
 | `accessd.dataDir` | `./pb_data` | `SA_ACCESSD_DATADIR` | embedded PocketBase data dir (db + uploads). Created at runtime, gitignored. The UI is `//go:embed`-ed, so there is no `pb_public`. |
 | `accessd.controllerOfflineAfter` | `45s` | `SA_ACCESSD_CONTROLLEROFFLINEAFTER` | silence before a controller shows offline. Keep it a few controller `heartbeatInterval`s so one dropped heartbeat does not flap a box offline. |
+| `accessd.auditRetentionDays` | `365` | `SA_ACCESSD_AUDITRETENTIONDAYS` | how long control-plane audit rows (`audit_logs`, written by `internal/changelog`) are kept before a daily 03:00 prune deletes them. `0` normalizes to 365; a **negative** value disables pruning (keep forever). See [`operators.md`](operators.md#control-plane-audit-log-audit_logs). |
 
 ## controller
 

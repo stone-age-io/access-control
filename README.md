@@ -24,6 +24,8 @@ edge controllers (`access-controller`) watch that keyspace and decide locally.
   shapes (`ACC_POLICY` + `ACC_STATUS`), decision reason codes, audit projection.
 - [`docs/configuration.md`](docs/configuration.md) — every config key, default,
   and `SA_` env override for both binaries.
+- [`docs/operators.md`](docs/operators.md) — the control-plane access model: operator
+  sign-in, capabilities, collection-rule matrix, and the `audit_logs` change log.
 - [`docs/hardware.md`](docs/hardware.md) — physical I/O: supported boards, pin
   maps, relay/input polarity, transports, and how to add a board.
 
@@ -41,6 +43,10 @@ internal/drivers/i2c/   MCP23017 lock + door-input backend over I2C (periph.io, 
 internal/drivers/osdp/  OSDP reader: RS485 CP engine (pure-Go, no cgo) + wire codec (osdp/wire); controller.reader: osdp
 internal/diag/          opt-in, read-only local /status page of an access-controller's live state (field troubleshooting)
 internal/health/        accessd-side heartbeat subscriber → controllers.last_seen/status
+internal/authz/         operator capability checks for accessd's custom HTTP routes (commandapi, modelsapi)
+internal/commandapi/    UI→NATS command bridge (grant/posture/aux output), gated by the `command` capability
+internal/modelsapi/     GET /api/models — enum/options metadata for the UI
+internal/changelog/     control-plane audit log: API-driven policy edits + logins → audit_logs collection
 internal/audit/         JetStream consumer → PocketBase events collection
 internal/natsx/         NATS connection + KV helpers
 internal/webui/         the compiled management UI, //go:embed-ed into accessd
@@ -50,15 +56,20 @@ ui/                     Vue 3 + Vite management UI source (PocketBase-backed CRU
 
 ## Web UI
 
-`accessd` serves a Vue 3 management console (locations, schedules, portals,
-controllers, access groups, roles, cardholders, credentials, an events timeline)
-at `/`. It is
+`accessd` serves a Vue 3 management console (locations + a location map, schedules,
+portals, controllers, access groups, roles, cardholders, credentials, an events
+timeline, a live operational monitor, operator management, and the control-plane
+audit log) at `/`. It is
 compiled into `internal/webui/public` and **`//go:embed`-ed into the accessd
 binary** — there is no `pb_public` directory to ship; the binary is
 self-contained.
 
-Auth is PocketBase superuser only (`accessd superuser upsert <email> <pass>`),
-since the access-control collections have superuser-only API rules.
+Operators sign in against the built-in `users` auth collection; their abilities are
+an orthogonal set of capabilities (`enroll`/`policy`/`topology`/`command`/`operators`)
+that gate writes and commands while reads stay open to any authenticated operator —
+see [`docs/operators.md`](docs/operators.md). A PocketBase **superuser**
+(`accessd superuser upsert <email> <pass>`) is the break-glass account and also
+signs into the admin UI at `/_`.
 
 ### Build order (the embed happens at Go compile time)
 

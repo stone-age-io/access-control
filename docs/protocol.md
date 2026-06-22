@@ -219,7 +219,10 @@ the safe default holds for any record) closes every window of that schedule on a
 holiday of the evaluated portal's location. A `holiday` is a local calendar
 `date`; `recurring` matches that month/day every year. `validFrom`/`validUntil` are
 optional RFC 3339 credential bounds (the controller parses them once on apply; a
-present-but-unparseable bound drops the credential — fail closed). `autoPosture` +
+present-but-unparseable bound drops the credential — fail closed). The credentials
+collection's `type` (`generic`/`wiegand`/`pin`/`mobile`) is a **control-plane label
+only** — it is deliberately absent from the `cred` value above, never crosses the
+wire, and `policy.Decide` ignores it. `autoPosture` +
 `autoSchedule` are **scheduled posture**: while the schedule's window is open the
 controller adopts `autoPosture` (any posture, e.g. `unlocked` for auto-unlock or
 `lockdown` for an overnight lock) instead of the standing `posture`; a runtime

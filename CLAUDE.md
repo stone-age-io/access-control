@@ -173,9 +173,31 @@ owns egress).
 `schedules.ignore_holidays`, the inverted opt-out so observe-holidays is the default), `1750000004` (portal
 `auto_posture`/`auto_schedule` for scheduled posture), and `1750000005` (fixture extras that demo holidays +
 auto-unlock — they must run *after* the schema that defines them, so they can't live in the base fixture).
-Collections have **nil access rules = superuser-only**, the right default for a PACS control plane. `migratecmd`
+Later migrations add the upward shadow + UI/operator surface: `1750000006` (`point_status`), `1750000007`
+(`aux_input`/`aux_output`), `1750000008` (portal `reader_address`), `1750000009` (the operator auth tier +
+role-based rules + `audit_logs`), `1750000011` (location-map/floor-plan UI fields), `1750000012`/`1750000013`
+(posture `source` + event `source`), `1750000015` (credential `type` rename `nkey`→`generic`, widened to
+`generic`/`wiegand`/`pin`/`mobile` — a control-plane label only, never on the policy wire), and `1750000016`
+(replace the operator `role` rank with the orthogonal `permissions` capabilities). The base `1750000000` stays
+frozen; everything is additive. `migratecmd`
 Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
 before committing.
+
+### Control-plane access (operators & audit)
+
+Two collection rules govern the *control plane* (who may edit policy), entirely separate from the *data-plane*
+decision (`policy.Decide`, which never sees operators). Operators sign in against PocketBase's built-in **`users`**
+auth collection (not `_superusers`); a superuser stays the break-glass account that bypasses everything. Ability is
+the multi-select **`users.permissions`** — orthogonal capabilities (`enroll`/`policy`/`topology`/`command`/
+`operators`), **not** a rank. Read is a universal floor for any authenticated operator; only writes and commands are
+gated. Two enforcement points share `permissions`: **collection rules** (migration `1750000016`, the real boundary
+— rule form is `@request.auth.permissions ~ "x"`, JSON-LIKE not `?=`, exact only because capability names are
+pairwise non-substring) and **`authz.RequireCapability`** on accessd's custom routes (`internal/commandapi`'s
+grant/posture/output need `command`; `internal/modelsapi`'s `/api/models` needs any auth). `internal/changelog`
+records every API-driven policy edit (+ operator logins) to the `audit_logs` collection via PocketBase `*Request`
+hooks — so accessd's own programmatic `app.Save` writes (heartbeats, the events/point_status projections, the KV
+mirror) are excluded by construction; rows strip secrets and a daily cron prunes past `accessd.auditRetentionDays`.
+The full reference is `docs/operators.md`.
 
 ## Config
 
