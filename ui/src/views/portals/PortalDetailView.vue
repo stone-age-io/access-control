@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import { usePortalCommands, POSTURES } from '@/composables/usePortalCommands'
 import { policyKey } from '@/utils/policyKey'
 import type { Portal, AccessGroup, PointStatus } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
@@ -25,20 +26,12 @@ const deleting = ref(false)
 
 // Live status (ACC_STATUS device shadow, projected into point_status).
 const status = ref<PointStatus | null>(null)
-const commanding = ref(false)
+const { commanding, grant, setPosture } = usePortalCommands()
 let unsubStatus: (() => void) | null = null
 
 const title = computed(() => record.value?.name || record.value?.code || 'Portal')
 const kvKey = computed(() => (record.value ? policyKey('portals', record.value) : ''))
 const statusKey = computed(() => (record.value ? `portal.${record.value.code}` : ''))
-
-const POSTURES: { value: string; label: string; danger?: boolean }[] = [
-  { value: 'secure', label: 'Secure' },
-  { value: 'unlocked', label: 'Unlocked' },
-  { value: 'free_access', label: 'Free access' },
-  { value: 'lockdown', label: 'Lockdown', danger: true },
-  { value: 'disabled', label: 'Disabled', danger: true },
-]
 
 const doorBadge = computed(() => {
   switch (status.value?.state) {
@@ -93,45 +86,6 @@ async function subscribeStatus() {
     if (e.record.key !== statusKey.value) return
     status.value = e.action === 'delete' ? null : e.record
   })
-}
-
-// Issue a control command via the accessd bridge (fire-and-forget; the result
-// reconciles back through the live status subscription).
-async function sendGrant() {
-  commanding.value = true
-  try {
-    await pb.send(`/api/portals/${recordId}/grant`, { method: 'POST', body: {} })
-    toast.success('Grant sent')
-  } catch (err: any) {
-    toast.error(err?.message || 'Failed to send grant')
-  } finally {
-    commanding.value = false
-  }
-}
-
-async function setPosture(value: string, danger = false) {
-  if (danger) {
-    const confirmed = await confirm({
-      title: `Set posture: ${value}`,
-      message: `Set "${record.value?.code}" to ${value}?`,
-      details:
-        value === 'lockdown'
-          ? 'Lockdown denies all access, beating any valid credential, until cleared.'
-          : 'Disabled stops enforcement on this portal until cleared.',
-      confirmText: 'Set posture',
-      variant: 'warning',
-    })
-    if (!confirmed) return
-  }
-  commanding.value = true
-  try {
-    await pb.send(`/api/portals/${recordId}/posture`, { method: 'POST', body: { posture: value } })
-    toast.success(value === 'clear' ? 'Override cleared' : `Posture set: ${value}`)
-  } catch (err: any) {
-    toast.error(err?.message || 'Failed to set posture')
-  } finally {
-    commanding.value = false
-  }
 }
 
 async function handleDelete() {
@@ -218,7 +172,7 @@ onBeforeUnmount(() => {
       <div class="space-y-4">
         <div>
           <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Momentary</div>
-          <button class="btn btn-sm btn-primary" :disabled="commanding" @click="sendGrant">
+          <button class="btn btn-sm btn-primary" :disabled="commanding" @click="grant(recordId)">
             Grant (unlock once)
           </button>
         </div>
@@ -231,11 +185,11 @@ onBeforeUnmount(() => {
               class="btn btn-sm"
               :class="p.danger ? 'btn-outline btn-warning' : 'btn-outline'"
               :disabled="commanding"
-              @click="setPosture(p.value, p.danger)"
+              @click="setPosture(recordId, p.value, { danger: p.danger, code: record.code })"
             >
               {{ p.label }}
             </button>
-            <button class="btn btn-sm btn-ghost" :disabled="commanding" @click="setPosture('clear')">
+            <button class="btn btn-sm btn-ghost" :disabled="commanding" @click="setPosture(recordId, 'clear')">
               Clear override
             </button>
           </div>

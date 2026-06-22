@@ -18,7 +18,12 @@ interface NavItem { label: string; icon: string; path: string; child?: boolean; 
 interface NavSection { title?: string; items: NavItem[] }
 
 const sections: NavSection[] = [
-  { items: [{ label: 'Overview', icon: '📊', path: '/' }] },
+  {
+    items: [
+      { label: 'Overview', icon: '📊', path: '/' },
+      { label: 'Live Map', icon: '🗺️', path: '/monitor' },
+    ],
+  },
   {
     title: 'People & Access',
     items: [

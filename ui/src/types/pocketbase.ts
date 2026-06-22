@@ -21,6 +21,12 @@ export type EventKind = 'tap' | 'state' | 'alarm' | 'fire' | 'command'
 export type ControllerModel = 'kincony-server-mini' | 'kincony-pi5r8'
 export type ControllerStatus = 'online' | 'offline'
 
+/** A PocketBase geoPoint value. Note longitude is `lon`, not `lng`. */
+export interface GeoPoint {
+  lat: number
+  lon: number
+}
+
 /** A building/campus; owns the timezone. */
 export interface Location extends BaseRecord {
   code: string
@@ -29,6 +35,12 @@ export interface Location extends BaseRecord {
   timezone: string
   /** Suppress forced/held-open alarms while the location fire input is active. */
   fai_suppress: boolean
+  /** Free-form description (UI only; not mirrored to KV). */
+  description: string
+  /** Geographic position for the location map (UI only; {0,0} = unset). */
+  coordinates: GeoPoint
+  /** Uploaded floor-plan image filename (UI only; '' = none). */
+  floorplan: string
 }
 
 /** One weekly time window. days are ISO weekdays (1=Mon..7=Sun). */
@@ -83,6 +95,8 @@ export interface Portal extends BaseRecord {
   auto_posture: Posture | ''
   /** Schedules relation id that gates auto_posture ('' = no automation). Both-or-neither with auto_posture. */
   auto_schedule: string
+  /** {x, y} pixel position on the location's floorplan (UI only; null/absent = not placed). */
+  floorplan_position?: { x: number; y: number } | null
   expand?: { location?: Location; controller?: Controller; auto_schedule?: Schedule }
 }
 

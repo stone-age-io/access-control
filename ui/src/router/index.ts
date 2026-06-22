@@ -23,6 +23,10 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', name: 'Overview', component: () => import('@/views/OverviewView.vue'), meta: { title: 'Overview' } },
 
+      // Monitor (live operational map: geo overview → per-location floor plan + commands)
+      { path: 'monitor', name: 'Monitor', component: () => import('@/views/monitor/MonitorView.vue'), meta: { title: 'Live Map' } },
+      { path: 'monitor/:locationId', name: 'MonitorLocation', component: () => import('@/views/monitor/MonitorView.vue'), meta: { title: 'Live Map' } },
+
       // Locations
       { path: 'locations', name: 'Locations', component: () => import('@/views/locations/LocationListView.vue'), meta: { title: 'Locations' } },
       { path: 'locations/new', name: 'LocationNew', component: () => import('@/views/locations/LocationFormView.vue'), meta: { title: 'New Location', roles: ADMIN } },
