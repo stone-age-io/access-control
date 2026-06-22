@@ -94,7 +94,7 @@ func (h *CommandHandler) onPosture(msg *nats.Msg) {
 		h.log.Info("posture override cleared", "portal", portal, "actor", cmd.Actor)
 		return
 	}
-	if !validPosture(cmd.Posture) {
+	if !policy.IsSettablePosture(cmd.Posture) {
 		h.log.Warn("posture command with invalid posture", "portal", portal, "posture", cmd.Posture)
 		return
 	}
@@ -148,15 +148,4 @@ func (h *CommandHandler) onFire(msg *nats.Msg) {
 		return
 	}
 	h.rt.SetFire(h.location, sig.Active, time.Now().UTC())
-}
-
-// validPosture reports whether p is a settable standing posture (not "clear").
-func validPosture(p string) bool {
-	switch p {
-	case policy.PostureSecure, policy.PostureFreeAccess, policy.PostureUnlocked,
-		policy.PostureLockdown, policy.PostureDisabled:
-		return true
-	default:
-		return false
-	}
 }

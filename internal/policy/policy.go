@@ -37,6 +37,20 @@ const (
 	PostureDisabled   = "disabled"    // not enforcing / maintenance
 )
 
+// IsSettablePosture reports whether p is one of the five standing postures an
+// operator may set on a portal. It excludes "clear", which is a revert directive
+// handled by the command path, not a posture. The accessd command bridge and the
+// edge controller both gate posture commands against this single predicate so
+// their accepted sets cannot drift (free_access regressed exactly this way).
+func IsSettablePosture(p string) bool {
+	switch p {
+	case PostureSecure, PostureFreeAccess, PostureUnlocked, PostureLockdown, PostureDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Status values shared by users and credentials. Anything other than
 // StatusActive is treated as a deny.
 const (

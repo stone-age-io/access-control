@@ -189,16 +189,11 @@ func actor(e *core.RequestEvent) string {
 }
 
 // validPosture reports whether p is a posture the bridge will forward — the five
-// standing postures plus "clear" (revert to the effective posture). The controller
-// re-validates; this is an early reject of obvious garbage.
+// settable standing postures (policy.IsSettablePosture, shared with the controller
+// so the gates cannot drift) plus "clear" (revert to the effective posture). The
+// controller re-validates; this is an early reject of obvious garbage.
 func validPosture(p string) bool {
-	switch p {
-	case policy.PostureSecure, policy.PostureFreeAccess, policy.PostureUnlocked,
-		policy.PostureLockdown, policy.PostureDisabled, "clear":
-		return true
-	default:
-		return false
-	}
+	return policy.IsSettablePosture(p) || p == "clear"
 }
 
 // validAction reports whether a is a settable aux-output action.
