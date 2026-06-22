@@ -13,6 +13,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import LocationMapViz from '@/components/locations/LocationMapViz.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -21,6 +22,7 @@ const { confirm } = useConfirm()
 const { items: locations, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
   usePagination<Location>('locations', 50)
 const searchQuery = ref('')
+const viewMode = ref<'list' | 'map'>('list')
 const deleting = ref(false)
 
 function queryOpts() {
@@ -92,7 +94,28 @@ onMounted(reload)
       <router-link to="/locations/new" class="btn btn-primary">Create Location</router-link>
     </template>
 
-    <BaseCard :no-padding="true">
+    <template #toolbar>
+      <div class="join">
+        <button
+          class="join-item btn btn-sm"
+          :class="viewMode === 'list' ? 'btn-active btn-primary' : ''"
+          @click="viewMode = 'list'"
+        >
+          ☰ <span class="hidden sm:inline">List</span>
+        </button>
+        <button
+          class="join-item btn btn-sm"
+          :class="viewMode === 'map' ? 'btn-active btn-primary' : ''"
+          @click="viewMode = 'map'"
+        >
+          🗺️ <span class="hidden sm:inline">Map</span>
+        </button>
+      </div>
+    </template>
+
+    <LocationMapViz v-if="viewMode === 'map'" :search-query="searchQuery" />
+
+    <BaseCard v-else :no-padding="true">
       <ResponsiveList :items="locations" :columns="columns" :loading="loading" @row-click="(l) => router.push(`/locations/${l.id}`)">
         <template #cell-code="{ item }"><code class="text-xs font-bold text-primary">{{ item.code }}</code></template>
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>

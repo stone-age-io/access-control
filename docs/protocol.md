@@ -194,6 +194,13 @@ sole writer; controllers are read-only watchers.
 | `auxin.{code}` | `{"code","location","controller"?,"inputIndex"?}` |
 | `auxout.{code}` | `{"code","location","controller"?,"relayIndex"?,"pulseSeconds"?}` |
 
+**UI-only fields are deliberately excluded.** The management UI adds
+`locations.description`/`coordinates`/`floorplan` and `portals.floorplan_position`
+for the location map and floor-plan views. These are visualization metadata only —
+the mirror's wire shape above omits them, so they never reach `ACC_POLICY` or the
+edge. `policy.Decide`, arming, and the door state machine are unaffected, and no
+floor-plan image data ever leaves accessd.
+
 `type` is the portal kind (`door`/`turnstile`/`elevator`/`gate`/`logical`) and the
 `{type}` subject segment. `timezone` is an IANA name resolved once per location on
 the controller. `days` are ISO weekdays (1=Mon … 7=Sun); `start`/`end` are local

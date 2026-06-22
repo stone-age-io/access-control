@@ -11,6 +11,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
+import FloorPlanMap from '@/components/map/FloorPlanMap.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -25,6 +26,25 @@ const deleting = ref(false)
 
 const title = computed(() => record.value?.name || record.value?.code || 'Location')
 const kvKey = computed(() => (record.value ? policyKey('locations', record.value) : ''))
+const hasCoords = computed(() => {
+  const c = record.value?.coordinates
+  return !!c && (c.lat !== 0 || c.lon !== 0)
+})
+
+// Persist a portal's floor-plan position (or null to remove it). Optimistic:
+// update the local portal so the map re-renders immediately, revert on failure.
+async function handleUpdatePosition({ id, position }: { id: string; position: { x: number; y: number } | null }) {
+  const portal = portals.value.find((p) => p.id === id)
+  if (!portal) return
+  const prev = portal.floorplan_position
+  portal.floorplan_position = position
+  try {
+    await pb.collection('portals').update(id, { floorplan_position: position })
+  } catch (err: any) {
+    portal.floorplan_position = prev
+    toast.error(err?.message || 'Failed to update portal position')
+  }
+}
 
 async function load() {
   loading.value = true
@@ -97,6 +117,15 @@ onMounted(load)
             {{ record.fai_suppress ? 'suppressed' : 'off' }}
           </span>
         </DataField>
+        <DataField label="Coordinates">
+          <span v-if="hasCoords" class="font-mono text-sm">
+            {{ record.coordinates.lat.toFixed(5) }}, {{ record.coordinates.lon.toFixed(5) }}
+          </span>
+          <span v-else class="text-base-content/50">—</span>
+        </DataField>
+      </div>
+      <div v-if="record.description" class="mt-4 pt-4 border-t border-base-200">
+        <DataField label="Description">{{ record.description }}</DataField>
       </div>
     </BaseCard>
 
@@ -113,6 +142,22 @@ onMounted(load)
         <router-link :to="`/portals/new?location=${record.id}`" class="btn btn-sm btn-outline">+ Add portal</router-link>
       </template>
     </RelationList>
+
+    <BaseCard title="Floor plan">
+      <FloorPlanMap
+        v-if="record.floorplan"
+        :location="record"
+        :portals="portals"
+        @update-position="handleUpdatePosition"
+      />
+      <div v-else class="text-center py-8 text-base-content/60">
+        <span class="text-3xl">🗺️</span>
+        <p class="text-sm mt-2">No floor plan uploaded for this location.</p>
+        <router-link :to="`/locations/${record.id}/edit`" class="btn btn-sm btn-outline mt-3">
+          Upload a floor plan
+        </router-link>
+      </div>
+    </BaseCard>
 
     <RecordMeta :record="record" :kv-key="kvKey" />
   </DetailLayout>

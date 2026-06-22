@@ -21,10 +21,23 @@ const form = ref({
   name: '',
   timezone: 'America/New_York',
   fai_suppress: true,
+  description: '',
+  lat: 0,
+  lon: 0,
 })
 
 const loading = ref(false)
 const loadingRecord = ref(false)
+
+// Floor-plan image: existing filename, a newly chosen file, and a remove flag.
+const existingFloorplan = ref('')
+const selectedFile = ref<File | null>(null)
+const removeFloorplan = ref(false)
+
+function onFileChange(e: Event) {
+  selectedFile.value = (e.target as HTMLInputElement).files?.[0] ?? null
+  if (selectedFile.value) removeFloorplan.value = false
+}
 
 const kvKey = computed(() => policyKey('locations', { code: form.value.code.trim() }))
 
@@ -59,7 +72,11 @@ async function loadRecord() {
       name: location.name || '',
       timezone: location.timezone || 'UTC',
       fai_suppress: location.fai_suppress ?? true,
+      description: location.description || '',
+      lat: location.coordinates?.lat ?? 0,
+      lon: location.coordinates?.lon ?? 0,
     }
+    existingFloorplan.value = location.floorplan || ''
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load location')
     router.push('/locations')
@@ -74,21 +91,36 @@ async function handleSubmit() {
 
   loading.value = true
   try {
-    const data = {
+    const data: Record<string, any> = {
       code: form.value.code.trim(),
       name: form.value.name.trim(),
       timezone: form.value.timezone.trim(),
       fai_suppress: form.value.fai_suppress,
+      description: form.value.description.trim(),
+      coordinates: { lat: Number(form.value.lat) || 0, lon: Number(form.value.lon) || 0 },
     }
+    // Clear the existing image only when removing and not replacing it.
+    if (removeFloorplan.value && !selectedFile.value) data.floorplan = null
+
+    let id = recordId
     if (isEdit.value) {
       await pb.collection('locations').update(recordId!, data)
-      toast.success('Location updated')
-      router.push(`/locations/${recordId}`)
     } else {
       const created = await pb.collection('locations').create<Location>(data)
-      toast.success('Location created')
-      router.push(`/locations/${created.id}`)
+      id = created.id
     }
+
+    // Upload the floor-plan image in a dedicated multipart request so the
+    // geoPoint above always travels as clean JSON. maxSelect:1 means a new
+    // upload replaces any existing image.
+    if (selectedFile.value && id) {
+      const fd = new FormData()
+      fd.append('floorplan', selectedFile.value)
+      await pb.collection('locations').update(id, fd)
+    }
+
+    toast.success(isEdit.value ? 'Location updated' : 'Location created')
+    router.push(`/locations/${id}`)
   } catch (err: any) {
     toast.error(err?.message || 'Failed to save location')
   } finally {
@@ -132,6 +164,37 @@ onMounted(() => {
 
           <FormField inline label="Suppress alarms while fire input is active (FAI)" hint="Hardware owns egress; software only suppresses false forced/held-open alarms during fire.">
             <input v-model="form.fai_suppress" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
+
+          <FormField label="Description" hint="Optional notes about this location.">
+            <textarea v-model="form.description" rows="2" placeholder="e.g. Main office — 3 floors" class="textarea textarea-bordered"></textarea>
+          </FormField>
+
+          <FormField label="Coordinates" hint="Latitude / longitude for the location map. Leave at 0, 0 if unmapped.">
+            <div class="flex gap-2">
+              <input v-model.number="form.lat" type="number" step="any" placeholder="Latitude" class="input input-bordered font-mono flex-1" />
+              <input v-model.number="form.lon" type="number" step="any" placeholder="Longitude" class="input input-bordered font-mono flex-1" />
+            </div>
+          </FormField>
+
+          <FormField label="Floor plan" hint="Image (PNG/JPEG/WebP/SVG) used to place portals. A new upload replaces any existing plan.">
+            <div class="space-y-2">
+              <div v-if="existingFloorplan && !selectedFile && !removeFloorplan" class="flex items-center gap-2 text-sm min-w-0">
+                <span class="badge badge-ghost shrink-0">Current</span>
+                <code class="truncate">{{ existingFloorplan }}</code>
+                <button type="button" class="btn btn-xs btn-ghost text-error shrink-0" @click="removeFloorplan = true">Remove</button>
+              </div>
+              <div v-else-if="removeFloorplan" class="flex items-center gap-2 text-sm text-base-content/70">
+                <span>Floor plan will be removed on save.</span>
+                <button type="button" class="btn btn-xs btn-ghost" @click="removeFloorplan = false">Undo</button>
+              </div>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                class="file-input file-input-bordered w-full"
+                @change="onFileChange"
+              />
+            </div>
           </FormField>
         </div>
       </BaseCard>
