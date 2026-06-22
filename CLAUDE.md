@@ -186,7 +186,10 @@ matched against the policy graph), `controller.location` (timezone + command/fir
 `controller.driver` (`mock`|`gpio`), `controller.model` (required for `gpio` or `reader: osdp`; selects the hardware
 profile + RS485 serial port), `controller.reader` (`nats`|`osdp`), and `controller.heartbeatInterval`. accessd's
 `accessd.controllerOfflineAfter` sets how long a silent controller stays "online" before the health sweep marks it
-offline.
+offline. An optional, **off-by-default** read-only diagnostics endpoint (`diagnostics.enabled`/`diagnostics.address`,
+controller-only, localhost by default) serves a self-contained local `/status` page (+ `/status.json`) of this box's
+live state for field install/troubleshooting — `internal/diag`, strictly read-only (control stays on the command
+plane); see `docs/configuration.md`.
 
 ## Conventions
 

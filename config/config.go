@@ -31,6 +31,12 @@ const (
 	DefaultMetricsPath           = "/metrics"
 	DefaultMetricsUpdateInterval = "15s"
 
+	// DefaultDiagnosticsAddress is where the controller's opt-in read-only
+	// diagnostics page listens. Localhost by default: the page reveals topology
+	// (portal codes, locations, reader addresses), so it should not bind a public
+	// interface unless an operator deliberately overrides it.
+	DefaultDiagnosticsAddress = "127.0.0.1:2115"
+
 	// DefaultPolicyBucket is the KV bucket that mirrors the policy graph,
 	// one key per record (cred.{value}, user.{id}, role.{code}, ...).
 	DefaultPolicyBucket = "ACC_POLICY"
@@ -54,15 +60,16 @@ const (
 // both read NATS/Logging/Metrics/Policy/Subjects; accessd also reads
 // Accessd/Events; access-controller also reads Controller.
 type Config struct {
-	NATS       NATSConfig       `json:"nats" yaml:"nats" mapstructure:"nats"`
-	Logging    LogConfig        `json:"logging" yaml:"logging" mapstructure:"logging"`
-	Metrics    MetricsConfig    `json:"metrics" yaml:"metrics" mapstructure:"metrics"`
-	Policy     PolicyConfig     `json:"policy" yaml:"policy" mapstructure:"policy"`
-	Events     EventsConfig     `json:"events" yaml:"events" mapstructure:"events"`
-	Status     StatusConfig     `json:"status" yaml:"status" mapstructure:"status"`
-	Subjects   SubjectsConfig   `json:"subjects" yaml:"subjects" mapstructure:"subjects"`
-	Accessd    AccessdConfig    `json:"accessd" yaml:"accessd" mapstructure:"accessd"`
-	Controller ControllerConfig `json:"controller" yaml:"controller" mapstructure:"controller"`
+	NATS        NATSConfig        `json:"nats" yaml:"nats" mapstructure:"nats"`
+	Logging     LogConfig         `json:"logging" yaml:"logging" mapstructure:"logging"`
+	Metrics     MetricsConfig     `json:"metrics" yaml:"metrics" mapstructure:"metrics"`
+	Diagnostics DiagnosticsConfig `json:"diagnostics" yaml:"diagnostics" mapstructure:"diagnostics"`
+	Policy      PolicyConfig      `json:"policy" yaml:"policy" mapstructure:"policy"`
+	Events      EventsConfig      `json:"events" yaml:"events" mapstructure:"events"`
+	Status      StatusConfig      `json:"status" yaml:"status" mapstructure:"status"`
+	Subjects    SubjectsConfig    `json:"subjects" yaml:"subjects" mapstructure:"subjects"`
+	Accessd     AccessdConfig     `json:"accessd" yaml:"accessd" mapstructure:"accessd"`
+	Controller  ControllerConfig  `json:"controller" yaml:"controller" mapstructure:"controller"`
 }
 
 // NATSConfig contains NATS connection settings. Exactly one auth method (or
@@ -100,6 +107,16 @@ type MetricsConfig struct {
 	Address        string `json:"address" yaml:"address" mapstructure:"address"`
 	Path           string `json:"path" yaml:"path" mapstructure:"path"`
 	UpdateInterval string `json:"updateInterval" yaml:"updateInterval" mapstructure:"updateInterval"`
+}
+
+// DiagnosticsConfig configures the controller's opt-in read-only diagnostics
+// page (a local HTTP status view for field install/troubleshooting). accessd
+// ignores this section. Disabled by default; when enabled it serves /status
+// (HTML) and /status.json on Address. The page is read-only — all control stays
+// on the NATS command plane — but it exposes topology, so keep Address local.
+type DiagnosticsConfig struct {
+	Enabled bool   `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	Address string `json:"address" yaml:"address" mapstructure:"address"`
 }
 
 // PolicyConfig names the KV bucket that mirrors the policy graph.
@@ -209,6 +226,7 @@ func Load(path string) (*Config, error) {
 		"nats.tls.caFile", "nats.tls.insecure",
 		"logging.level", "logging.encoding", "logging.outputPath",
 		"metrics.enabled", "metrics.address", "metrics.path", "metrics.updateInterval",
+		"diagnostics.enabled", "diagnostics.address",
 		"policy.bucket", "events.stream", "status.bucket", "subjects.app",
 		"accessd.dataDir", "accessd.controllerOfflineAfter",
 		"controller.code", "controller.location", "controller.heartbeatInterval",
@@ -269,6 +287,10 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Metrics.UpdateInterval == "" {
 		cfg.Metrics.UpdateInterval = DefaultMetricsUpdateInterval
+	}
+
+	if cfg.Diagnostics.Address == "" {
+		cfg.Diagnostics.Address = DefaultDiagnosticsAddress
 	}
 
 	if cfg.Policy.Bucket == "" {

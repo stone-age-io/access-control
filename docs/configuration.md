@@ -15,7 +15,7 @@ those first, then use the tables here to look up a default or env var:
 
 - [How config loads](#how-config-loads) — file path, env overrides, parsing
 - [NATS connection](#nats-connection) · [auth](#nats-auth-set-at-most-one) · [TLS](#nats-tls)
-- [Logging](#logging) · [Metrics](#metrics)
+- [Logging](#logging) · [Metrics](#metrics) · [Diagnostics](#diagnostics-controller-only)
 - [Resource names](#resource-names-shared) — buckets, stream, app token (must match across the fleet)
 - [accessd](#accessd) · [controller](#controller)
 - [What gets rejected](#what-gets-rejected) — every way `Load` fails
@@ -93,6 +93,28 @@ controller `:2114`.
 | `metrics.path` | `/metrics` | `SA_METRICS_PATH` | |
 | `metrics.updateInterval` | `15s` | `SA_METRICS_UPDATEINTERVAL` | duration string. |
 
+## Diagnostics (controller-only)
+
+An **opt-in, read-only** local status page for field install and troubleshooting,
+served by `access-controller` only (accessd ignores this section). When enabled it
+serves `/status` (a self-contained, auto-refreshing HTML page — no JS, no external
+assets) and `/status.json` on `diagnostics.address`. It renders this box's live
+in-memory state: identity (incl. `subjects.app`), NATS/policy-sync health, the
+portals it bound and their door/posture state, recent decisions (with the decoded
+credential), and recent alarms.
+
+It is strictly **read-only** — all control stays on the NATS command plane. It is
+**disabled by default**, and because the page reveals topology (portal codes,
+locations, reader addresses) it binds **localhost by default**; reach it over SSH /
+a tunnel rather than binding a public interface. Hosting it is independent of
+`metrics` (its own server/port), so metrics can be scraped on a monitoring network
+while diagnostics stays local.
+
+| Key | Default | Env var | Notes |
+|---|---|---|---|
+| `diagnostics.enabled` | `false` | `SA_DIAGNOSTICS_ENABLED` | controller only. |
+| `diagnostics.address` | `127.0.0.1:2115` | `SA_DIAGNOSTICS_ADDRESS` | keep local unless deliberately exposed. |
+
 ## Resource names (shared)
 
 These name the NATS resources the fleet talks over. **accessd and every
@@ -149,7 +171,7 @@ everything else falls back to a default:
 - **Both** read `nats`, `logging`, `metrics`, `policy`, `status`, `subjects`
   (the controller writes the status bucket; accessd watches it).
 - **accessd** also reads `events` and `accessd`.
-- **access-controller** also reads `controller`.
+- **access-controller** also reads `controller` and `diagnostics`.
 
 Unused sections are simply ignored, so the two binaries can share one file if you
 prefer (env vars then specialize per host).
