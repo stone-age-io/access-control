@@ -6,9 +6,14 @@ import { useLeafletMap, type MapMarkerInput } from '@/composables/useLeafletMap'
 import type { Location } from '@/types/pocketbase'
 import LocationMapDrawer from '@/components/locations/LocationMapDrawer.vue'
 
-const props = withDefaults(defineProps<{ searchQuery?: string; drillIn?: boolean }>(), {
+const props = withDefaults(defineProps<{ searchQuery?: string; drillIn?: boolean; fill?: boolean }>(), {
   searchQuery: '',
   drillIn: false,
+  // `fill`: size to the parent (h-full, no 600px floor) instead of the standalone
+  // 600px-min used in the locations list. The Live Map sets this so the map fills
+  // its viewport-height wrapper exactly — on mobile the floor would otherwise
+  // overflow the shorter wrapper and force a page scrollbar.
+  fill: false,
 })
 
 // In drill-in mode (the operational Monitor), a marker click hands the location
@@ -45,6 +50,13 @@ const filteredLocations = computed(() => {
 
 function checkMobile() {
   isMobile.value = window.innerWidth < 768
+}
+
+// On the Live Map the height tracks the viewport, so a window resize changes the
+// container — tell Leaflet to recompute its layout (no-op before the map inits).
+function onResize() {
+  checkMobile()
+  invalidateSize()
 }
 
 function toMarkers(locs: Location[]): MapMarkerInput[] {
@@ -107,20 +119,23 @@ watch(filteredLocations, (next) => {
 
 onMounted(async () => {
   checkMobile()
-  window.addEventListener('resize', checkMobile)
+  window.addEventListener('resize', onResize)
   await loadData()
   initMap(mapContainerId, { isDarkMode: uiStore.theme === 'dark', zoomControlPosition: 'bottomleft' })
   renderMarkers(toMarkers(filteredLocations.value), handleMarkerClick, { fitBounds: true })
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', checkMobile)
+  window.removeEventListener('resize', onResize)
   cleanup()
 })
 </script>
 
 <template>
-  <div class="h-full flex flex-col relative isolate min-h-[600px] bg-base-300 rounded-xl overflow-hidden shadow-lg border border-base-300">
+  <div
+    class="h-full flex flex-col relative isolate bg-base-300 rounded-xl overflow-hidden shadow-lg border border-base-300"
+    :class="props.fill ? 'min-h-0' : 'min-h-[600px]'"
+  >
     <!-- Count badge (top-left) -->
     <div class="absolute top-4 left-4 z-[400]">
       <div class="badge badge-lg bg-base-100/90 backdrop-blur border-base-300 shadow-sm gap-2">

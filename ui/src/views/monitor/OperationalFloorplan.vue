@@ -40,6 +40,13 @@ function checkMobile() {
   isMobile.value = window.innerWidth < 768
 }
 
+// The map height tracks the viewport, so a window resize changes the container —
+// tell Leaflet to recompute its layout (otherwise tiles/markers go stale).
+function onResize() {
+  checkMobile()
+  if (floorplanReady.value) invalidateSize()
+}
+
 function statusFor(p: Portal): PointStatus | undefined {
   return statusByCode.value.get(p.code)
 }
@@ -205,13 +212,13 @@ async function subscribe() {
 
 onMounted(() => {
   checkMobile()
-  window.addEventListener('resize', checkMobile)
+  window.addEventListener('resize', onResize)
   load()
   subscribe()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', checkMobile)
+  window.removeEventListener('resize', onResize)
   flashTimers.forEach((t) => clearTimeout(t))
   if (unsubStatus) unsubStatus()
   if (unsubEvents) unsubEvents()
@@ -230,9 +237,9 @@ watch(
 </script>
 
 <template>
-  <div>
+  <div class="flex flex-col h-full">
     <!-- Context bar -->
-    <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+    <div class="flex items-center justify-between gap-3 mb-3 flex-wrap shrink-0">
       <div class="flex items-center gap-3 min-w-0">
         <router-link to="/monitor" class="btn btn-sm btn-ghost gap-1">← <span class="hidden sm:inline">All locations</span></router-link>
         <h2 v-if="location" class="font-bold text-lg truncate">{{ location.name || location.code }}</h2>
@@ -248,11 +255,11 @@ watch(
       </div>
     </div>
 
-    <div v-if="loading" class="flex justify-center p-12">
+    <div v-if="loading" class="flex-1 min-h-0 flex items-center justify-center">
       <span class="loading loading-spinner loading-lg"></span>
     </div>
 
-    <div v-else-if="location" class="relative isolate min-h-[500px] bg-base-300 rounded-xl overflow-hidden border border-base-300">
+    <div v-else-if="location" class="relative isolate flex-1 min-h-0 bg-base-300 rounded-xl overflow-hidden border border-base-300">
       <!-- Floor plan -->
       <div
         v-if="location.floorplan"
@@ -262,7 +269,7 @@ watch(
       ></div>
 
       <!-- Fallback: no floor plan — a clickable live status list -->
-      <div v-else class="p-4">
+      <div v-else class="absolute inset-0 overflow-y-auto p-4">
         <div class="text-center text-base-content/60 py-4">
           <span class="text-3xl">🗺️</span>
           <p class="text-sm mt-2">No floor plan for this location — showing a live door list.</p>
