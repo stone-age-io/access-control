@@ -8,6 +8,7 @@ import type { Location } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import LocationPicker from '@/components/locations/LocationPicker.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -171,9 +172,12 @@ onMounted(() => {
           </FormField>
 
           <FormField label="Coordinates" hint="Latitude / longitude for the location map. Leave at 0, 0 if unmapped.">
-            <div class="flex gap-2">
-              <input v-model.number="form.lat" type="number" step="any" placeholder="Latitude" class="input input-bordered font-mono flex-1" />
-              <input v-model.number="form.lon" type="number" step="any" placeholder="Longitude" class="input input-bordered font-mono flex-1" />
+            <div class="space-y-2">
+              <LocationPicker v-model:lat="form.lat" v-model:lon="form.lon" />
+              <div class="flex gap-2">
+                <input v-model.number="form.lat" type="number" step="any" placeholder="Latitude" class="input input-bordered font-mono flex-1" />
+                <input v-model.number="form.lon" type="number" step="any" placeholder="Longitude" class="input input-bordered font-mono flex-1" />
+              </div>
             </div>
           </FormField>
 
