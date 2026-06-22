@@ -316,6 +316,7 @@ func (r *Runtime) handleTap(tap drivers.Tap) {
 			Allow:  d.Allow,
 			Reason: d.Reason,
 			TS:     tap.At.UTC().Format(time.RFC3339),
+			Source: tap.Source,
 		}); err != nil {
 			r.log.Error("failed to emit tap event", "portal", tap.Portal, "error", err)
 		} else {

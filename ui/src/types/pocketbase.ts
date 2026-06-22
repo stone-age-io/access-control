@@ -25,6 +25,7 @@ export type CredentialStatus = 'active' | 'revoked' | 'suspended'
 export type CredentialType = 'nkey' | 'wiegand' | 'pin' | 'mobile'
 export type PortalType = 'door' | 'turnstile' | 'elevator' | 'gate' | 'logical'
 export type EventKind = 'tap' | 'state' | 'alarm' | 'fire' | 'command'
+export type EventSource = 'nats' | 'osdp'
 export type ControllerModel = 'kincony-server-mini' | 'kincony-pi5r8'
 export type ControllerStatus = 'online' | 'offline'
 
@@ -251,6 +252,8 @@ export interface AccessEvent extends BaseRecord {
   user: string
   allow: boolean
   reason: string
+  /** Reader transport that produced a tap; empty for non-tap and legacy rows. */
+  source: EventSource | ''
   payload: Record<string, any>
   ts: string
 }

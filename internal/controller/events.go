@@ -27,12 +27,15 @@ func (e *natsEmitter) Emit(subject string, payload any) error {
 }
 
 // TapEvent is emitted once per credential presentation, carrying the outcome.
+// Source is the reader transport that produced the tap (drivers.SourceNATS /
+// drivers.SourceOSDP) — omitted on shadows from an older controller.
 type TapEvent struct {
 	Cred   string `json:"cred"`
 	User   string `json:"user"`
 	Allow  bool   `json:"allow"`
 	Reason string `json:"reason"`
 	TS     string `json:"ts"`
+	Source string `json:"source,omitempty"`
 }
 
 // StateEvent is emitted when a portal's effective posture changes.

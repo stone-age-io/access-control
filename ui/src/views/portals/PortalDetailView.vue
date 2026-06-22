@@ -250,7 +250,10 @@ onBeforeUnmount(() => {
         <DataField label="Lock relay">{{ record.lock_relay }}</DataField>
         <DataField label="DPS input">{{ record.dps_input }}</DataField>
         <DataField label="REX input">{{ record.rex_input }}</DataField>
-        <DataField label="Reader address (OSDP)">{{ record.reader_address }}</DataField>
+        <DataField label="Reader">
+          <span v-if="record.reader_address >= 0">OSDP @ PD {{ record.reader_address }}</span>
+          <span v-else>NATS-only</span>
+        </DataField>
       </div>
     </BaseCard>
 

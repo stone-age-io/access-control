@@ -67,6 +67,35 @@ func TestControllerDriverValidation(t *testing.T) {
 	}
 }
 
+// reader defaults to nats; osdp/both require a model; an unknown reader is rejected.
+func TestControllerReaderValidation(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Controller.Reader != "nats" {
+		t.Errorf("default controller.reader = %q, want nats", cfg.Controller.Reader)
+	}
+
+	for _, r := range []string{"osdp", "both"} {
+		t.Setenv("SA_CONTROLLER_READER", r)
+		t.Setenv("SA_CONTROLLER_MODEL", "")
+		if _, err := Load(""); err == nil {
+			t.Errorf("reader=%s without model: want error, got nil", r)
+		}
+		t.Setenv("SA_CONTROLLER_MODEL", "kincony-server-mini")
+		if _, err := Load(""); err != nil {
+			t.Errorf("reader=%s with model: unexpected error %v", r, err)
+		}
+	}
+
+	t.Setenv("SA_CONTROLLER_READER", "bogus")
+	t.Setenv("SA_CONTROLLER_MODEL", "kincony-server-mini")
+	if _, err := Load(""); err == nil {
+		t.Error("reader=bogus: want error, got nil")
+	}
+}
+
 // The diagnostics page is opt-in (disabled by default) and binds localhost by
 // default; both fields are env-overridable.
 func TestDiagnosticsDefaultsAndEnv(t *testing.T) {

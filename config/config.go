@@ -185,9 +185,11 @@ type ControllerConfig struct {
 	// model the hardware registry knows and the controllers record.
 	Model string `json:"model" yaml:"model" mapstructure:"model"`
 	// Reader selects the credential reader: "nats" (default — simulated taps over
-	// NATS, for dev) or "osdp" (a real OSDP reader on the model's RS485 bus). The
-	// reader is independent of Driver: an "osdp" reader can pair with any lock/door
-	// driver (the lock relay and DPS/REX stay on GPIO/I2C). "osdp" requires Model.
+	// NATS, for dev), "osdp" (a real OSDP reader on the model's RS485 bus), or
+	// "both" (NATS taps for every portal plus OSDP for the portals that have a
+	// physical reader — i.e. reader_address >= 0). The reader is independent of
+	// Driver: an "osdp"/"both" reader can pair with any lock/door driver (the lock
+	// relay and DPS/REX stay on GPIO/I2C). "osdp" and "both" require Model.
 	Reader string `json:"reader" yaml:"reader" mapstructure:"reader"`
 }
 
@@ -394,16 +396,17 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("invalid controller.driver %q (want \"mock\" or \"gpio\")", cfg.Controller.Driver)
 	}
 
-	// Credential reader. The default ("nats") is set in setDefaults; "osdp" needs a
-	// model (its RS485 serial port lives in the model profile, resolved in main).
+	// Credential reader. The default ("nats") is set in setDefaults; "osdp" and
+	// "both" need a model (the RS485 serial port lives in the model profile,
+	// resolved in main).
 	switch cfg.Controller.Reader {
 	case "", "nats":
-	case "osdp":
+	case "osdp", "both":
 		if cfg.Controller.Model == "" {
-			return fmt.Errorf("controller.model is required when controller.reader is \"osdp\"")
+			return fmt.Errorf("controller.model is required when controller.reader is %q", cfg.Controller.Reader)
 		}
 	default:
-		return fmt.Errorf("invalid controller.reader %q (want \"nats\" or \"osdp\")", cfg.Controller.Reader)
+		return fmt.Errorf("invalid controller.reader %q (want \"nats\", \"osdp\", or \"both\")", cfg.Controller.Reader)
 	}
 	return nil
 }

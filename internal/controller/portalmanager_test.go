@@ -13,13 +13,17 @@ import (
 type fakeArmer struct {
 	mu    sync.Mutex
 	armed map[string]string // code -> type
+	addr  map[string]int    // code -> reader address last armed with
 }
 
-func newFakeArmer() *fakeArmer { return &fakeArmer{armed: make(map[string]string)} }
+func newFakeArmer() *fakeArmer {
+	return &fakeArmer{armed: make(map[string]string), addr: make(map[string]int)}
+}
 
 func (f *fakeArmer) Arm(p Portal) error {
 	f.mu.Lock()
 	f.armed[p.Code] = p.Type
+	f.addr[p.Code] = p.Address
 	f.mu.Unlock()
 	return nil
 }
@@ -27,6 +31,7 @@ func (f *fakeArmer) Arm(p Portal) error {
 func (f *fakeArmer) Disarm(code string) {
 	f.mu.Lock()
 	delete(f.armed, code)
+	delete(f.addr, code)
 	f.mu.Unlock()
 }
 
@@ -35,6 +40,13 @@ func (f *fakeArmer) typeOf(code string) (string, bool) {
 	defer f.mu.Unlock()
 	t, ok := f.armed[code]
 	return t, ok
+}
+
+func (f *fakeArmer) addrOf(code string) (int, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.addr[code]
+	return a, ok
 }
 
 // managerFor builds a reconciler for the given controller code over the seeded
@@ -173,6 +185,33 @@ func TestReconcileReArmsOnTypeChange(t *testing.T) {
 
 	if got, ok := armer.typeOf("lobby-main"); !ok || got != "turnstile" {
 		t.Errorf("type after change = %q (ok=%v), want turnstile", got, ok)
+	}
+}
+
+// Toggling a portal's OSDP reader (its reader_address) re-arms it live, so the
+// reader binding changes without a controller restart. -1 = NATS-only; >= 0 =
+// an OSDP reader at that PD address.
+func TestReconcileReArmsOnReaderAddressChange(t *testing.T) {
+	mgr, armer, _, store := managerFor(t, "ctrl-hq-1")
+	// Start from a known NATS-only baseline.
+	store.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","readerAddress":-1}`))
+	mgr.reconcile()
+	if a, ok := armer.addrOf("lobby-main"); !ok || a != -1 {
+		t.Fatalf("baseline address = %d (ok=%v), want -1", a, ok)
+	}
+
+	// Operator enables OSDP at PD 5.
+	store.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","readerAddress":5}`))
+	mgr.reconcile()
+	if a, ok := armer.addrOf("lobby-main"); !ok || a != 5 {
+		t.Errorf("address after enabling OSDP = %d (ok=%v), want 5", a, ok)
+	}
+
+	// Operator disables it again.
+	store.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","readerAddress":-1}`))
+	mgr.reconcile()
+	if a, ok := armer.addrOf("lobby-main"); !ok || a != -1 {
+		t.Errorf("address after disabling OSDP = %d (ok=%v), want -1", a, ok)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/drivers/osdp"
 	"github.com/stone-age-io/access-control/internal/logger"
 )
@@ -85,6 +86,20 @@ func TestOSDPReaderMapsCardToTap(t *testing.T) {
 	}
 	bus.emit(osdp.CardRead{Addr: 7, Credential: "deadbe01", At: time.Now()})
 	expectTap(t, r, "lobby", "deadbe01")
+}
+
+func TestOSDPReaderStampsSource(t *testing.T) {
+	r, bus := newTestOSDPReader(t)
+	_ = r.Arm(Portal{Code: "lobby", Address: 7})
+	bus.emit(osdp.CardRead{Addr: 7, Credential: "x", At: time.Now()})
+	select {
+	case tap := <-r.Taps():
+		if tap.Source != drivers.SourceOSDP {
+			t.Fatalf("source = %q, want %q", tap.Source, drivers.SourceOSDP)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no tap emitted")
+	}
 }
 
 func TestOSDPReaderDropsUnmappedAddress(t *testing.T) {
