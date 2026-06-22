@@ -23,7 +23,7 @@ const { confirm } = useConfirm()
 
 // ---- enum domains (mirror pbmigrations/1750000000_collections.go) ----
 const CH_STATUSES = ['active', 'suspended'] as const
-const CRED_TYPES = ['nkey', 'wiegand', 'pin', 'mobile'] as const
+const CRED_TYPES = ['generic', 'wiegand', 'pin', 'mobile'] as const
 const CRED_STATUSES = ['active', 'revoked', 'suspended'] as const
 
 // Recognized header names (canonical + a few friendly aliases). Used to flag
