@@ -45,6 +45,25 @@ func TestCommandPostureOverrideAndClear(t *testing.T) {
 	}
 }
 
+// Every posture the bridge forwards must also pass the controller's gate, or the
+// command is silently dropped in onPosture. free_access regressed this once.
+func TestCommandPostureAllForwardablePosturesAccepted(t *testing.T) {
+	for _, p := range []string{
+		policy.PostureSecure, policy.PostureFreeAccess, policy.PostureUnlocked,
+		policy.PostureLockdown, policy.PostureDisabled,
+	} {
+		h, rt, _ := handlerFor(t)
+		at := ny(t, 2026, 1, 5, 9, 0)
+		h.onPosture(&nats.Msg{
+			Subject: "acc.hq.door.lobby-main.cmd.posture",
+			Data:    []byte(`{"posture":"` + p + `","actor":"guard"}`),
+		})
+		if got, src, _ := rt.effectivePosture("lobby-main", at); got != p || src != statuskv.PostureSourceOverride {
+			t.Errorf("posture %q: effective = %q/%q, want %q/override", p, got, src, p)
+		}
+	}
+}
+
 func TestCommandPostureInvalidIgnored(t *testing.T) {
 	h, rt, _ := handlerFor(t)
 	h.onPosture(&nats.Msg{

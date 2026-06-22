@@ -153,7 +153,8 @@ func (h *CommandHandler) onFire(msg *nats.Msg) {
 // validPosture reports whether p is a settable standing posture (not "clear").
 func validPosture(p string) bool {
 	switch p {
-	case policy.PostureSecure, policy.PostureUnlocked, policy.PostureLockdown, policy.PostureDisabled:
+	case policy.PostureSecure, policy.PostureFreeAccess, policy.PostureUnlocked,
+		policy.PostureLockdown, policy.PostureDisabled:
 		return true
 	default:
 		return false
