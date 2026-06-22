@@ -1,5 +1,5 @@
 // Package commandapi is accessd's operator command bridge: authenticated HTTP
-// routes (operator/admin role) that translate a UI action into a control-plane
+// routes (the `command` capability) that translate a UI action into a control-plane
 // NATS command. The
 // controller subscribes to these commands (core NATS, fire-and-forget); accessd
 // only publishes. There is no reply — the command is accepted optimistically
@@ -36,8 +36,8 @@ type bridge struct {
 
 // Register wires the command routes onto the serve event's router. Each route
 // requires an authenticated user; issuing a door command is an operational write,
-// so a per-handler role check (authz.RequireRole) admits operators and admins
-// (and superusers, the break-glass account) but rejects viewers.
+// so a per-handler capability check (authz.RequireCapability(CapCommand)) admits
+// operators holding `command` (and superusers, the break-glass account).
 func Register(se *core.ServeEvent, nc *nats.Conn, subj subjects.Subjects, log *logger.Logger) {
 	b := &bridge{app: se.App, nc: nc, subj: subj, log: log.With("component", "commandapi")}
 	se.Router.POST("/api/portals/{id}/grant", b.grant).Bind(apis.RequireAuth())
@@ -47,7 +47,7 @@ func Register(se *core.ServeEvent, nc *nats.Conn, subj subjects.Subjects, log *l
 
 // grant publishes a momentary grant (cmd.grant) for a portal.
 func (b *bridge) grant(e *core.RequestEvent) error {
-	if err := authz.RequireRole(e, authz.RoleOperator, authz.RoleAdmin); err != nil {
+	if err := authz.RequireCapability(e, authz.CapCommand); err != nil {
 		return err
 	}
 	loc, ptype, code, err := b.portalAddr(e.Request.PathValue("id"))
@@ -74,7 +74,7 @@ func (b *bridge) grant(e *core.RequestEvent) error {
 
 // posture installs or clears a runtime posture override (cmd.posture) for a portal.
 func (b *bridge) posture(e *core.RequestEvent) error {
-	if err := authz.RequireRole(e, authz.RoleOperator, authz.RoleAdmin); err != nil {
+	if err := authz.RequireCapability(e, authz.CapCommand); err != nil {
 		return err
 	}
 	loc, ptype, code, err := b.portalAddr(e.Request.PathValue("id"))
@@ -104,7 +104,7 @@ func (b *bridge) posture(e *core.RequestEvent) error {
 
 // output drives a named aux output relay (cmd.output) on/off/pulse.
 func (b *bridge) output(e *core.RequestEvent) error {
-	if err := authz.RequireRole(e, authz.RoleOperator, authz.RoleAdmin); err != nil {
+	if err := authz.RequireCapability(e, authz.CapCommand); err != nil {
 		return err
 	}
 	loc, code, err := b.auxOutputAddr(e.Request.PathValue("id"))

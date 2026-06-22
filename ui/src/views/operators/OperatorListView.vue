@@ -8,6 +8,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
 import { pb } from '@/utils/pb'
 import type { User } from '@/types/pocketbase'
+import { presetLabel } from '@/utils/capabilities'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
@@ -38,17 +39,9 @@ function reload() {
 const columns: Column<User>[] = [
   { key: 'email', label: 'Email' },
   { key: 'name', label: 'Name' },
-  { key: 'role', label: 'Role' },
+  { key: 'permissions', label: 'Permissions' },
   { key: 'verified', label: 'Verified' },
 ]
-
-function roleBadge(r: string): string {
-  switch (r) {
-    case 'admin': return 'badge-primary'
-    case 'operator': return 'badge-info'
-    default: return 'badge-ghost'
-  }
-}
 
 async function handleDelete(u: User) {
   if (u.id === authStore.user?.id) {
@@ -83,7 +76,7 @@ onMounted(reload)
   <ListLayout
     v-model:search="searchQuery"
     title="Operators"
-    subtitle="Management-UI accounts and their roles. Superusers sign in at the PocketBase dashboard (/_/)."
+    subtitle="Management-UI accounts and their permissions. Superusers sign in at the PocketBase dashboard (/_/)."
     search-placeholder="Search by email or name..."
     :loading="loading"
     :error="error"
@@ -91,7 +84,7 @@ onMounted(reload)
     :has-query="!!searchQuery"
     empty-icon="👥"
     empty-title="No operators yet"
-    empty-message="Add the people who manage this system, each with a role."
+    empty-message="Add the people who manage this system, each with a set of permissions."
     error-title="Failed to load operators"
     @retry="reload"
   >
@@ -109,8 +102,18 @@ onMounted(reload)
         <template #cell-email="{ item }"><div class="font-medium">{{ item.email }}</div></template>
         <template #card-email="{ item }"><div class="text-sm font-bold text-primary truncate">{{ item.email }}</div></template>
 
-        <template #cell-role="{ item }"><span class="badge badge-sm" :class="roleBadge(item.role)">{{ item.role || '—' }}</span></template>
-        <template #card-role="{ item }"><span class="badge badge-sm" :class="roleBadge(item.role)">{{ item.role || '—' }}</span></template>
+        <template #cell-permissions="{ item }">
+          <div class="flex flex-wrap items-center gap-1">
+            <span class="badge badge-sm" :class="(item.permissions?.length ?? 0) ? 'badge-primary' : 'badge-ghost'">{{ presetLabel(item.permissions || []) }}</span>
+            <span v-for="c in item.permissions || []" :key="c" class="badge badge-ghost badge-sm">{{ c }}</span>
+          </div>
+        </template>
+        <template #card-permissions="{ item }">
+          <div class="flex flex-wrap items-center gap-1">
+            <span class="badge badge-sm" :class="(item.permissions?.length ?? 0) ? 'badge-primary' : 'badge-ghost'">{{ presetLabel(item.permissions || []) }}</span>
+            <span v-for="c in item.permissions || []" :key="c" class="badge badge-ghost badge-sm">{{ c }}</span>
+          </div>
+        </template>
 
         <template #cell-verified="{ item }">
           <span class="badge badge-sm" :class="item.verified ? 'badge-success' : 'badge-ghost'">{{ item.verified ? 'yes' : 'no' }}</span>

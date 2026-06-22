@@ -3,7 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
-import type { User, OperatorRole } from '@/types/pocketbase'
+import type { User, Capability } from '@/types/pocketbase'
+import { CAPABILITIES, PRESETS, presetLabel } from '@/utils/capabilities'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
@@ -15,16 +16,10 @@ const toast = useToast()
 const recordId = route.params.id as string | undefined
 const isEdit = computed(() => !!recordId)
 
-const ROLES: { value: OperatorRole; label: string; hint: string }[] = [
-  { value: 'admin', label: 'admin', hint: 'Full control: topology, operators, audit.' },
-  { value: 'operator', label: 'operator', hint: 'Daily ops: people, credentials, holidays + door commands.' },
-  { value: 'viewer', label: 'viewer', hint: 'Read-only.' },
-]
-
 const form = ref({
   email: '',
   name: '',
-  role: 'operator' as OperatorRole,
+  permissions: [] as Capability[],
   verified: true,
   password: '',
   passwordConfirm: '',
@@ -33,7 +28,11 @@ const form = ref({
 const loading = ref(false)
 const loadingRecord = ref(false)
 
-const roleHint = computed(() => ROLES.find((r) => r.value === form.value.role)?.hint || '')
+// The preset whose capability set matches the current selection (else "Custom").
+const currentPreset = computed(() => presetLabel(form.value.permissions))
+function applyPreset(caps: readonly Capability[]) {
+  form.value.permissions = [...caps]
+}
 
 async function loadRecord() {
   if (!recordId) return
@@ -43,7 +42,7 @@ async function loadRecord() {
     form.value = {
       email: u.email || '',
       name: u.name || '',
-      role: (u.role || 'operator') as OperatorRole,
+      permissions: (u.permissions || []) as Capability[],
       verified: !!u.verified,
       password: '',
       passwordConfirm: '',
@@ -68,7 +67,7 @@ async function handleSubmit() {
     const data: Record<string, any> = {
       email: form.value.email.trim(),
       name: form.value.name.trim(),
-      role: form.value.role,
+      permissions: form.value.permissions,
       verified: form.value.verified,
     }
     // Password is set on create, and on edit only when a new one was entered.
@@ -118,11 +117,6 @@ onMounted(() => {
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Role" :hint="roleHint">
-              <select v-model="form.role" class="select select-bordered">
-                <option v-for="r in ROLES" :key="r.value" :value="r.value">{{ r.label }}</option>
-              </select>
-            </FormField>
             <FormField label="Verified" hint="Verified accounts can sign in.">
               <label class="label cursor-pointer justify-start gap-3">
                 <input v-model="form.verified" type="checkbox" class="toggle toggle-primary" />
@@ -138,6 +132,56 @@ onMounted(() => {
             <FormField label="Confirm password">
               <input v-model="form.passwordConfirm" type="password" placeholder="••••••••" class="input input-bordered" autocomplete="new-password" />
             </FormField>
+          </div>
+        </div>
+      </BaseCard>
+
+      <BaseCard title="Permissions">
+        <div class="space-y-4">
+          <!-- Quick-apply presets. They just tick capabilities below; nothing
+               about a preset is stored — permissions are the source of truth. -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm font-medium opacity-70">Presets</span>
+              <span class="badge badge-ghost badge-sm">{{ currentPreset }}</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="p in PRESETS"
+                :key="p.name"
+                type="button"
+                class="btn btn-sm"
+                :class="p.name === currentPreset ? 'btn-primary' : 'btn-outline'"
+                @click="applyPreset(p.caps)"
+              >
+                {{ p.name }}
+              </button>
+            </div>
+          </div>
+
+          <div class="divider my-0"></div>
+
+          <!-- The capability checklist is the actual grant. Reads need none. -->
+          <div class="space-y-2">
+            <label
+              v-for="c in CAPABILITIES"
+              :key="c.value"
+              class="flex items-start gap-3 p-2 rounded-lg hover:bg-base-200 cursor-pointer"
+            >
+              <input
+                v-model="form.permissions"
+                type="checkbox"
+                :value="c.value"
+                class="checkbox checkbox-primary mt-0.5"
+              />
+              <span class="flex flex-col">
+                <span class="font-medium">{{ c.label }}</span>
+                <span class="text-xs text-base-content/60">{{ c.hint }}</span>
+              </span>
+            </label>
+            <p class="text-xs text-base-content/60 px-2">
+              Any authenticated operator can view everything; these gate edits and commands.
+            </p>
           </div>
         </div>
       </BaseCard>

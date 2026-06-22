@@ -5,6 +5,7 @@ import { useMediaQuery } from '@vueuse/core'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
 import BrandLogo from '@/components/common/BrandLogo.vue'
+import { presetLabel } from '@/utils/capabilities'
 
 const router = useRouter()
 const route = useRoute()
@@ -14,7 +15,7 @@ const uiStore = useUIStore()
 const isLargeScreen = useMediaQuery('(min-width: 1024px)')
 const effectiveCompact = computed(() => uiStore.sidebarCompact && isLargeScreen.value)
 
-interface NavItem { label: string; icon: string; path: string; child?: boolean; roles?: string[] }
+interface NavItem { label: string; icon: string; path: string; child?: boolean; capability?: string }
 interface NavSection { title?: string; items: NavItem[] }
 
 const sections: NavSection[] = [
@@ -31,7 +32,7 @@ const sections: NavSection[] = [
       { label: 'Credentials', icon: '🎫', path: '/credentials', child: true },
       { label: 'Roles', icon: '🛡️', path: '/roles' },
       { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
-      { label: 'Import', icon: '📥', path: '/import', roles: ['operator', 'admin'] },
+      { label: 'Import', icon: '📥', path: '/import', capability: 'enroll' },
     ],
   },
   {
@@ -53,23 +54,21 @@ const sections: NavSection[] = [
   {
     title: 'Administration',
     items: [
-      { label: 'Operators', icon: '👥', path: '/operators', roles: ['admin'] },
-      { label: 'Audit Log', icon: '📜', path: '/audit-log', roles: ['admin'] },
+      { label: 'Operators', icon: '👥', path: '/operators', capability: 'operators' },
+      { label: 'Audit Log', icon: '📜', path: '/audit-log', capability: 'operators' },
     ],
   },
 ]
 
-// Hide items the current role can't reach; drop sections left empty.
+// Hide items the operator lacks the capability for; drop sections left empty.
 const visibleSections = computed<NavSection[]>(() =>
   sections
-    .map((s) => ({ ...s, items: s.items.filter((i) => !i.roles || i.roles.includes(authStore.role)) }))
+    .map((s) => ({ ...s, items: s.items.filter((i) => !i.capability || authStore.can(i.capability)) }))
     .filter((s) => s.items.length > 0),
 )
 
-const roleLabel = computed(() => {
-  const r = authStore.role
-  return r ? r.charAt(0).toUpperCase() + r.slice(1) : 'Operator'
-})
+// Profile label: the matching preset name (e.g. "Door Ops"), else "Custom".
+const roleLabel = computed(() => presetLabel(authStore.permissions))
 
 function isActive(path: string): boolean {
   if (path === '/') return route.path === '/'
