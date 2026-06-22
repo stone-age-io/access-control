@@ -69,9 +69,15 @@ function iconFor(portal: Portal): L.DivIcon {
   if (st?.posture) cls.push(`fp-posture-${st.posture}`)
   if (st?.held) cls.push('fp-held')
   if (alarmingIds.value.has(portal.id)) cls.push('fp-alarm')
+  // A manual override is independent of which posture it set, so flag it on the
+  // label (an amber ⚠ chip) rather than the dot — an operator can scan the plan
+  // for doors someone forced and never cleared, whatever colour the dot is.
+  const overridden = st?.posture_source === 'override'
+  const name = escapeHtml(portal.name || portal.code)
+  const label = overridden ? `⚠ ${name}` : name
   return L.divIcon({
     className: 'fp-marker',
-    html: `<span class="${cls.join(' ')}"></span><span class="fp-label">${escapeHtml(portal.name || portal.code)}</span>`,
+    html: `<span class="${cls.join(' ')}"></span><span class="fp-label${overridden ? ' fp-label-override' : ''}">${label}</span>`,
     iconSize: [16, 16],
     iconAnchor: [8, 8],
   })
@@ -238,6 +244,7 @@ watch(
         <span class="flex items-center gap-1"><span class="lg-dot bg-base-300"></span>Unknown</span>
         <span class="flex items-center gap-1"><span class="lg-dot ring-2 ring-warning"></span>Held</span>
         <span class="flex items-center gap-1"><span class="lg-dot bg-error animate-pulse"></span>Alarm</span>
+        <span class="flex items-center gap-1"><span class="text-warning font-bold leading-none">⚠</span>Override</span>
       </div>
     </div>
 
@@ -367,5 +374,11 @@ watch(
   background: oklch(var(--b1) / 0.8);
   padding: 0 4px;
   border-radius: 4px;
+}
+/* A manually-overridden portal — amber label so it stands out on the plan. */
+.fp-label-override {
+  color: oklch(var(--wac));
+  background: oklch(var(--wa) / 0.9);
+  font-weight: 700;
 }
 </style>

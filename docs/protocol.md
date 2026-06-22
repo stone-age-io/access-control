@@ -256,13 +256,16 @@ rows whose KV key is gone — so a deleted shadow key removes the projection row
 
 | Key | Value shape |
 |---|---|
-| `portal.{code}` | `{"code","location","controller","door":"open"\|"closed"\|"unknown","posture","held","updatedAt"}` |
+| `portal.{code}` | `{"code","location","controller","door":"open"\|"closed"\|"unknown","posture","source":"standing"\|"scheduled"\|"override","held","updatedAt"}` |
 | `auxin.{code}` | `{"code","location","controller","active","updatedAt"}` |
 | `auxout.{code}` | `{"code","location","controller","energized","updatedAt"}` |
 
 `door` is `unknown` on a controller without a DPS input wired (e.g. the mock
 driver) or before the first edge. `posture` is the current **effective** posture
-(command override / scheduled / standing). `held` is the **door-held-open (DOTL)
+(command override / scheduled / standing) and `source` is which of those three
+produced it — so the UI can flag a manual `override` (or an active `scheduled`
+posture) distinctly from the `standing` state. An empty `source` (a shadow from an
+older controller) reads as `standing`. `held` is the **door-held-open (DOTL)
 alarm flag** — true while a held-open alarm is active — **not** the strike's
 physical state; the strike hold follows `posture` (only `unlocked` holds it).
 `energized` is an aux output's standing held state (a `pulse` is momentary and

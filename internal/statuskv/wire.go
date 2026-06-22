@@ -54,17 +54,30 @@ const (
 	DoorUnknown = "unknown" // no door input wired, or before the first DPS edge
 )
 
+// Posture provenance carried in PortalStatus.Source — *why* the effective posture
+// is what it is, so the UI can mark a manual override (or an active scheduled
+// posture) distinctly from the door's normal standing state. Stable strings (they
+// flow verbatim into the point_status projection and the UI). An empty Source (a
+// shadow written by an older controller) is read as standing.
+const (
+	PostureSourceStanding  = "standing"  // the portal's configured standing posture
+	PostureSourceScheduled = "scheduled" // auto_posture, while the auto_schedule window is open
+	PostureSourceOverride  = "override"  // an operator's runtime command override
+)
+
 // PortalStatus is the live shadow of one portal the controller drives. Posture is
 // the current EFFECTIVE posture (command override / scheduled / standing, resolved
-// by the controller); Held reports an active held-open (DOTL) alarm. Location and
-// Controller are carried so the point_status projection is self-contained (no
-// lookup back into the policy graph), per the policykv convention.
+// by the controller) and Source records which of those three produced it; Held
+// reports an active held-open (DOTL) alarm. Location and Controller are carried so
+// the point_status projection is self-contained (no lookup back into the policy
+// graph), per the policykv convention.
 type PortalStatus struct {
 	Code       string `json:"code"`
 	Location   string `json:"location"`
 	Controller string `json:"controller"`
 	Door       string `json:"door"`      // DoorOpen | DoorClosed | DoorUnknown
 	Posture    string `json:"posture"`   // current effective posture
+	Source     string `json:"source"`    // PostureSource* — provenance of Posture
 	Held       bool   `json:"held"`      // held-open alarm active
 	UpdatedAt  string `json:"updatedAt"` // RFC3339 UTC
 }

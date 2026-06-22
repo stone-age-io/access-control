@@ -13,6 +13,13 @@ export interface BaseRecord {
 }
 
 export type Posture = 'secure' | 'free_access' | 'unlocked' | 'lockdown' | 'disabled'
+
+/**
+ * Why a portal's effective posture is what it is, as resolved by the controller:
+ * its configured `standing` posture, a `scheduled` auto_posture (its window is
+ * open), or an operator's manual `override`. Empty when unknown (older shadow).
+ */
+export type PostureSource = 'standing' | 'scheduled' | 'override'
 export type CardholderStatus = 'active' | 'suspended'
 export type CredentialStatus = 'active' | 'revoked' | 'suspended'
 export type CredentialType = 'nkey' | 'wiegand' | 'pin' | 'mobile'
@@ -194,6 +201,8 @@ export interface PointStatus extends BaseRecord {
   state: string
   /** Effective posture (portals only). */
   posture: Posture | ''
+  /** Provenance of `posture` — standing config, scheduled, or a manual override. */
+  posture_source: PostureSource | ''
   /** Held-open alarm active (portals only). */
   held: boolean
   controller: string

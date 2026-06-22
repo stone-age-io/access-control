@@ -7,7 +7,7 @@ import (
 )
 
 func TestRowForPortal(t *testing.T) {
-	val := []byte(`{"code":"lobby-main","location":"hq","controller":"ctrl-hq-1","door":"open","posture":"unlocked","held":true,"updatedAt":"2026-01-05T09:00:00Z"}`)
+	val := []byte(`{"code":"lobby-main","location":"hq","controller":"ctrl-hq-1","door":"open","posture":"unlocked","source":"scheduled","held":true,"updatedAt":"2026-01-05T09:00:00Z"}`)
 	r, ok := rowFor(statuskv.PrefixPortal+"lobby-main", val)
 	if !ok {
 		t.Fatal("rowFor portal returned ok=false")
@@ -15,8 +15,8 @@ func TestRowForPortal(t *testing.T) {
 	if r.key != "portal.lobby-main" || r.code != "lobby-main" || r.kind != statuskv.KindPortal {
 		t.Errorf("identity = %q/%q/%q", r.key, r.code, r.kind)
 	}
-	if r.state != "open" || r.posture != "unlocked" || !r.held {
-		t.Errorf("state=%q posture=%q held=%v", r.state, r.posture, r.held)
+	if r.state != "open" || r.posture != "unlocked" || r.postureSource != "scheduled" || !r.held {
+		t.Errorf("state=%q posture=%q source=%q held=%v", r.state, r.posture, r.postureSource, r.held)
 	}
 	if r.controller != "ctrl-hq-1" || r.location != "hq" || r.changed != "2026-01-05T09:00:00Z" {
 		t.Errorf("controller=%q location=%q changed=%q", r.controller, r.location, r.changed)

@@ -31,8 +31,8 @@ func TestPortalStatusRoundTrip(t *testing.T) {
 // The JSON field names are a wire contract shared with accessd's projector and
 // the UI; pin them.
 func TestPortalStatusJSONShape(t *testing.T) {
-	b, _ := json.Marshal(PortalStatus{Code: "c", Door: DoorClosed, Posture: "secure"})
-	const want = `{"code":"c","location":"","controller":"","door":"closed","posture":"secure","held":false,"updatedAt":""}`
+	b, _ := json.Marshal(PortalStatus{Code: "c", Door: DoorClosed, Posture: "secure", Source: PostureSourceStanding})
+	const want = `{"code":"c","location":"","controller":"","door":"closed","posture":"secure","source":"standing","held":false,"updatedAt":""}`
 	if string(b) != want {
 		t.Errorf("json = %s, want %s", b, want)
 	}

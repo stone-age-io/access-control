@@ -201,6 +201,7 @@ func (p *Projector) consumeUpdates(ctx context.Context, w jetstream.KeyWatcher) 
 // (no DB), so it is unit-testable.
 type row struct {
 	key, code, kind, state, posture string
+	postureSource                   string // provenance of posture: standing|scheduled|override
 	held                            bool
 	controller, location, changed   string
 	payload                         map[string]any
@@ -229,6 +230,7 @@ func rowFor(key string, value []byte) (row, bool) {
 		}
 		r.state = ps.Door
 		r.posture = ps.Posture
+		r.postureSource = ps.Source
 		r.held = ps.Held
 		r.controller = ps.Controller
 		r.location = ps.Location
@@ -298,6 +300,7 @@ func (p *Projector) apply(key string, value []byte) {
 	rec.Set("kind", r.kind)
 	rec.Set("state", r.state)
 	rec.Set("posture", r.posture)
+	rec.Set("posture_source", r.postureSource)
 	rec.Set("held", r.held)
 	rec.Set("controller", r.controller)
 	rec.Set("location", r.location)

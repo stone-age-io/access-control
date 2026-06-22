@@ -71,21 +71,21 @@ func TestStatusWriterCoalescesUnchanged(t *testing.T) {
 	w, kv := newWriter(t)
 	at := time.Unix(1_700_000_000, 0).UTC()
 
-	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", false, at)
+	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", statuskv.PostureSourceStanding, false, at)
 	w.drain(context.Background())
 	if _, puts, _ := kv.snapshot(); puts != 1 {
 		t.Fatalf("puts after first set = %d, want 1", puts)
 	}
 
 	// Same value again → reconcile finds no divergence → no new put.
-	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", false, at)
+	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", statuskv.PostureSourceStanding, false, at)
 	w.drain(context.Background())
 	if _, puts, _ := kv.snapshot(); puts != 1 {
 		t.Errorf("puts after redundant set = %d, want 1 (coalesced)", puts)
 	}
 
 	// A real change → one more put.
-	w.SetPortal("lobby-main", "hq", statuskv.DoorOpen, "secure", false, at)
+	w.SetPortal("lobby-main", "hq", statuskv.DoorOpen, "secure", statuskv.PostureSourceStanding, false, at)
 	w.drain(context.Background())
 	if store, puts, _ := kv.snapshot(); puts != 2 {
 		t.Errorf("puts after change = %d, want 2 (store=%v)", puts, store)
@@ -95,7 +95,7 @@ func TestStatusWriterCoalescesUnchanged(t *testing.T) {
 func TestStatusWriterDelete(t *testing.T) {
 	w, kv := newWriter(t)
 	at := time.Unix(1_700_000_000, 0).UTC()
-	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", false, at)
+	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", statuskv.PostureSourceStanding, false, at)
 	w.drain(context.Background())
 
 	w.DeletePortal("lobby-main")
@@ -114,7 +114,7 @@ func TestStatusWriterDelete(t *testing.T) {
 func TestStatusWriterResyncRepublishes(t *testing.T) {
 	w, kv := newWriter(t)
 	at := time.Unix(1_700_000_000, 0).UTC()
-	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", false, at)
+	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", statuskv.PostureSourceStanding, false, at)
 	w.drain(context.Background())
 	if _, puts, _ := kv.snapshot(); puts != 1 {
 		t.Fatalf("setup puts = %d, want 1", puts)
@@ -134,7 +134,7 @@ func TestStatusWriterRetriesAfterFailure(t *testing.T) {
 	key := statuskv.PrefixPortal + "lobby-main"
 	kv.failOn[key] = true
 
-	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", false, at)
+	w.SetPortal("lobby-main", "hq", statuskv.DoorClosed, "secure", statuskv.PostureSourceStanding, false, at)
 	w.drain(context.Background())
 	if store, _, _ := kv.snapshot(); len(store) != 0 {
 		t.Fatalf("store should be empty after failed put, got %v", store)

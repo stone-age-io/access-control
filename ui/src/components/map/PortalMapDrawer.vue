@@ -28,8 +28,8 @@ defineEmits<{ close: [] }>()
         <span class="badge badge-ghost badge-sm">{{ portal.type }}</span>
       </div>
       <div v-if="portal.posture" class="flex items-center gap-2">
-        <span class="uppercase tracking-wider text-base-content/50 font-semibold text-xs">Posture</span>
-        <span class="badge badge-sm">{{ portal.posture }}</span>
+        <span class="uppercase tracking-wider text-base-content/50 font-semibold text-xs">Standing posture</span>
+        <span class="badge badge-sm badge-ghost">{{ portal.posture }}</span>
       </div>
     </div>
 

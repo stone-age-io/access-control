@@ -15,6 +15,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/policy"
 	"github.com/stone-age-io/access-control/internal/policykv"
+	"github.com/stone-age-io/access-control/internal/statuskv"
 )
 
 // KV watch re-establishment backoff bounds. Vars (not consts) so tests can
@@ -133,34 +134,38 @@ func (s *PolicyStore) Decide(posture, cred, portal string, atUTC time.Time) poli
 //  2. else, while the portal's auto_schedule window is open, its auto_posture;
 //  3. else the standing posture.
 //
+// source reports which of the three produced the posture (a statuskv.PostureSource*
+// constant), so the status shadow — and the UI — can mark a manual override or an
+// active scheduled posture distinctly from the standing state.
+//
 // It also reports whether the result is determinate. resolved=false means the
 // portal has an auto_schedule whose schedule record or timezone is not loaded yet
 // (e.g. mid reconnect re-sync): the returned posture is the safe standing value
 // (so the decision path stays fail-safe), but the physical-hold reconciler should
-// keep the previous hold rather than flap. An unknown portal resolves to ("", true)
-// — Decide denies it regardless.
-func (s *PolicyStore) ResolvePosture(portal, override string, atUTC time.Time) (posture string, resolved bool) {
+// keep the previous hold rather than flap. An unknown portal resolves to ("",
+// standing, true) — Decide denies it regardless.
+func (s *PolicyStore) ResolvePosture(portal, override string, atUTC time.Time) (posture, source string, resolved bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if override != "" {
-		return override, true
+		return override, statuskv.PostureSourceOverride, true
 	}
 	ap, ok := s.graph.Portals[portal]
 	if !ok {
-		return "", true
+		return "", statuskv.PostureSourceStanding, true
 	}
 	if ap.AutoSchedule != "" {
 		sched, schedOK := s.graph.Schedules[ap.AutoSchedule]
 		le, locOK := s.locations[ap.Location]
 		if !schedOK || !locOK || le.loc == nil {
-			return ap.Posture, false // configured but unresolved: keep previous hold
+			return ap.Posture, statuskv.PostureSourceStanding, false // configured but unresolved: keep previous hold
 		}
 		if policy.ScheduleOpen(sched, le.loc, atUTC, s.graph.Holidays[ap.Location]) {
-			return ap.AutoPosture, true
+			return ap.AutoPosture, statuskv.PostureSourceScheduled, true
 		}
 	}
-	return ap.Posture, true
+	return ap.Posture, statuskv.PostureSourceStanding, true
 }
 
 // Portal returns a copy of the portal and whether it is known. The tap loop uses

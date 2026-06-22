@@ -81,15 +81,17 @@ func (w *StatusWriter) Stop() {
 }
 
 // SetPortal records a portal's current shadow. The runtime supplies the live
-// fields; the writer stamps the controller code and timestamp. Cheap and
-// non-blocking — the actual KV put happens on the drain goroutine.
-func (w *StatusWriter) SetPortal(code, location, door, posture string, held bool, at time.Time) {
+// fields (including the posture's provenance source); the writer stamps the
+// controller code and timestamp. Cheap and non-blocking — the actual KV put
+// happens on the drain goroutine.
+func (w *StatusWriter) SetPortal(code, location, door, posture, source string, held bool, at time.Time) {
 	b, err := json.Marshal(statuskv.PortalStatus{
 		Code:       code,
 		Location:   location,
 		Controller: w.code,
 		Door:       door,
 		Posture:    posture,
+		Source:     source,
 		Held:       held,
 		UpdatedAt:  at.UTC().Format(time.RFC3339),
 	})
