@@ -54,6 +54,19 @@ metrics:
   updateInterval: 15s
 
 # ----------------------------------------------------------------------------
+# Diagnostics — an OPT-IN, read-only local status page for field install and
+# troubleshooting. Serves /status (HTML, auto-refreshing) and /status.json with
+# this box's live state: identity, NATS/policy-sync health, the portals it bound
+# and their door/posture state, and recent decisions. It is read-only — all
+# control stays on the NATS command plane. Disabled by default. The page reveals
+# topology (portal codes, locations, reader addresses), so `address` defaults to
+# localhost; reach it via SSH/tunnel rather than binding a public interface.
+# ----------------------------------------------------------------------------
+diagnostics:
+  enabled: false
+  address: "127.0.0.1:2115"
+
+# ----------------------------------------------------------------------------
 # Policy KV — same bucket accessd publishes to.
 # ----------------------------------------------------------------------------
 policy:

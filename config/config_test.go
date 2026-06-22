@@ -66,3 +66,28 @@ func TestControllerDriverValidation(t *testing.T) {
 		t.Error("driver=bogus: want error, got nil")
 	}
 }
+
+// The diagnostics page is opt-in (disabled by default) and binds localhost by
+// default; both fields are env-overridable.
+func TestDiagnosticsDefaultsAndEnv(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Diagnostics.Enabled {
+		t.Errorf("diagnostics.enabled defaulted true, want false (opt-in)")
+	}
+	if cfg.Diagnostics.Address != DefaultDiagnosticsAddress {
+		t.Errorf("diagnostics.address = %q, want %q", cfg.Diagnostics.Address, DefaultDiagnosticsAddress)
+	}
+
+	t.Setenv("SA_DIAGNOSTICS_ENABLED", "true")
+	t.Setenv("SA_DIAGNOSTICS_ADDRESS", "0.0.0.0:9999")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("Load with env: %v", err)
+	}
+	if !cfg.Diagnostics.Enabled || cfg.Diagnostics.Address != "0.0.0.0:9999" {
+		t.Errorf("diagnostics from env = %+v, want enabled=true address=0.0.0.0:9999", cfg.Diagnostics)
+	}
+}

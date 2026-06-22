@@ -31,7 +31,7 @@ edge controllers (`access-controller`) watch that keyspace and decide locally.
 
 ```
 cmd/accessd/            central: PocketBase + KV mirror publisher + audit consumer + controller-health monitor
-cmd/access-controller/  edge: policy watcher + pure decision + drivers + door monitoring + heartbeat
+cmd/access-controller/  edge: policy watcher + pure decision + drivers + door monitoring + heartbeat + optional /status page
 internal/policy/        the pure core: Policy types, Decide(), windowOpen()
 internal/controller/    PolicyStore (KV watch → maps), tap loop, door state machine, portal/lock arming, commands, heartbeat
 internal/drivers/       ReaderDriver / LockDriver / DoorInput / FAIInput interfaces + mocks (MockHardware)
@@ -39,6 +39,7 @@ internal/drivers/hardware/  per-model hardware Profile: logical relay/input inde
 internal/drivers/gpio/  native GPIO lock + door-input backend (go-gpiocdev, no cgo; Linux only)
 internal/drivers/i2c/   MCP23017 lock + door-input backend over I2C (periph.io, no cgo; polled inputs)
 internal/drivers/osdp/  OSDP reader: RS485 CP engine (pure-Go, no cgo) + wire codec (osdp/wire); controller.reader: osdp
+internal/diag/          opt-in, read-only local /status page of an access-controller's live state (field troubleshooting)
 internal/health/        accessd-side heartbeat subscriber → controllers.last_seen/status
 internal/audit/         JetStream consumer → PocketBase events collection
 internal/natsx/         NATS connection + KV helpers

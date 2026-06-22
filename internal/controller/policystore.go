@@ -311,6 +311,40 @@ func (s *PolicyStore) WaitReady(ctx context.Context) error {
 	}
 }
 
+// Ready reports, without blocking, whether the initial KV sync has completed —
+// i.e. whether the controller is past its boot default-deny window. The
+// diagnostics page uses it to show "synced" vs "default-deny (policy not yet
+// loaded)".
+func (s *PolicyStore) Ready() bool {
+	select {
+	case <-s.ready:
+		return true
+	default:
+		return false
+	}
+}
+
+// Counts returns the number of records loaded per kind, under one read lock. It
+// feeds the diagnostics page ("what actually synced to this box") and is not on
+// any hot path.
+func (s *PolicyStore) Counts() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return map[string]int{
+		"portals":     len(s.graph.Portals),
+		"credentials": len(s.graph.Creds),
+		"users":       len(s.graph.Users),
+		"roles":       len(s.graph.Roles),
+		"groups":      len(s.graph.Groups),
+		"schedules":   len(s.graph.Schedules),
+		"holidays":    len(s.holidayRecords),
+		"bindings":    len(s.bindings),
+		"controllers": len(s.controllers),
+		"auxInputs":   len(s.auxInputs),
+		"auxOutputs":  len(s.auxOutputs),
+	}
+}
+
 // Resync forces the watcher to re-establish. A NATS reconnect can leave the
 // watcher's server-side consumer stale without closing its Updates() channel;
 // stopping the current watcher closes that channel, and runWatch then re-creates

@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/controller"
+	"github.com/stone-age-io/access-control/internal/diag"
 	"github.com/stone-age-io/access-control/internal/drivers"
 	"github.com/stone-age-io/access-control/internal/drivers/gpio"
 	"github.com/stone-age-io/access-control/internal/drivers/hardware"
@@ -33,6 +34,8 @@ import (
 func main() {
 	configPath := flag.String("config", "config/controller.yaml", "path to config file")
 	flag.Parse()
+
+	startedAt := time.Now().UTC()
 
 	boot := logger.NewBootstrapLogger()
 
@@ -246,6 +249,21 @@ func main() {
 	hb.Start(ctx)
 	defer hb.Stop()
 
+	// Optional read-only diagnostics page for field install/troubleshooting.
+	// Off by default; serves /status + /status.json on its own (localhost-by
+	// -default) address. Strictly read-only — control stays on the command plane.
+	var diagSrv *http.Server
+	if cfg.Diagnostics.Enabled {
+		src := diag.NewSource(cfg, store, rt, nc.NC, startedAt)
+		diagSrv = diag.NewServer(cfg.Diagnostics.Address, src, log)
+		go func() {
+			log.Info("diagnostics server listening", "address", cfg.Diagnostics.Address)
+			if err := diagSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("diagnostics server error", "error", err)
+			}
+		}()
+	}
+
 	log.Info("controller started; default-deny until policy syncs",
 		"policyBucket", cfg.Policy.Bucket,
 		"subjectsApp", cfg.Subjects.App,
@@ -270,6 +288,11 @@ func main() {
 	if metricsSrv != nil {
 		shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = metricsSrv.Shutdown(shutdownCtx)
+		c()
+	}
+	if diagSrv != nil {
+		shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = diagSrv.Shutdown(shutdownCtx)
 		c()
 	}
 }

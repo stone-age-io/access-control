@@ -104,6 +104,12 @@ type Runtime struct {
 	auxInputs  map[string]*auxInputState  // aux input code -> observed line
 
 	statusWriter *StatusWriter // upward live-state channel; nil = not publishing status
+
+	// Recent-activity rings for the opt-in diagnostics page. Guarded by their own
+	// mutexes (inside ring), never r.mu, so appends on the tap/alarm path never
+	// contend with the decision read lock.
+	decisions *ring[DecisionRecord]
+	alarms    *ring[AlarmRecord]
 }
 
 // NewRuntime wires the tap loop. locks maps portal code to its lock driver; it
@@ -132,6 +138,8 @@ func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver
 		shadow:     make(map[string]portalShadow),
 		auxOutputs: make(map[string]*auxOutputState),
 		auxInputs:  make(map[string]*auxInputState),
+		decisions:  newRing[DecisionRecord](recentRingSize),
+		alarms:     newRing[AlarmRecord](recentRingSize),
 	}
 }
 
@@ -295,6 +303,10 @@ func (r *Runtime) handleTap(tap drivers.Tap) {
 	posture, _, _ := r.effectivePosture(tap.Portal, tap.At) // unresolved falls back to standing (fail-safe)
 	d := r.store.Decide(posture, tap.Credential, tap.Portal, tap.At)
 	r.m.IncDecision(d.Allow, d.Reason)
+	r.decisions.add(DecisionRecord{
+		At: tap.At, Portal: tap.Portal, Cred: tap.Credential,
+		User: d.User, Allow: d.Allow, Reason: d.Reason,
+	})
 
 	location, ptype := r.portalAddr(tap.Portal)
 	if ptype != "" {
@@ -717,6 +729,7 @@ func (r *Runtime) EmitAlarm(portal, alarmType string, at time.Time) {
 		return
 	}
 	r.m.IncEventPublished("alarm")
+	r.alarms.add(AlarmRecord{At: at, Portal: portal, Kind: alarmType})
 }
 
 func (r *Runtime) emitState(portal, posture, actor, reason string, at time.Time) {
