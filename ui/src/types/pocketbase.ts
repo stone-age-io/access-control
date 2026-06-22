@@ -213,15 +213,20 @@ export interface PointStatus extends BaseRecord {
   payload: Record<string, any>
 }
 
-export type OperatorRole = 'admin' | 'operator' | 'viewer'
+/**
+ * Operator capabilities — an orthogonal set, not a rank. Reads need none (any
+ * authenticated operator reads everything); these gate writes and commands.
+ * Stored as a PocketBase multi-select on `users.permissions`.
+ */
+export type Capability = 'enroll' | 'policy' | 'topology' | 'command' | 'operators'
 
-/** A management-UI operator (the built-in `users` auth collection + role). */
+/** A management-UI operator (the built-in `users` auth collection). */
 export interface User extends BaseRecord {
   email: string
   name: string
   verified: boolean
-  /** admin = full control; operator = daily ops; viewer = read-only. */
-  role: OperatorRole | ''
+  /** The operator's capability set (empty = read-only viewer). */
+  permissions: Capability[]
 }
 
 export type AuditEventType = 'create' | 'update' | 'delete' | 'auth'

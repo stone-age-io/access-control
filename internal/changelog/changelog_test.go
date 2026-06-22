@@ -29,7 +29,7 @@ func newApp(t *testing.T) *tests.TestApp {
 
 // seedUser creates an operator account directly (programmatic save bypasses both
 // the access rules and the *Request hooks, so it doesn't itself get audited).
-func seedUser(t *testing.T, app core.App, email, role string) *core.Record {
+func seedUser(t *testing.T, app core.App, email string, perms ...string) *core.Record {
 	t.Helper()
 	col, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
@@ -39,7 +39,7 @@ func seedUser(t *testing.T, app core.App, email, role string) *core.Record {
 	u.SetEmail(email)
 	u.SetPassword("password123")
 	u.SetVerified(true)
-	u.Set("role", role)
+	u.Set("permissions", perms)
 	if err := app.Save(u); err != nil {
 		t.Fatalf("seed user %q: %v", email, err)
 	}
@@ -79,7 +79,7 @@ func TestMachineWriteNotAudited(t *testing.T) {
 // attributed to the operator, with before/after snapshots.
 func TestApiUpdateAudited(t *testing.T) {
 	app := newApp(t)
-	operator := seedUser(t, app, "op@example.com", "operator")
+	operator := seedUser(t, app, "op@example.com", "enroll") // enroll → may write credentials
 	token, err := operator.NewAuthToken()
 	if err != nil {
 		t.Fatalf("auth token: %v", err)
@@ -138,24 +138,25 @@ func TestApiUpdateAudited(t *testing.T) {
 }
 
 // A non-admin operator may edit its own record (password/name) but must not be
-// able to escalate its own role — the guard hook rejects the change with a 403,
-// and nothing is written or audited.
-func TestRoleEscalationBlocked(t *testing.T) {
+// able to escalate its own permissions — the guard hook rejects the change with a
+// 403 (even though the users updateRule lets it edit itself), and nothing is
+// written or audited.
+func TestPermissionEscalationBlocked(t *testing.T) {
 	app := newApp(t)
-	operator := seedUser(t, app, "op2@example.com", "operator")
+	operator := seedUser(t, app, "op2@example.com", "enroll")
 	token, err := operator.NewAuthToken()
 	if err != nil {
 		t.Fatalf("auth token: %v", err)
 	}
 
 	scenario := tests.ApiScenario{
-		Name:                  "operator cannot self-promote to admin",
+		Name:                  "operator cannot self-grant the operators capability",
 		Method:                http.MethodPatch,
 		URL:                   "/api/collections/users/records/" + operator.Id,
-		Body:                  strings.NewReader(`{"role":"admin"}`),
+		Body:                  strings.NewReader(`{"permissions":["enroll","operators"]}`),
 		Headers:               map[string]string{"Authorization": token},
 		ExpectedStatus:        http.StatusForbidden,
-		ExpectedContent:       []string{"admin"},
+		ExpectedContent:       []string{"operators"},
 		TestAppFactory:        func(t testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, res *http.Response) {
@@ -163,8 +164,8 @@ func TestRoleEscalationBlocked(t *testing.T) {
 			if err != nil {
 				t.Fatalf("reload operator: %v", err)
 			}
-			if got := reloaded.GetString("role"); got != "operator" {
-				t.Errorf("role after blocked escalation = %q, want operator", got)
+			if got := reloaded.GetStringSlice("permissions"); len(got) != 1 || got[0] != "enroll" {
+				t.Errorf("permissions after blocked escalation = %v, want [enroll]", got)
 			}
 			if n := auditCount(t, app); n != 0 {
 				t.Errorf("audit rows after rejected update = %d, want 0", n)
@@ -176,7 +177,7 @@ func TestRoleEscalationBlocked(t *testing.T) {
 
 func TestSnapshotStripsSecrets(t *testing.T) {
 	app := newApp(t)
-	u := seedUser(t, app, "snap@example.com", "viewer")
+	u := seedUser(t, app, "snap@example.com", "enroll")
 
 	snap := snapshot(u)
 	if _, ok := snap["password"]; ok {
@@ -188,7 +189,7 @@ func TestSnapshotStripsSecrets(t *testing.T) {
 	if snap["email"] != "snap@example.com" {
 		t.Errorf("snapshot email = %v, want snap@example.com", snap["email"])
 	}
-	if snap["role"] != "viewer" {
-		t.Errorf("snapshot role = %v, want viewer", snap["role"])
+	if _, ok := snap["permissions"]; !ok {
+		t.Error("snapshot missing permissions field")
 	}
 }

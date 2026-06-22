@@ -38,8 +38,9 @@ func TestCollectionsExist(t *testing.T) {
 	}
 }
 
-// TestOperatorAuthTier checks migration 1750000009: the users.role field, the
-// locked-down users rules, and the role-based collection rule matrix.
+// TestOperatorAuthTier checks the auth tier after migration 1750000016: the
+// users.permissions multi-select (replacing role), the locked-down users rules,
+// and the capability-based collection rule matrix.
 func TestOperatorAuthTier(t *testing.T) {
 	app := newApp(t)
 
@@ -47,12 +48,25 @@ func TestOperatorAuthTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("users collection: %v", err)
 	}
-	if users.Fields.GetByName("role") == nil {
-		t.Error("users.role field missing")
+	// role is gone; permissions is the single source of truth.
+	if users.Fields.GetByName("role") != nil {
+		t.Error("users.role field should be removed (replaced by permissions)")
 	}
-	// Default open-signup ("") must be locked to admin-only.
+	perms, ok := users.Fields.GetByName("permissions").(*core.SelectField)
+	if !ok || perms == nil {
+		t.Fatal("users.permissions multi-select field missing")
+	}
+	if perms.MaxSelect <= 1 {
+		t.Errorf("users.permissions MaxSelect = %d, want >1 (multi-select)", perms.MaxSelect)
+	}
+	for _, want := range []string{"enroll", "policy", "topology", "command", "operators"} {
+		if !slicesContains(perms.Values, want) {
+			t.Errorf("users.permissions missing value %q (have %v)", want, perms.Values)
+		}
+	}
+	// Default open-signup ("") must be locked to the operators capability.
 	if users.CreateRule == nil || *users.CreateRule == "" {
-		t.Errorf("users.CreateRule = %v, want admin-only (not open signup)", users.CreateRule)
+		t.Errorf("users.CreateRule = %v, want operators-only (not open signup)", users.CreateRule)
 	}
 
 	// rule asserts a collection's named rule is non-nil and contains substr.
@@ -67,14 +81,16 @@ func TestOperatorAuthTier(t *testing.T) {
 		}
 	}
 
-	// Daily-ops: credentials writable by operator or admin.
-	rule("credentials", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"operator"`)
-	// Topology: controllers writable by admin only.
-	rule("controllers", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"admin"`)
+	// People: credentials writable with the enroll capability.
+	rule("credentials", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"enroll"`)
+	// Topology: controllers writable with the topology capability.
+	rule("controllers", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"topology"`)
+	// Access logic: schedules writable with the policy capability.
+	rule("schedules", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"policy"`)
 	// All operators can read the policy graph.
 	rule("portals", "ListRule", func(c *core.Collection) *string { return c.ListRule }, `@request.auth.id`)
-	// audit_logs readable by admins only.
-	rule("audit_logs", "ListRule", func(c *core.Collection) *string { return c.ListRule }, `"admin"`)
+	// audit_logs readable with the operators capability.
+	rule("audit_logs", "ListRule", func(c *core.Collection) *string { return c.ListRule }, `"operators"`)
 
 	// Machine projections: nobody writes via the API (superuser/system only).
 	events, err := app.FindCollectionByNameOrId("events")
@@ -84,6 +100,81 @@ func TestOperatorAuthTier(t *testing.T) {
 	if events.CreateRule != nil {
 		t.Errorf("events.CreateRule = %v, want nil (superuser-only)", *events.CreateRule)
 	}
+}
+
+func slicesContains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPermissionRuleEnforcement is the security-boundary spike: it confirms that
+// `@request.auth.permissions ?= "x"` actually admits a user holding capability x
+// and rejects one who doesn't, using PocketBase's own rule evaluator
+// (CanAccessRecord). The write rules reference only @request.auth, so evaluating
+// them against any existing record (the fixture's alice cardholder) exercises the
+// multi-select membership semantics directly. If this fails, the `?=` operator in
+// 1750000016 must be swapped for `~` (JSON-LIKE; safe given substring-free names).
+func TestPermissionRuleEnforcement(t *testing.T) {
+	app := newApp(t)
+
+	usersCol, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("users collection: %v", err)
+	}
+	mk := func(email string, perms []string) *core.Record {
+		u := core.NewRecord(usersCol)
+		u.SetEmail(email)
+		u.SetPassword("password123")
+		u.SetVerified(true)
+		u.Set("permissions", perms)
+		if err := app.Save(u); err != nil {
+			t.Fatalf("save user %s: %v", email, err)
+		}
+		return u
+	}
+	enrollUser := mk("enroll@test.dev", []string{"enroll"})
+	topoUser := mk("topo@test.dev", []string{"topology"})
+	multiUser := mk("multi@test.dev", []string{"enroll", "command"})
+	emptyUser := mk("viewer@test.dev", []string{})
+
+	// Any persisted record works since the write rules ignore record fields.
+	alice, err := app.FindFirstRecordByData("cardholders", "external_id", "alice")
+	if err != nil {
+		t.Fatalf("fixture cardholder alice not found: %v", err)
+	}
+	cardholders, _ := app.FindCollectionByNameOrId("cardholders")
+	controllers, _ := app.FindCollectionByNameOrId("controllers")
+
+	check := func(label string, rule *string, auth *core.Record, want bool) {
+		ok, err := app.CanAccessRecord(alice, &core.RequestInfo{Auth: auth, Method: "POST"}, rule)
+		if err != nil {
+			t.Fatalf("%s: CanAccessRecord error: %v", label, err)
+		}
+		if ok != want {
+			t.Errorf("%s: access = %v, want %v (rule %q, perms %v)", label, ok, want, deref(rule), auth.GetStringSlice("permissions"))
+		}
+	}
+
+	// cardholders write rule requires `enroll`.
+	check("enroll→cardholders", cardholders.CreateRule, enrollUser, true)
+	check("topology→cardholders", cardholders.CreateRule, topoUser, false)
+	check("enroll+command→cardholders", cardholders.CreateRule, multiUser, true)
+	check("viewer→cardholders", cardholders.CreateRule, emptyUser, false)
+
+	// controllers write rule requires `topology`.
+	check("enroll→controllers", controllers.CreateRule, enrollUser, false)
+	check("topology→controllers", controllers.CreateRule, topoUser, true)
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
 }
 
 func TestFixtureSeeded(t *testing.T) {

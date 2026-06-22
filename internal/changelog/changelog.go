@@ -18,6 +18,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
+	"github.com/stone-age-io/access-control/internal/authz"
 	"github.com/stone-age-io/access-control/internal/logger"
 )
 
@@ -45,12 +46,13 @@ type recorder struct {
 func Register(app core.App, retentionDays int, log *logger.Logger) {
 	r := &recorder{app: app, log: log.With("component", "changelog")}
 
-	// Privilege-escalation guard: only an admin/superuser may change a user's
-	// role. Registered before the audit handler so it runs first in the chain.
+	// Privilege-escalation guard: only a superuser or an operator holding the
+	// `operators` capability may change a user's permissions. Registered before
+	// the audit handler so it runs first in the chain.
 	app.OnRecordUpdateRequest("users").BindFunc(func(e *core.RecordRequestEvent) error {
-		isAdmin := e.Auth != nil && (e.Auth.IsSuperuser() || e.Auth.GetString("role") == "admin")
-		if !isAdmin && e.Record.GetString("role") != e.Record.Original().GetString("role") {
-			return e.ForbiddenError("only an admin may change a user's role", nil)
+		privileged := e.Auth != nil && (e.Auth.IsSuperuser() || authz.HasCapability(e.Auth, authz.CapOperators))
+		if !privileged && !equalStringSet(e.Record.GetStringSlice("permissions"), e.Record.Original().GetStringSlice("permissions")) {
+			return e.ForbiddenError("only an operator with the operators capability may change a user's permissions", nil)
 		}
 		return e.Next()
 	})
@@ -158,6 +160,28 @@ func (r *recorder) registerPrune(retentionDays int) {
 			r.log.Info("pruned audit rows", "count", len(old), "olderThanDays", retentionDays)
 		}
 	})
+}
+
+// equalStringSet reports whether two string slices contain the same elements,
+// ignoring order and duplicates (multi-select values have no meaningful order).
+func equalStringSet(a, b []string) bool {
+	seen := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		seen[s] = struct{}{}
+	}
+	bset := make(map[string]struct{}, len(b))
+	for _, s := range b {
+		bset[s] = struct{}{}
+		if _, ok := seen[s]; !ok {
+			return false
+		}
+	}
+	for s := range seen {
+		if _, ok := bset[s]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // snapshot returns a record's field data as a plain map for storage, dropping the
