@@ -57,10 +57,16 @@ function placeMarker(la: number, lo: number) {
   }
 }
 
-// Write back to the models, rounded to ~0.1m precision.
+// Round to ~0.1m precision so the stored value matches what we hand the map
+// (keeps syncMarkerFromModel's epsilon check exact, avoiding a redundant move).
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6
+}
+
+// Write back to the models.
 function setCoords(la: number, lo: number) {
-  lat.value = Math.round(la * 1e6) / 1e6
-  lon.value = Math.round(lo * 1e6) / 1e6
+  lat.value = round6(la)
+  lon.value = round6(lo)
 }
 
 // Reflect external model changes (record load, manual numeric input, clear) onto
@@ -107,12 +113,15 @@ async function search() {
 }
 
 function selectResult(r: NominatimResult) {
-  const la = parseFloat(r.lat)
-  const lo = parseFloat(r.lon)
+  const la = round6(parseFloat(r.lat))
+  const lo = round6(parseFloat(r.lon))
   if (Number.isNaN(la) || Number.isNaN(lo)) return
   setCoords(la, lo)
-  placeMarker(lat.value, lon.value)
-  map.value?.setView([lat.value, lon.value], 17)
+  // Drive the map from the parsed values directly — reading lat/lon back here
+  // returns the *previous* value, since the parent v-model prop hasn't re-flowed
+  // down yet (the watch reconciles on the next tick, when it has).
+  placeMarker(la, lo)
+  map.value?.setView([la, lo], 17)
   centered = true
   results.value = []
   searchQuery.value = r.display_name
