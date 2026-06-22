@@ -10,6 +10,7 @@ import type { Portal, AccessGroup, PointStatus } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
+import PostureBadge from '@/components/ui/PostureBadge.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
 
@@ -30,6 +31,8 @@ const { commanding, grant, setPosture } = usePortalCommands()
 let unsubStatus: (() => void) | null = null
 
 const title = computed(() => record.value?.name || record.value?.code || 'Portal')
+// A manual override is in force — gates (and highlights) the "Clear override" action.
+const isOverridden = computed(() => status.value?.posture_source === 'override')
 const kvKey = computed(() => (record.value ? policyKey('portals', record.value) : ''))
 const statusKey = computed(() => (record.value ? `portal.${record.value.code}` : ''))
 
@@ -155,7 +158,7 @@ onBeforeUnmount(() => {
           <span class="badge badge-sm" :class="doorBadge.cls">{{ doorBadge.text }}</span>
         </DataField>
         <DataField label="Effective posture">
-          <span class="badge badge-sm badge-ghost">{{ status.posture || '—' }}</span>
+          <PostureBadge :posture="status.posture" :source="status.posture_source" />
         </DataField>
         <DataField label="Held open">
           <span v-if="status.held" class="badge badge-sm badge-warning">Held</span>
@@ -189,11 +192,17 @@ onBeforeUnmount(() => {
             >
               {{ p.label }}
             </button>
-            <button class="btn btn-sm btn-ghost" :disabled="commanding" @click="setPosture(recordId, 'clear')">
+            <button
+              class="btn btn-sm"
+              :class="isOverridden ? 'btn-outline btn-warning' : 'btn-ghost'"
+              :disabled="commanding || !isOverridden"
+              @click="setPosture(recordId, 'clear')"
+            >
               Clear override
             </button>
           </div>
           <p class="text-xs opacity-50 mt-2">
+            <span v-if="isOverridden" class="text-warning font-medium">A manual override is in force. </span>
             A posture override is operational state on the controller — it is not saved to this record, and
             “Clear” reverts to the scheduled or standing posture.
           </p>

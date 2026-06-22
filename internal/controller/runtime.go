@@ -57,6 +57,7 @@ type doorMonitor struct {
 type portalShadow struct {
 	door    string
 	posture string
+	source  string // posture provenance — so a standing→override flip at the same value still writes
 	held    bool
 }
 
@@ -187,7 +188,7 @@ func (r *Runtime) applyHold(portal string, at time.Time) {
 	if !ok {
 		return
 	}
-	posture, resolved := r.effectivePosture(portal, at)
+	posture, _, resolved := r.effectivePosture(portal, at)
 	if resolved {
 		if err := lock.SetHeld(posture == policy.PostureUnlocked); err != nil {
 			r.log.Error("failed to set lock hold", "portal", portal, "error", err)
@@ -206,7 +207,7 @@ func (r *Runtime) writeStatus(portal string, at time.Time) {
 	if r.statusWriter == nil {
 		return
 	}
-	posture, _ := r.effectivePosture(portal, at) // standing value if unresolved — a fine display value
+	posture, source, _ := r.effectivePosture(portal, at) // standing value if unresolved — a fine display value
 	location, _ := r.portalAddr(portal)
 
 	r.mu.Lock()
@@ -222,7 +223,7 @@ func (r *Runtime) writeStatus(portal string, at time.Time) {
 			}
 		}
 	}
-	cur := portalShadow{door: door, posture: posture, held: held}
+	cur := portalShadow{door: door, posture: posture, source: source, held: held}
 	if prev, ok := r.shadow[portal]; ok && prev == cur {
 		r.mu.Unlock()
 		return // unchanged — skip the write (no churn on the hold-eval tick)
@@ -230,7 +231,7 @@ func (r *Runtime) writeStatus(portal string, at time.Time) {
 	r.shadow[portal] = cur
 	r.mu.Unlock()
 
-	r.statusWriter.SetPortal(portal, location, door, posture, held, at)
+	r.statusWriter.SetPortal(portal, location, door, posture, source, held, at)
 }
 
 // reconcileHolds reconciles every driven portal's strike hold to effective
@@ -291,7 +292,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 }
 
 func (r *Runtime) handleTap(tap drivers.Tap) {
-	posture, _ := r.effectivePosture(tap.Portal, tap.At) // unresolved falls back to standing (fail-safe)
+	posture, _, _ := r.effectivePosture(tap.Portal, tap.At) // unresolved falls back to standing (fail-safe)
 	d := r.store.Decide(posture, tap.Credential, tap.Portal, tap.At)
 	r.m.IncDecision(d.Allow, d.Reason)
 
@@ -451,10 +452,12 @@ func (r *Runtime) monitorFor(portal string) *doorMonitor {
 // effectivePosture returns the effective posture for a portal at the given
 // instant — a runtime command override, else the scheduled posture while its
 // window is open, else the standing posture (resolved together under the store
-// lock). The bool is false only when an auto_schedule is configured but not yet
-// loaded: the posture is still the safe standing value, but the hold reconciler
-// treats it as "keep previous" rather than flap. Unknown portals return ("", true).
-func (r *Runtime) effectivePosture(portal string, at time.Time) (string, bool) {
+// lock) — plus a source (statuskv.PostureSource*) naming which of the three
+// produced it. The bool is false only when an auto_schedule is configured but not
+// yet loaded: the posture is still the safe standing value, but the hold reconciler
+// treats it as "keep previous" rather than flap. Unknown portals return
+// ("", standing, true).
+func (r *Runtime) effectivePosture(portal string, at time.Time) (posture, source string, resolved bool) {
 	r.mu.RLock()
 	override := r.overrides[portal] // "" when absent
 	r.mu.RUnlock()
@@ -513,7 +516,7 @@ func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
 	delete(r.overrides, portal)
 	r.mu.Unlock()
 	r.applyHold(portal, at) // strike follows the now-effective (scheduled/standing) posture
-	effective, _ := r.effectivePosture(portal, at)
+	effective, _, _ := r.effectivePosture(portal, at)
 	r.emitState(portal, effective, actor, reason, at)
 }
 

@@ -2,11 +2,14 @@
 import { computed } from 'vue'
 import type { Portal, PointStatus } from '@/types/pocketbase'
 import { usePortalCommands, POSTURES } from '@/composables/usePortalCommands'
+import PostureBadge from '@/components/ui/PostureBadge.vue'
 
 const props = defineProps<{ portal: Portal; status: PointStatus | null; isMobile: boolean }>()
 defineEmits<{ close: [] }>()
 
 const { commanding, grant, setPosture } = usePortalCommands()
+
+const isOverridden = computed(() => props.status?.posture_source === 'override')
 
 const doorBadge = computed(() => {
   switch (props.status?.state) {
@@ -39,19 +42,22 @@ const doorBadge = computed(() => {
 
     <div class="flex-1 overflow-y-auto p-4 space-y-4">
       <!-- Live status -->
-      <div class="grid grid-cols-3 gap-2 text-center">
-        <div>
-          <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">Door</div>
-          <span class="badge badge-sm" :class="doorBadge.cls">{{ doorBadge.text }}</span>
+      <div class="space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[10px] uppercase tracking-wider opacity-50 font-semibold">Posture</span>
+          <PostureBadge v-if="status" :posture="status.posture" :source="status.posture_source" />
+          <span v-else class="opacity-40 text-sm">—</span>
         </div>
-        <div>
-          <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">Posture</div>
-          <span class="badge badge-sm badge-ghost">{{ status?.posture || '—' }}</span>
-        </div>
-        <div>
-          <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">Held</div>
-          <span v-if="status?.held" class="badge badge-sm badge-warning">Held</span>
-          <span v-else class="opacity-40 text-sm">No</span>
+        <div class="grid grid-cols-2 gap-2 text-center">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">Door</div>
+            <span class="badge badge-sm" :class="doorBadge.cls">{{ doorBadge.text }}</span>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">Held</div>
+            <span v-if="status?.held" class="badge badge-sm badge-warning">Held</span>
+            <span v-else class="opacity-40 text-sm">No</span>
+          </div>
         </div>
       </div>
       <p v-if="!status" class="text-xs opacity-50 text-center">
@@ -80,11 +86,17 @@ const doorBadge = computed(() => {
           >
             {{ p.label }}
           </button>
-          <button class="btn btn-sm btn-ghost" :disabled="commanding" @click="setPosture(portal.id, 'clear')">
+          <button
+            class="btn btn-sm"
+            :class="isOverridden ? 'btn-outline btn-warning' : 'btn-ghost'"
+            :disabled="commanding || !isOverridden"
+            @click="setPosture(portal.id, 'clear')"
+          >
             Clear override
           </button>
         </div>
         <p class="text-xs opacity-50 mt-2">
+          <span v-if="isOverridden" class="text-warning font-medium">A manual override is in force. </span>
           An override is operational state on the controller — not saved to the record. “Clear” reverts to the
           scheduled or standing posture.
         </p>

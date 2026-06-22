@@ -6,6 +6,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/policy"
+	"github.com/stone-age-io/access-control/internal/statuskv"
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
@@ -31,16 +32,16 @@ func TestCommandPostureOverrideAndClear(t *testing.T) {
 		Subject: "acc.hq.door.lobby-main.cmd.posture",
 		Data:    []byte(`{"posture":"lockdown","actor":"guard"}`),
 	})
-	if got, _ := rt.effectivePosture("lobby-main", at); got != policy.PostureLockdown {
-		t.Errorf("posture = %q, want lockdown", got)
+	if got, src, _ := rt.effectivePosture("lobby-main", at); got != policy.PostureLockdown || src != statuskv.PostureSourceOverride {
+		t.Errorf("posture = %q/%q, want lockdown/override", got, src)
 	}
 
 	h.onPosture(&nats.Msg{
 		Subject: "acc.hq.door.lobby-main.cmd.posture",
 		Data:    []byte(`{"posture":"clear"}`),
 	})
-	if got, _ := rt.effectivePosture("lobby-main", at); got != policy.PostureSecure {
-		t.Errorf("posture after clear = %q, want secure (standing)", got)
+	if got, src, _ := rt.effectivePosture("lobby-main", at); got != policy.PostureSecure || src != statuskv.PostureSourceStanding {
+		t.Errorf("posture after clear = %q/%q, want secure/standing", got, src)
 	}
 }
 
@@ -50,7 +51,7 @@ func TestCommandPostureInvalidIgnored(t *testing.T) {
 		Subject: "acc.hq.door.lobby-main.cmd.posture",
 		Data:    []byte(`{"posture":"bogus"}`),
 	})
-	if got, _ := rt.effectivePosture("lobby-main", ny(t, 2026, 1, 5, 9, 0)); got != policy.PostureSecure {
+	if got, _, _ := rt.effectivePosture("lobby-main", ny(t, 2026, 1, 5, 9, 0)); got != policy.PostureSecure {
 		t.Errorf("posture = %q, want unchanged secure", got)
 	}
 }
