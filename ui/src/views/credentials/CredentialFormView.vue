@@ -16,7 +16,7 @@ const toast = useToast()
 const recordId = route.params.id as string | undefined
 const isEdit = computed(() => !!recordId)
 
-const TYPES: CredentialType[] = ['nkey', 'wiegand', 'pin', 'mobile']
+const TYPES: CredentialType[] = ['generic', 'wiegand', 'pin', 'mobile']
 const STATUSES: CredentialStatus[] = ['active', 'revoked', 'suspended']
 
 const form = ref({
@@ -46,6 +46,32 @@ function fromLocalInput(local: string): string {
   const d = new Date(local)
   if (isNaN(d.getTime())) return ''
   return d.toISOString()
+}
+
+// uuidv7 mints a time-ordered RFC 9562 UUIDv7: a 48-bit millisecond timestamp
+// followed by 74 random bits (version/variant fixed). Time-ordering keeps newly
+// enrolled credentials roughly sortable in listings/KV. Used only for the opt-in
+// "Generate" button — handy for system-assigned credentials (mobile/virtual),
+// never for a physical card whose value is dictated by the reader.
+function uuidv7(): string {
+  const b = new Uint8Array(16)
+  crypto.getRandomValues(b)
+  const ts = Date.now()
+  // 48-bit big-endian timestamp in bytes 0..5.
+  b[0] = (ts / 2 ** 40) & 0xff
+  b[1] = (ts / 2 ** 32) & 0xff
+  b[2] = (ts / 2 ** 24) & 0xff
+  b[3] = (ts / 2 ** 16) & 0xff
+  b[4] = (ts / 2 ** 8) & 0xff
+  b[5] = ts & 0xff
+  b[6] = (b[6] & 0x0f) | 0x70 // version 7
+  b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
+}
+
+function generateValue() {
+  form.value.value = uuidv7()
 }
 
 const cardholders = ref<Cardholder[]>([])
@@ -136,8 +162,11 @@ onMounted(async () => {
     >
       <BaseCard title="Credential">
         <div class="space-y-4">
-          <FormField label="Value" required hint="The exact string presented at the reader. Used as the KV key — avoid spaces.">
-            <input v-model="form.value" type="text" placeholder="CARD-001" class="input input-bordered font-mono" required />
+          <FormField label="Value" required hint="The exact string presented at the reader. Used as the KV key — avoid spaces. Generate only for system-assigned credentials (mobile/virtual); a physical card's value is fixed by the reader.">
+            <div class="join w-full">
+              <input v-model="form.value" type="text" placeholder="CARD-001" class="input input-bordered font-mono join-item flex-1" required />
+              <button type="button" class="btn btn-outline join-item" @click="generateValue" title="Generate a UUIDv7 value">Generate</button>
+            </div>
           </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

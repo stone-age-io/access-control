@@ -97,7 +97,7 @@ function handleKey(e: KeyboardEvent, item: T) {
       >
         <div class="card-body p-3">
           <!-- min-w-0 + truncate clips the title row (incl. slot-provided content
-               like long credential nkeys/codes) with an ellipsis instead of
+               like long credential values/codes) with an ellipsis instead of
                overflowing the card. -->
           <div class="mb-1.5 min-w-0 truncate">
             <slot :name="`card-${columns[0].key}`" :item="item" :value="get(item, columns[0].key)">
