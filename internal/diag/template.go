@@ -94,9 +94,9 @@ const statusHTML = `<!doctype html>
       <td>{{if .Armed}}{{if eq .Door "open"}}<span class="badge warn">open</span>{{else if eq .Door "closed"}}<span class="badge good">closed</span>{{else}}<span class="muted">unknown</span>{{end}}{{else}}<span class="muted">—</span>{{end}}{{if .AuthOpen}} <span class="muted">auth</span>{{end}}</td>
       <td>{{if .Held}}<span class="badge bad">HELD</span>{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="mono">{{or .Override "—"}}</td>
-      <td class="mono">{{.LockRelay}}</td>
-      <td class="mono">{{.DpsInput}}</td>
-      <td class="mono">{{.RexInput}}</td>
+      <td class="mono">{{.LockRelay}}{{if .Maglock}} <span class="muted">maglock</span>{{end}}</td>
+      <td class="mono">{{.DpsInput}}{{if gt .DpsInput 0}} <span class="muted">{{if .DpsInvert}}N.O.{{else}}N.C.{{end}}</span>{{end}}</td>
+      <td class="mono">{{.RexInput}}{{if gt .RexInput 0}} <span class="muted">{{if .RexInvert}}N.C.{{else}}N.O.{{end}}</span>{{end}}{{if .RexUnlock}} <span class="muted">unlock</span>{{end}}</td>
       <td class="mono">{{.HeldOpenSeconds}}s</td>
       <td class="mono">{{.ReaderAddress}}</td>
     </tr>

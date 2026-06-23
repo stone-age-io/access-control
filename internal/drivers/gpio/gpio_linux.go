@@ -64,7 +64,7 @@ func (h *Hardware) Inputs() <-chan drivers.InputEvent { return h.ch }
 // Arm requests the lock relay (required) and DPS/REX input lines (optional) for a
 // portal and returns the lock driver. On any partial failure it releases what it
 // had already requested, so a retry on the next policy change starts clean.
-func (h *Hardware) Arm(code string, lockRelay, dpsInput, rexInput int) (drivers.LockDriver, error) {
+func (h *Hardware) Arm(code string, io drivers.PortalIO) (drivers.LockDriver, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -74,35 +74,38 @@ func (h *Hardware) Arm(code string, lockRelay, dpsInput, rexInput int) (drivers.
 		return nil, fmt.Errorf("portal %q already armed", code)
 	}
 
-	relaySpec, ok := h.profile.Relay(lockRelay)
+	relaySpec, ok := h.profile.Relay(io.LockRelay)
 	if !ok {
-		return nil, fmt.Errorf("portal %q: relay index %d not defined for model %q", code, lockRelay, h.profile.Model)
+		return nil, fmt.Errorf("portal %q: relay index %d not defined for model %q", code, io.LockRelay, h.profile.Model)
 	}
+	// A fail-safe maglock energizes to lock, the opposite of a fail-secure strike,
+	// so it inverts the relay's drive sense on top of the board's electrical polarity.
+	relaySpec.ActiveLow = relaySpec.ActiveLow != io.Maglock
 	lock, err := h.newLock(code, relaySpec)
 	if err != nil {
-		return nil, fmt.Errorf("portal %q: arm relay %d: %w", code, lockRelay, err)
+		return nil, fmt.Errorf("portal %q: arm relay %d: %w", code, io.LockRelay, err)
 	}
 	p := &portLines{lock: lock}
 
-	if dpsInput > 0 {
-		line, err := h.armInput(code, drivers.InputDPS, dpsInput)
+	if io.DpsInput > 0 {
+		line, err := h.armInput(code, drivers.InputDPS, io.DpsInput, io.DpsInvert)
 		if err != nil {
 			h.release(p)
-			return nil, fmt.Errorf("portal %q: arm DPS input %d: %w", code, dpsInput, err)
+			return nil, fmt.Errorf("portal %q: arm DPS input %d: %w", code, io.DpsInput, err)
 		}
 		p.dps = line
 	}
-	if rexInput > 0 {
-		line, err := h.armInput(code, drivers.InputREX, rexInput)
+	if io.RexInput > 0 {
+		line, err := h.armInput(code, drivers.InputREX, io.RexInput, io.RexInvert)
 		if err != nil {
 			h.release(p)
-			return nil, fmt.Errorf("portal %q: arm REX input %d: %w", code, rexInput, err)
+			return nil, fmt.Errorf("portal %q: arm REX input %d: %w", code, io.RexInput, err)
 		}
 		p.rex = line
 	}
 
 	h.ports[code] = p
-	h.log.Info("portal hardware armed", "portal", code, "relay", lockRelay, "dps", dpsInput, "rex", rexInput)
+	h.log.Info("portal hardware armed", "portal", code, "relay", io.LockRelay, "dps", io.DpsInput, "rex", io.RexInput, "maglock", io.Maglock)
 	return lock, nil
 }
 
@@ -143,7 +146,7 @@ func (h *Hardware) DisarmOutput(code string) {
 
 // ArmInput requests an input line for an aux input; its edges flow into the same
 // Inputs() channel with kind InputAux.
-func (h *Hardware) ArmInput(code string, inputIndex int) error {
+func (h *Hardware) ArmInput(code string, inputIndex int, invert bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -153,7 +156,7 @@ func (h *Hardware) ArmInput(code string, inputIndex int) error {
 	if _, ok := h.ports[key]; ok {
 		return fmt.Errorf("aux input %q already armed", code)
 	}
-	line, err := h.armInput(code, drivers.InputAux, inputIndex)
+	line, err := h.armInput(code, drivers.InputAux, inputIndex, invert)
 	if err != nil {
 		return fmt.Errorf("aux input %q: arm input %d: %w", code, inputIndex, err)
 	}
@@ -220,7 +223,7 @@ func (h *Hardware) release(p *portLines) {
 }
 
 // armInput requests one DPS/REX input line with edge detection feeding onEdge.
-func (h *Hardware) armInput(code, kind string, idx int) (*gpiocdev.Line, error) {
+func (h *Hardware) armInput(code, kind string, idx int, invert bool) (*gpiocdev.Line, error) {
 	spec, ok := h.profile.Input(idx)
 	if !ok {
 		return nil, fmt.Errorf("input index %d not defined for model %q", idx, h.profile.Model)
@@ -228,6 +231,10 @@ func (h *Hardware) armInput(code, kind string, idx int) (*gpiocdev.Line, error) 
 	if spec.Backend != hardware.BackendGPIO {
 		return nil, fmt.Errorf("input backend %q not supported by the GPIO driver", spec.Backend)
 	}
+	// Fold the operator's contact-sense inversion (normally-open DPS / normally-
+	// closed REX/aux) onto the board's electrical polarity, so "active" still means
+	// "the monitored condition is asserted" regardless of how the contact is wired.
+	spec.ActiveLow = spec.ActiveLow != invert
 	opts := []gpiocdev.LineReqOption{
 		gpiocdev.WithConsumer("stone-access:" + code + ":" + kind),
 		gpiocdev.AsInput,

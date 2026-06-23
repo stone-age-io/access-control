@@ -83,7 +83,22 @@ type Portal struct {
 	RexInput        int    `json:"rexInput,omitempty"`
 	HeldOpenSeconds int    `json:"heldOpenSeconds,omitempty"`
 	ReaderAddress   int    `json:"readerAddress,omitempty"` // OSDP PD address (reader=="osdp")
+	// Per-install wiring sense (consumed only by the controller's hardware arming,
+	// never by policy.Decide). Empty = the common default for that input/lock.
+	DpsContact string `json:"dpsContact,omitempty"` // "" / "nc" (default) / "no" door-position contact
+	RexContact string `json:"rexContact,omitempty"` // "" / "no" (default) / "nc" request-to-exit contact
+	LockType   string `json:"lockType,omitempty"`   // "" / "strike" (default) / "maglock"
+	RexUnlock  bool   `json:"rexUnlock,omitempty"`  // REX press also pulses the lock, not just shunts the alarm
 }
+
+// DPSInvert / REXInvert / IsMaglock translate the operator's contact-type / lock-type
+// labels into the boolean line-sense inversion the hardware backend applies. The
+// per-input default lives here, in one place: a door-position contact is normally
+// CLOSED (closed when the door is shut), a REX contact is normally OPEN (closed
+// when pressed) — so only the non-default value inverts.
+func (p Portal) DPSInvert() bool { return p.DpsContact == "no" }
+func (p Portal) REXInvert() bool { return p.RexContact == "nc" }
+func (p Portal) IsMaglock() bool { return p.LockType == "maglock" }
 
 // Controller is an edge box. It references its location by code; Model selects
 // the hardware template. last_seen/status are not mirrored (accessd writes them
@@ -105,7 +120,12 @@ type AuxInput struct {
 	Location   string `json:"location"`
 	Controller string `json:"controller,omitempty"`
 	InputIndex int    `json:"inputIndex,omitempty"`
+	Contact    string `json:"contact,omitempty"` // "" / "no" (default) / "nc" contact sense
 }
+
+// Invert reports whether the aux input's contact sense is inverted from the
+// default (normally-open: closed when asserted). A normally-closed contact inverts.
+func (a AuxInput) Invert() bool { return a.Contact == "nc" }
 
 // AuxOutput is a named auxiliary relay bound to a controller — driven by the
 // cmd.output command (on/off/pulse). RelayIndex is a logical relay index on the

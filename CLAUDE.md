@@ -177,9 +177,11 @@ Later migrations add the upward shadow + UI/operator surface: `1750000006` (`poi
 (`aux_input`/`aux_output`), `1750000008` (portal `reader_address`), `1750000009` (the operator auth tier +
 role-based rules + `audit_logs`), `1750000011` (location-map/floor-plan UI fields), `1750000012`/`1750000013`
 (posture `source` + event `source`), `1750000015` (credential `type` rename `nkey`→`generic`, widened to
-`generic`/`wiegand`/`pin`/`mobile` — a control-plane label only, never on the policy wire), and `1750000016`
-(replace the operator `role` rank with the orthogonal `permissions` capabilities). The base `1750000000` stays
-frozen; everything is additive. `migratecmd`
+`generic`/`wiegand`/`pin`/`mobile` — a control-plane label only, never on the policy wire), `1750000016`
+(replace the operator `role` rank with the orthogonal `permissions` capabilities), and `1750000017`
+(per-install wiring sense: portal `dps_contact`/`rex_contact` NO/NC + `lock_type` strike/maglock + `rex_unlock`,
+and `aux_input.contact` — controller-only hints folded onto the board profile's electrical polarity, never on
+the `policy.Decide` wire). The base `1750000000` stays frozen; everything is additive. `migratecmd`
 Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
 before committing.
 

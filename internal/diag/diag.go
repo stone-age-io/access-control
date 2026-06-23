@@ -90,6 +90,15 @@ type PortalView struct {
 	RexInput        int `json:"rexInput"`
 	HeldOpenSeconds int `json:"heldOpenSeconds"`
 	ReaderAddress   int `json:"readerAddress"`
+
+	// Logical wiring sense the box armed each line with (vs. the board's electrical
+	// polarity). Maglock = fail-safe energize-to-lock; DpsInvert/RexInvert = the
+	// contact reads normally-open (DPS) / normally-closed (REX); RexUnlock = a REX
+	// press also pulses the strike.
+	Maglock   bool `json:"maglock"`
+	DpsInvert bool `json:"dpsInvert"`
+	RexInvert bool `json:"rexInvert"`
+	RexUnlock bool `json:"rexUnlock"`
 }
 
 // FireStatus reports a location's fire-input state (active = alarms suppressed).
@@ -168,6 +177,10 @@ func (s *Source) Report() Report {
 			pv.RexInput = b.RexInput
 			pv.HeldOpenSeconds = b.HeldOpenSeconds
 			pv.ReaderAddress = b.ReaderAddress
+			pv.Maglock = b.Maglock
+			pv.DpsInvert = b.DpsInvert
+			pv.RexInvert = b.RexInvert
+			pv.RexUnlock = b.RexUnlock
 		}
 		portals = append(portals, pv)
 	}

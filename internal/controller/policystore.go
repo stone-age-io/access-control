@@ -50,7 +50,11 @@ type Binding struct {
 	DpsInput        int
 	RexInput        int
 	HeldOpenSeconds int
-	ReaderAddress   int // OSDP PD address of this portal's reader (reader=="osdp")
+	ReaderAddress   int  // OSDP PD address of this portal's reader (reader=="osdp")
+	Maglock         bool // lock relay inverted: energize-to-lock (fail-safe maglock)
+	DpsInvert       bool // DPS contact sense inverted (normally-open door contact)
+	RexInvert       bool // REX contact sense inverted (normally-closed REX contact)
+	RexUnlock       bool // a REX press also pulses the lock, not just shunts the alarm
 }
 
 // PolicyStore holds the whole-org policy graph in plain maps behind an RWMutex
@@ -505,6 +509,8 @@ func (s *PolicyStore) apply(key string, value []byte) {
 			Controller: w.Controller, LockRelay: w.LockRelay,
 			DpsInput: w.DpsInput, RexInput: w.RexInput,
 			HeldOpenSeconds: w.HeldOpenSeconds, ReaderAddress: w.ReaderAddress,
+			Maglock: w.IsMaglock(), DpsInvert: w.DPSInvert(), RexInvert: w.REXInvert(),
+			RexUnlock: w.RexUnlock,
 		}
 
 	case strings.HasPrefix(key, policykv.PrefixController):

@@ -253,6 +253,10 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			RexInput:        r.GetInt("rex_input"),
 			HeldOpenSeconds: r.GetInt("held_open_seconds"),
 			ReaderAddress:   r.GetInt("reader_address"),
+			DpsContact:      r.GetString("dps_contact"),
+			RexContact:      r.GetString("rex_contact"),
+			LockType:        r.GetString("lock_type"),
+			RexUnlock:       r.GetBool("rex_unlock"),
 		}
 	case "controllers":
 		if err := validToken("controller code", r.GetString("code")); err != nil {
@@ -304,6 +308,7 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			Location:   resolveCode(app, "locations", r.GetString("location")),
 			Controller: resolveCode(app, "controllers", r.GetString("controller")),
 			InputIndex: r.GetInt("input_index"),
+			Contact:    r.GetString("contact"),
 		}
 	case "aux_output":
 		if err := validToken("aux output code", r.GetString("code")); err != nil {

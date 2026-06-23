@@ -25,6 +25,7 @@ const form = ref({
   location: (route.query.location as string) || '',
   controller: (route.query.controller as string) || '',
   input_index: 0,
+  contact: 'no' as 'no' | 'nc',
 })
 
 const locations = ref<Location[]>([])
@@ -63,6 +64,7 @@ async function loadRecord() {
       location: a.location || '',
       controller: a.controller || '',
       input_index: a.input_index || 0,
+      contact: a.contact === 'nc' ? 'nc' : 'no',
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load aux input')
@@ -88,6 +90,7 @@ async function handleSubmit() {
       location: form.value.location,
       controller: form.value.controller,
       input_index: Number(form.value.input_index) || 0,
+      contact: form.value.contact,
     }
     if (isEdit.value) {
       await pb.collection('aux_input').update(recordId!, data)
@@ -149,9 +152,17 @@ onMounted(async () => {
             </FormField>
           </div>
 
-          <FormField label="Input index" hint="The box's input line to monitor; the picker lists the model's lines and flags any already in use.">
-            <IndexPicker v-model="form.input_index" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
-          </FormField>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField label="Input index" hint="The box's input line to monitor; the picker lists the model's lines and flags any already in use.">
+              <IndexPicker v-model="form.input_index" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
+            </FormField>
+            <FormField label="Contact" hint="Normally open (closes when asserted) is typical. Choose normally closed for a supervised contact that opens when asserted.">
+              <select v-model="form.contact" class="select select-bordered">
+                <option value="no">Normally open (N.O.)</option>
+                <option value="nc">Normally closed (N.C.)</option>
+              </select>
+            </FormField>
+          </div>
         </div>
       </BaseCard>
 

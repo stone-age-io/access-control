@@ -264,8 +264,21 @@ onBeforeUnmount(() => {
           <span v-else class="opacity-40">Unassigned</span>
         </DataField>
         <DataField label="Lock relay">{{ record.lock_relay }}</DataField>
+        <DataField label="Lock type">
+          {{ record.lock_type === 'maglock' ? 'Fail-safe maglock' : 'Fail-secure strike' }}
+        </DataField>
         <DataField label="DPS input">{{ record.dps_input }}</DataField>
+        <DataField label="DPS contact">
+          {{ record.dps_contact === 'no' ? 'Normally open' : 'Normally closed' }}
+        </DataField>
         <DataField label="REX input">{{ record.rex_input }}</DataField>
+        <DataField label="REX contact">
+          {{ record.rex_contact === 'nc' ? 'Normally closed' : 'Normally open' }}
+        </DataField>
+        <DataField label="REX unlock">
+          <span v-if="record.rex_unlock">Yes — pulses strike</span>
+          <span v-else class="opacity-40">No</span>
+        </DataField>
         <DataField label="Reader">
           <span v-if="record.reader_address >= 0">OSDP @ PD {{ record.reader_address }}</span>
           <span v-else>NATS-only</span>

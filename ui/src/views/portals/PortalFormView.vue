@@ -41,6 +41,10 @@ const form = ref({
   lock_relay: 0,
   dps_input: 0,
   rex_input: 0,
+  lock_type: 'strike' as 'strike' | 'maglock',
+  dps_contact: 'nc' as 'nc' | 'no',
+  rex_contact: 'no' as 'nc' | 'no',
+  rex_unlock: false,
   held_open_seconds: 30,
   // OSDP reader: off => NATS-only (reader_address -1); on => a physical reader at
   // reader_address (0..126) on the controller's RS485 bus. New portals default off.
@@ -96,6 +100,10 @@ async function loadRecord() {
       lock_relay: p.lock_relay || 0,
       dps_input: p.dps_input || 0,
       rex_input: p.rex_input || 0,
+      lock_type: p.lock_type === 'maglock' ? 'maglock' : 'strike',
+      dps_contact: p.dps_contact === 'no' ? 'no' : 'nc',
+      rex_contact: p.rex_contact === 'nc' ? 'nc' : 'no',
+      rex_unlock: !!p.rex_unlock,
       held_open_seconds: p.held_open_seconds || 0,
       // reader_address >= 0 means a physical OSDP reader; -1 (or absent) is NATS-only.
       osdpEnabled: typeof p.reader_address === 'number' && p.reader_address >= 0,
@@ -158,6 +166,10 @@ async function handleSubmit() {
       lock_relay: Number(form.value.lock_relay) || 0,
       dps_input: Number(form.value.dps_input) || 0,
       rex_input: Number(form.value.rex_input) || 0,
+      lock_type: form.value.lock_type,
+      dps_contact: form.value.dps_contact,
+      rex_contact: form.value.rex_contact,
+      rex_unlock: form.value.rex_unlock,
       held_open_seconds: Number(form.value.held_open_seconds) || 0,
       // -1 disables OSDP (NATS-only); otherwise the PD address on the RS485 bus.
       reader_address: form.value.osdpEnabled ? (Number(form.value.reader_address) || 0) : -1,
@@ -294,6 +306,32 @@ onMounted(async () => {
               <IndexPicker v-model="form.rex_input" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
             </FormField>
           </div>
+
+          <!-- Wiring sense: how each line is wired/interpreted, independent of the board's
+               electrical polarity (that lives in the controller model profile). -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <FormField label="Lock type" hint="Fail-secure strike energizes to unlock; a fail-safe maglock energizes to lock (idles locked, releases on power loss).">
+              <select v-model="form.lock_type" class="select select-bordered">
+                <option value="strike">Fail-secure strike</option>
+                <option value="maglock">Fail-safe maglock</option>
+              </select>
+            </FormField>
+            <FormField label="DPS contact" hint="Normally closed (closed when the door is shut) is typical. Choose normally open for a contact that closes when the door opens.">
+              <select v-model="form.dps_contact" class="select select-bordered">
+                <option value="nc">Normally closed (N.C.)</option>
+                <option value="no">Normally open (N.O.)</option>
+              </select>
+            </FormField>
+            <FormField label="REX contact" hint="Normally open (closes when pressed) is typical. Choose normally closed for a supervised REX.">
+              <select v-model="form.rex_contact" class="select select-bordered">
+                <option value="no">Normally open (N.O.)</option>
+                <option value="nc">Normally closed (N.C.)</option>
+              </select>
+            </FormField>
+          </div>
+          <FormField inline label="REX releases the lock" hint="When on, a REX press also pulses the strike (electric egress), not just shunts the forced-open alarm. Egress is otherwise mechanical.">
+            <input v-model="form.rex_unlock" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
 
           <div class="border-t border-base-200 pt-4 space-y-3">
             <FormField inline label="OSDP reader"

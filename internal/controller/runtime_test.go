@@ -273,3 +273,27 @@ func TestRuntimeLockdownOverride(t *testing.T) {
 		t.Errorf("tap events = %+v, want one deny_lockdown", taps)
 	}
 }
+
+// With rex_unlock set, a REX press pulses the strike (electric egress), using the
+// portal's configured pulse. By default a REX press only opens the authorized
+// window and never pulses (egress is mechanical).
+func TestRuntimeRexUnlockPulses(t *testing.T) {
+	rt, _, lock, _ := runtimeFor(t)
+	rt.store.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","rexUnlock":true}`))
+
+	rt.handleInput(drivers.InputEvent{Kind: drivers.InputREX, Portal: "lobby-main", Active: true, At: ny(t, 2026, 1, 5, 9, 0)})
+
+	if got := lock.Pulses(); len(got) != 1 || got[0] != 5 {
+		t.Errorf("pulses = %v, want [5] (REX unlock)", got)
+	}
+}
+
+func TestRuntimeRexDoesNotUnlockByDefault(t *testing.T) {
+	rt, _, lock, _ := runtimeFor(t)
+	// Seeded lobby-main has no rex_unlock.
+	rt.handleInput(drivers.InputEvent{Kind: drivers.InputREX, Portal: "lobby-main", Active: true, At: ny(t, 2026, 1, 5, 9, 0)})
+
+	if got := lock.Pulses(); len(got) != 0 {
+		t.Errorf("pulses = %v, want none (REX must not unlock by default)", got)
+	}
+}

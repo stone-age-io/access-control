@@ -66,14 +66,18 @@ func managerFor(t *testing.T, code string) (*PortalManager, *fakeArmer, *Runtime
 // can prove the central binding (policy) reaches the hardware backend.
 type recordingHW struct {
 	mu    sync.Mutex
-	armed map[string][3]int // code -> {lockRelay, dpsInput, rexInput}
+	armed map[string][3]int           // code -> {lockRelay, dpsInput, rexInput}
+	ios   map[string]drivers.PortalIO // code -> last PortalIO it was armed with
 }
 
-func newRecordingHW() *recordingHW { return &recordingHW{armed: make(map[string][3]int)} }
+func newRecordingHW() *recordingHW {
+	return &recordingHW{armed: make(map[string][3]int), ios: make(map[string]drivers.PortalIO)}
+}
 
-func (h *recordingHW) Arm(code string, lockRelay, dpsInput, rexInput int) (drivers.LockDriver, error) {
+func (h *recordingHW) Arm(code string, io drivers.PortalIO) (drivers.LockDriver, error) {
 	h.mu.Lock()
-	h.armed[code] = [3]int{lockRelay, dpsInput, rexInput}
+	h.armed[code] = [3]int{io.LockRelay, io.DpsInput, io.RexInput}
+	h.ios[code] = io
 	h.mu.Unlock()
 	return drivers.NewMockLock(code, nil), nil
 }
@@ -261,5 +265,33 @@ func TestNotifyCoalesces(t *testing.T) {
 	}
 	if n := len(mgr.dirty); n != 1 {
 		t.Errorf("pending reconciles = %d, want 1 (coalesced)", n)
+	}
+}
+
+// A portal's logical wiring sense (maglock, contact inversion) flows through to
+// the hardware backend, and a change to it re-arms the portal live.
+func TestReconcilePassesSenseAndReArms(t *testing.T) {
+	store := seeded(t)
+	rt := NewRuntime("hq", store, drivers.NewMockReader(1), nil, nil, &fakeEmitter{},
+		subjects.Default(), logger.NewNopLogger(), nil)
+	hw := newRecordingHW()
+	mgr := NewPortalManager("ctrl-hq-1", "hq", store, newFakeArmer(), rt, hw, logger.NewNopLogger())
+
+	// Baseline: seeded lobby-main has default sense (a fail-secure strike, NC door
+	// contact, NO REX) — nothing inverted.
+	mgr.reconcile()
+	if io := hw.ios["lobby-main"]; io.Maglock || io.DpsInvert || io.RexInvert {
+		t.Fatalf("baseline sense = %+v, want all false", io)
+	}
+
+	// Operator switches to a maglock with a normally-open DPS and normally-closed REX.
+	store.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","lockRelay":1,"dpsInput":1,"rexInput":2,"lockType":"maglock","dpsContact":"no","rexContact":"nc"}`))
+	mgr.reconcile()
+
+	// The re-armed binding must reflect the new sense (proves it re-armed, since
+	// recordingHW only updates on Arm).
+	io := hw.ios["lobby-main"]
+	if !io.Maglock || !io.DpsInvert || !io.RexInvert {
+		t.Errorf("sense after change = %+v, want maglock+dpsInvert+rexInvert all true", io)
 	}
 }

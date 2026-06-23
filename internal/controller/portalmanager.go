@@ -23,7 +23,7 @@ type portalArmer interface {
 // backend (internal/drivers/gpio) resolves the logical relay/input indices
 // through the controller model's hardware profile to physical lines.
 type PortalHardware interface {
-	Arm(code string, lockRelay, dpsInput, rexInput int) (drivers.LockDriver, error)
+	Arm(code string, io drivers.PortalIO) (drivers.LockDriver, error)
 	Disarm(code string)
 }
 
@@ -69,10 +69,35 @@ type PortalManager struct {
 // reconciler can re-arm when the parts it depends on change. typ drives the tap
 // subject; addr is the OSDP reader address (>= 0 = OSDP, -1 = NATS-only), so a
 // change here means an operator toggled the portal's OSDP reader on/off or
-// re-addressed it and the reader must be re-bound.
+// re-addressed it and the reader must be re-bound. hw captures the physical I/O
+// wiring (indices + logical sense): a change there means the lines must be
+// re-requested with new polarity, so it re-arms too.
 type armedPortal struct {
 	typ  string
 	addr int
+	hw   hwSig
+}
+
+// hwSig is the part of a portal's binding that determines how its physical lines
+// are requested. Any change re-arms the hardware. Comparable so the reconciler
+// can detect a change with ==.
+type hwSig struct {
+	lockRelay, dpsInput, rexInput int
+	maglock, dpsInvert, rexInvert bool
+}
+
+func hwSigFor(b Binding) hwSig {
+	return hwSig{
+		lockRelay: b.LockRelay, dpsInput: b.DpsInput, rexInput: b.RexInput,
+		maglock: b.Maglock, dpsInvert: b.DpsInvert, rexInvert: b.RexInvert,
+	}
+}
+
+func portalIO(b Binding) drivers.PortalIO {
+	return drivers.PortalIO{
+		LockRelay: b.LockRelay, DpsInput: b.DpsInput, RexInput: b.RexInput,
+		Maglock: b.Maglock, DpsInvert: b.DpsInvert, RexInvert: b.RexInvert,
+	}
 }
 
 // NewPortalManager builds a reconciler for the controller with the given code; it
@@ -181,6 +206,12 @@ func (pm *PortalManager) reconcile() {
 			pm.log.Info("portal reader address changed; re-arming", "portal", code, "from", cur.addr, "to", b.ReaderAddress)
 			pm.disarm(code)
 			pm.arm(ap)
+		case cur.hw != hwSigFor(b):
+			// Lock relay / DPS / REX index or its logical sense (maglock, contact
+			// inversion) changed — the lines must be re-requested with new polarity.
+			pm.log.Info("portal hardware binding changed; re-arming", "portal", code)
+			pm.disarm(code)
+			pm.arm(ap)
 		}
 	}
 }
@@ -189,7 +220,7 @@ func (pm *PortalManager) arm(ap policy.Portal) {
 	// Arm physical I/O first (it can fail — a GPIO line may be missing/busy). The
 	// hardware backend resolves the portal's logical relay/input indices itself.
 	b, _ := pm.store.Binding(ap.Code)
-	lock, err := pm.hw.Arm(ap.Code, b.LockRelay, b.DpsInput, b.RexInput)
+	lock, err := pm.hw.Arm(ap.Code, portalIO(b))
 	if err != nil {
 		// Leave it unarmed and unrecorded; the next change re-attempts.
 		pm.log.Error("failed to arm portal hardware; will retry on next policy change", "portal", ap.Code, "error", err)
@@ -201,7 +232,7 @@ func (pm *PortalManager) arm(ap policy.Portal) {
 		return
 	}
 	pm.rt.SetLock(ap.Code, lock)
-	pm.armed[ap.Code] = armedPortal{typ: ap.Type, addr: b.ReaderAddress}
+	pm.armed[ap.Code] = armedPortal{typ: ap.Type, addr: b.ReaderAddress, hw: hwSigFor(b)}
 	// Set the strike's standing hold to match effective posture right away, so a
 	// scheduled-/standing-unlocked portal opens on arm without waiting for the
 	// next hold-eval tick.

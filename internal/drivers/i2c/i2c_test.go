@@ -180,7 +180,7 @@ func TestArmConfiguresAndEnergizes(t *testing.T) {
 	h := newHardware(p, f, logger.NewNopLogger())
 	defer h.Close()
 
-	lock, err := h.Arm("d1", 1, 1, 2) // relay1=pin8, dps=in1(pin0), rex=in2(pin1)
+	lock, err := h.Arm("d1", drivers.PortalIO{LockRelay: 1, DpsInput: 1, RexInput: 2}) // relay1=pin8, dps=in1(pin0), rex=in2(pin1)
 	if err != nil {
 		t.Fatalf("Arm: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestDisarmFailSafe(t *testing.T) {
 	h := newHardware(p, f, logger.NewNopLogger())
 	defer h.Close()
 
-	lock, _ := h.Arm("d1", 1, 1, 2)
+	lock, _ := h.Arm("d1", drivers.PortalIO{LockRelay: 1, DpsInput: 1, RexInput: 2})
 	_ = lock.SetHeld(true)
 	if f.get(0x20, regOLATB)&0x01 == 0 {
 		t.Fatal("precondition: relay should be energized")
@@ -243,7 +243,7 @@ func TestPollEmitsOnChange(t *testing.T) {
 	h := newHardware(p, f, logger.NewNopLogger())
 	defer h.Close()
 
-	if _, err := h.Arm("d1", 1, 1, 2); err != nil {
+	if _, err := h.Arm("d1", drivers.PortalIO{LockRelay: 1, DpsInput: 1, RexInput: 2}); err != nil {
 		t.Fatalf("Arm: %v", err)
 	}
 
@@ -278,7 +278,7 @@ func TestAuxInputEmitsActive(t *testing.T) {
 	h := newHardware(p, f, logger.NewNopLogger())
 	defer h.Close()
 
-	if err := h.ArmInput("aux1", 3); err != nil { // input3 = pin2
+	if err := h.ArmInput("aux1", 3, false); err != nil { // input3 = pin2
 		t.Fatalf("ArmInput: %v", err)
 	}
 	h.pollOnce()
@@ -297,7 +297,7 @@ func TestCloseDeenergizes(t *testing.T) {
 	f := newFakeBus()
 	h := newHardware(p, f, logger.NewNopLogger())
 
-	lock, _ := h.Arm("d1", 1, 0, 0)
+	lock, _ := h.Arm("d1", drivers.PortalIO{LockRelay: 1})
 	_ = lock.SetHeld(true)
 	if f.get(0x20, regOLATB)&0x01 == 0 {
 		t.Fatal("precondition: relay energized")
@@ -321,7 +321,7 @@ func TestPollReadFailureIsHarmless(t *testing.T) {
 	h := newHardware(p, f, logger.NewNopLogger())
 	defer h.Close()
 
-	if _, err := h.Arm("d1", 1, 1, 0); err != nil {
+	if _, err := h.Arm("d1", drivers.PortalIO{LockRelay: 1, DpsInput: 1}); err != nil {
 		t.Fatalf("Arm: %v", err)
 	}
 	h.pollOnce() // baseline ok

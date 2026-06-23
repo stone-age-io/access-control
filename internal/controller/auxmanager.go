@@ -18,7 +18,7 @@ import (
 type AuxHardware interface {
 	ArmOutput(code string, relayIndex int) (drivers.LockDriver, error)
 	DisarmOutput(code string)
-	ArmInput(code string, inputIndex int) error
+	ArmInput(code string, inputIndex int, invert bool) error
 	DisarmInput(code string)
 }
 
@@ -42,8 +42,8 @@ type AuxManager struct {
 	wg     sync.WaitGroup
 
 	// Goroutine-confined to the reconcile loop; no lock needed.
-	armedInputs  map[string]int // code -> armed input index
-	armedOutputs map[string]int // code -> armed relay index
+	armedInputs  map[string]auxInSig // code -> armed input (index + contact sense)
+	armedOutputs map[string]int      // code -> armed relay index
 }
 
 // NewAuxManager builds an aux reconciler for the controller with the given code.
@@ -56,7 +56,7 @@ func NewAuxManager(code, location string, store *PolicyStore, rt *Runtime, hw Au
 		hw:           hw,
 		log:          log.With("component", "aux-manager"),
 		dirty:        make(chan struct{}, 1),
-		armedInputs:  make(map[string]int),
+		armedInputs:  make(map[string]auxInSig),
 		armedOutputs: make(map[string]int),
 	}
 }
@@ -141,11 +141,12 @@ func (am *AuxManager) reconcile() {
 	for code, ai := range desiredIn {
 		am.warnLocation(code, ai.Location)
 		cur, armed := am.armedInputs[code]
+		sig := auxInSig{index: ai.InputIndex, invert: ai.Invert()}
 		switch {
 		case !armed:
 			am.armInput(ai)
-		case cur != ai.InputIndex:
-			am.log.Info("aux input index changed; re-arming", "code", code, "from", cur, "to", ai.InputIndex)
+		case cur != sig:
+			am.log.Info("aux input wiring changed; re-arming", "code", code, "fromIndex", cur.index, "toIndex", sig.index)
 			am.disarmInput(code)
 			am.armInput(ai)
 		}
@@ -176,12 +177,19 @@ func (am *AuxManager) disarmOutput(code string) {
 }
 
 func (am *AuxManager) armInput(ai policykv.AuxInput) {
-	if err := am.hw.ArmInput(ai.Code, ai.InputIndex); err != nil {
+	if err := am.hw.ArmInput(ai.Code, ai.InputIndex, ai.Invert()); err != nil {
 		am.log.Error("failed to arm aux input; will retry on next policy change", "code", ai.Code, "error", err)
 		return
 	}
 	am.rt.ArmAuxInput(ai.Code, ai.Location)
-	am.armedInputs[ai.Code] = ai.InputIndex
+	am.armedInputs[ai.Code] = auxInSig{index: ai.InputIndex, invert: ai.Invert()}
+}
+
+// auxInSig is the part of an aux input's binding that determines how its line is
+// requested (index + contact sense); a change re-arms it. Comparable for ==.
+type auxInSig struct {
+	index  int
+	invert bool
 }
 
 func (am *AuxManager) disarmInput(code string) {

@@ -61,9 +61,9 @@ func NewMockHardware(log *logger.Logger) *MockHardware {
 	return &MockHardware{log: log, locks: make(map[string]*MockLock)}
 }
 
-// Arm returns a fresh MockLock for the portal; the logical indices are ignored
-// (no physical lines). It never fails.
-func (h *MockHardware) Arm(code string, _, _, _ int) (LockDriver, error) {
+// Arm returns a fresh MockLock for the portal; the wiring (indices + sense) is
+// ignored (no physical lines). It never fails.
+func (h *MockHardware) Arm(code string, _ PortalIO) (LockDriver, error) {
 	l := NewMockLock(code, h.log)
 	h.mu.Lock()
 	h.locks[code] = l
@@ -97,7 +97,7 @@ func (h *MockHardware) DisarmOutput(code string) {
 
 // ArmInput is a no-op for the mock backend (no physical input lines, so no aux
 // input transitions are ever emitted).
-func (h *MockHardware) ArmInput(_ string, _ int) error { return nil }
+func (h *MockHardware) ArmInput(_ string, _ int, _ bool) error { return nil }
 
 // DisarmInput is a no-op for the mock backend.
 func (h *MockHardware) DisarmInput(_ string) {}

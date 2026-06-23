@@ -53,6 +53,27 @@ const (
 	InputAux = "aux" // named auxiliary input (observe-only)
 )
 
+// PortalIO is the physical wiring a PortalHardware backend arms for one portal:
+// the logical relay/input indices (0 = not wired) plus the per-line *logical
+// sense* the operator configured. The backend resolves the indices to physical
+// lines through the model profile (which carries the board's electrical
+// polarity) and folds these inversions on top, so "sense" stays a per-install
+// concern, separate from the board convention.
+//
+//   - Maglock inverts the lock relay's drive sense: a fail-safe maglock energizes
+//     to LOCK (so it idles energized), versus a fail-secure strike that energizes
+//     to unlock. The backend XORs it into the relay line's active-low.
+//   - DpsInvert / RexInvert flip a door input's contact sense for normally-open
+//     (DPS) / normally-closed (REX) wiring, relative to the system default.
+type PortalIO struct {
+	LockRelay int
+	DpsInput  int
+	RexInput  int
+	Maglock   bool
+	DpsInvert bool
+	RexInvert bool
+}
+
 // InputEvent is one digital-input transition for a portal. Kind selects which
 // signal changed: a door-position switch (DPS), whose Closed reports the contact
 // state, or a request-to-exit (REX), whose Active reports the press. At is when

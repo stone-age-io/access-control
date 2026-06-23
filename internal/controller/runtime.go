@@ -353,6 +353,7 @@ func (r *Runtime) handleInput(ev drivers.InputEvent) {
 	case drivers.InputREX:
 		if ev.Active {
 			r.noteREX(ev.Portal, ev.At)
+			r.maybeRexUnlock(ev.Portal)
 		}
 	case drivers.InputAux:
 		r.setAuxInput(ev.Portal, ev.Active, ev.At)
@@ -449,6 +450,28 @@ func (r *Runtime) noteREX(portal string, at time.Time) {
 	r.mu.Lock()
 	r.monitorFor(portal).rexUntil = at.Add(accessGrace)
 	r.mu.Unlock()
+}
+
+// maybeRexUnlock pulses the strike on a REX press when the portal is configured
+// for it (rex_unlock). By default REX only opens the authorized-open window (so
+// egress doesn't read as forced) and egress is mechanical; with rex_unlock the
+// controller also releases the electric strike for the portal's pulse duration.
+func (r *Runtime) maybeRexUnlock(portal string) {
+	b, ok := r.store.Binding(portal)
+	if !ok || !b.RexUnlock {
+		return
+	}
+	lock, ok := r.lockFor(portal)
+	if !ok {
+		return
+	}
+	pulse := 0
+	if ap, ok := r.store.Portal(portal); ok {
+		pulse = ap.PulseSeconds
+	}
+	if err := lock.Pulse(pulse); err != nil {
+		r.log.Error("rex unlock pulse failed", "portal", portal, "error", err)
+	}
 }
 
 // monitorFor returns the portal's door monitor, creating it on first use. Must be

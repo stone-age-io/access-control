@@ -99,6 +99,14 @@ export interface Portal extends BaseRecord {
   held_open_seconds: number
   /** OSDP PD address of this portal's reader on the controller's RS485 bus (used when reader=="osdp"). */
   reader_address: number
+  /** Door-position contact sense: '' / 'nc' (default, closed when shut) / 'no'. Controller-only wiring hint. */
+  dps_contact: 'nc' | 'no' | ''
+  /** Request-to-exit contact sense: '' / 'no' (default, closed when pressed) / 'nc'. */
+  rex_contact: 'nc' | 'no' | ''
+  /** Lock type: '' / 'strike' (default, fail-secure energize-to-unlock) / 'maglock' (fail-safe energize-to-lock). */
+  lock_type: 'strike' | 'maglock' | ''
+  /** When true, a REX press also pulses the strike (electric egress), not just shunts the forced alarm. */
+  rex_unlock: boolean
   /** While auto_schedule's window is open, the controller adopts this posture instead of the standing one ('' = no automation). */
   auto_posture: Posture | ''
   /** Schedules relation id that gates auto_posture ('' = no automation). Both-or-neither with auto_posture. */
@@ -116,6 +124,8 @@ export interface AuxInput extends BaseRecord {
   controller: string
   /** Logical input index on the box; the model template maps it to a line. */
   input_index: number
+  /** Contact sense: '' / 'no' (default, closed when asserted) / 'nc'. Controller-only wiring hint. */
+  contact: 'nc' | 'no' | ''
   expand?: { location?: Location; controller?: Controller }
 }
 

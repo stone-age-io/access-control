@@ -139,6 +139,15 @@ a location's **fire** input is active, all alarm emission is suppressed
 (forced/held during evacuation would be false alarms). The DOTL timer and the
 held-open threshold are hardware-local timing, not policy.
 
+Each input's **contact sense** is configurable per install (`dpsContact`/
+`rexContact`/`aux_input.contact`, see Policy KV below): a normally-open vs
+normally-closed contact is folded onto the board's electrical polarity so "active"
+always means the monitored condition is asserted, regardless of wiring. By default
+a REX press only shunts the forced alarm; with `rexUnlock` the controller also
+pulses the strike (electric egress). The strike's fail-safe behavior follows
+`lockType`: a fail-secure **strike** de-energizes (re-locks) on shutdown/crash,
+while a fail-safe **maglock** idles energized and releases on power loss by design.
+
 ### Scheduled posture & the strike hold
 
 Of the postures, only `unlocked` (B) has a standing physical effect: the strike is
@@ -190,14 +199,14 @@ sole writer; controllers are read-only watchers.
 |---|---|
 | `location.{code}` | `{"code","name","timezone","faiSuppress"}` |
 | `sched.{code}` | `{"code","windows":[{"days":[1..7],"start":"HH:MM","end":"HH:MM"}],"observeHolidays"}` |
-| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?,"readerAddress"?}` |
+| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?,"readerAddress"?,`<br>`"dpsContact"?,"rexContact"?,"lockType"?,"rexUnlock"?}` |
 | `controller.{code}` | `{"code","name","location","model"}` |
 | `holiday.{pbid}` | `{"location":"<location code>","date":"YYYY-MM-DD","recurring"}` |
 | `group.{code}` | `{"code","portals":["<portal code>"],"schedule":"<sched code>"}` |
 | `role.{code}` | `{"code","groups":["<group code>"]}` |
 | `user.{pbid}` | `{"id","status","roles":["<role code>"]}` |
 | `cred.{value}` | `{"value","user":"<cardholder pbid>","status","validFrom"?,"validUntil"?}` |
-| `auxin.{code}` | `{"code","location","controller"?,"inputIndex"?}` |
+| `auxin.{code}` | `{"code","location","controller"?,"inputIndex"?,"contact"?}` |
 | `auxout.{code}` | `{"code","location","controller"?,"relayIndex"?,"pulseSeconds"?}` |
 
 **UI-only fields are deliberately excluded.** The management UI adds
@@ -241,7 +250,20 @@ OSDP enable: `>= 0` is a reader at that PD address (0 = the single-reader case),
 box maps the logical indices to physical lines via its `model`'s
 hardware profile (`internal/drivers/hardware`); the indices and `controller`/`model`
 are consumed only by the controller's PortalManager/runtime, never by the pure
-`policy.Decide`. `controllers.last_seen`/`status` are **not** mirrored — accessd
+`policy.Decide`.
+
+The remaining hardware fields are **per-install wiring sense**, distinct from the
+board's electrical polarity (which lives in the model profile) — the controller
+folds them onto that polarity when it arms each line. `dpsContact`/`rexContact` are
+the contact type, `"nc"` or `"no"` (empty = the common default: a DPS is normally
+**closed** when the door is shut, a REX is normally **open**, closed when pressed);
+the non-default value inverts how a contact edge is read. `lockType` is `"strike"`
+(empty/default, fail-secure — energize to unlock) or `"maglock"` (fail-safe —
+energize to lock, so the relay idles energized and releases on power loss); a
+maglock inverts the lock relay's drive sense. `rexUnlock` (default false) makes a
+REX press also pulse the strike for electric egress, not just shunt the forced
+alarm. Like the indices, these are controller-only and never seen by `policy.Decide`.
+`aux_input.contact` is the same `"nc"`/`"no"` sense (default normally-open). `controllers.last_seen`/`status` are **not** mirrored — accessd
 writes them from heartbeats (see above), so they are absent from the KV value.
 
 Eventual consistency is fail-safe: an unknown credential, a reference to a

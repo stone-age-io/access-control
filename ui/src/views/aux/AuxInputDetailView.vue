@@ -136,6 +136,9 @@ onBeforeUnmount(() => {
           <span v-else class="opacity-40">Unassigned</span>
         </DataField>
         <DataField label="Input index">{{ record.input_index }}</DataField>
+        <DataField label="Contact">
+          {{ record.contact === 'nc' ? 'Normally closed' : 'Normally open' }}
+        </DataField>
       </div>
     </BaseCard>
 

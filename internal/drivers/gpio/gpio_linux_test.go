@@ -44,11 +44,11 @@ func TestNewAndInputs(t *testing.T) {
 func TestArmUnknownRelayIndex(t *testing.T) {
 	d := newHW(t, "kincony-server-mini")
 	defer d.Close()
-	if _, err := d.Arm("p1", 99, 0, 0); err == nil {
+	if _, err := d.Arm("p1", drivers.PortalIO{LockRelay: 99}); err == nil {
 		t.Error("Arm with relay index 99 succeeded, want error")
 	}
 	// Index 0 (unset) is also undefined → error, not a wrong line.
-	if _, err := d.Arm("p2", 0, 0, 0); err == nil {
+	if _, err := d.Arm("p2", drivers.PortalIO{LockRelay: 0}); err == nil {
 		t.Error("Arm with unset relay index 0 succeeded, want error")
 	}
 }
@@ -58,7 +58,7 @@ func TestArmUnknownRelayIndex(t *testing.T) {
 func TestArmI2CBackendRejected(t *testing.T) {
 	d := newHW(t, "kincony-pi5r8")
 	defer d.Close()
-	_, err := d.Arm("p1", 1, 0, 0)
+	_, err := d.Arm("p1", drivers.PortalIO{LockRelay: 1})
 	if err == nil {
 		t.Fatal("Arm on an I2C-backed model succeeded, want 'not supported' error")
 	}
@@ -110,7 +110,7 @@ func TestArmAfterCloseAndDisarmUnknown(t *testing.T) {
 	if err := d.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if _, err := d.Arm("p1", 1, 0, 0); err == nil {
+	if _, err := d.Arm("p1", drivers.PortalIO{LockRelay: 1}); err == nil {
 		t.Error("Arm after Close succeeded, want error")
 	}
 }
