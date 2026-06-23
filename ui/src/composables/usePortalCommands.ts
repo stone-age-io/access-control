@@ -60,5 +60,32 @@ export function usePortalCommands() {
     }
   }
 
-  return { commanding, grant, setPosture }
+  /**
+   * Set the same posture on many portals at once (the list-view command bar).
+   * Commands are per-portal and fire-and-forget, so there is no atomic bulk —
+   * we fan out independent requests and report a summary. The caller owns the
+   * batch-level confirm (it knows the count); this only issues + toasts the
+   * outcome. `value: "clear"` reverts each portal's override.
+   */
+  async function setPostureBulk(portalIds: string[], value: string): Promise<{ ok: number; failed: number }> {
+    commanding.value = true
+    try {
+      const results = await Promise.allSettled(
+        portalIds.map((id) =>
+          pb.send(`/api/portals/${id}/posture`, { method: 'POST', body: { posture: value } }),
+        ),
+      )
+      const failed = results.filter((r) => r.status === 'rejected').length
+      const ok = results.length - failed
+      const verb = value === 'clear' ? 'Cleared override on' : `Set ${value} on`
+      if (failed === 0) toast.success(`${verb} ${ok} portal(s)`)
+      else if (ok === 0) toast.error(`Failed on all ${failed} portal(s)`)
+      else toast.warning(`${verb} ${ok} portal(s); ${failed} failed`)
+      return { ok, failed }
+    } finally {
+      commanding.value = false
+    }
+  }
+
+  return { commanding, grant, setPosture, setPostureBulk }
 }

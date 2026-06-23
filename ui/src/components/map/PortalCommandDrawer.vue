@@ -2,11 +2,14 @@
 import { computed } from 'vue'
 import type { Portal, PointStatus } from '@/types/pocketbase'
 import { usePortalCommands, POSTURES } from '@/composables/usePortalCommands'
+import { useAuthStore } from '@/stores/auth'
 import PostureBadge from '@/components/ui/PostureBadge.vue'
 
 const props = defineProps<{ portal: Portal; status: PointStatus | null; isMobile: boolean }>()
 defineEmits<{ close: [] }>()
 
+const auth = useAuthStore()
+const canCommand = computed(() => auth.can('command'))
 const { commanding, grant, setPosture } = usePortalCommands()
 
 const isOverridden = computed(() => props.status?.posture_source === 'override')
@@ -65,7 +68,7 @@ const doorBadge = computed(() => {
       </p>
 
       <!-- Momentary -->
-      <div class="border-t border-base-200 pt-4">
+      <div v-if="canCommand" class="border-t border-base-200 pt-4">
         <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Momentary</div>
         <button class="btn btn-sm btn-primary btn-block" :disabled="commanding" @click="grant(portal.id)">
           Grant (unlock once)
@@ -73,7 +76,7 @@ const doorBadge = computed(() => {
       </div>
 
       <!-- Posture override -->
-      <div class="border-t border-base-200 pt-4">
+      <div v-if="canCommand" class="border-t border-base-200 pt-4">
         <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Posture override</div>
         <div class="flex flex-wrap gap-2">
           <button
@@ -101,6 +104,10 @@ const doorBadge = computed(() => {
           scheduled or standing posture.
         </p>
       </div>
+
+      <p v-if="!canCommand" class="border-t border-base-200 pt-4 text-xs opacity-50">
+        Read-only — issuing commands needs the <span class="font-medium">Door commands</span> capability.
+      </p>
     </div>
 
     <!-- Footer -->

@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import { useAuthStore } from '@/stores/auth'
 import { usePortalCommands, POSTURES } from '@/composables/usePortalCommands'
 import { policyKey } from '@/utils/policyKey'
 import type { Portal, AccessGroup, PointStatus } from '@/types/pocketbase'
@@ -18,6 +19,8 @@ const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 const { confirm } = useConfirm()
+const auth = useAuthStore()
+const canCommand = computed(() => auth.can('command'))
 
 const recordId = route.params.id as string
 const record = ref<Portal | null>(null)
@@ -134,6 +137,74 @@ onBeforeUnmount(() => {
       <button class="btn btn-sm btn-ghost text-error" :disabled="deleting" @click="handleDelete">Delete</button>
     </template>
 
+    <!-- Operators come here to see state and act — so live status + controls lead,
+         and the reference/config cards follow. -->
+    <BaseCard title="Live status &amp; controls">
+      <div class="space-y-4">
+        <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-6 gap-y-4">
+          <DataField label="Door">
+            <span class="badge badge-sm" :class="doorBadge.cls">{{ doorBadge.text }}</span>
+          </DataField>
+          <DataField label="Effective posture">
+            <PostureBadge :posture="status.posture" :source="status.posture_source" />
+          </DataField>
+          <DataField label="Held open">
+            <span v-if="status.held" class="badge badge-sm badge-warning">Held</span>
+            <span v-else class="opacity-40">No</span>
+          </DataField>
+          <DataField label="Updated">{{ changedAt() }}</DataField>
+        </div>
+        <p v-else class="text-sm opacity-50">
+          No live status yet — the controller driving this portal hasn’t reported (offline or unassigned).
+        </p>
+
+        <div class="border-t border-base-200 pt-4">
+          <template v-if="canCommand">
+            <div class="flex flex-col sm:flex-row sm:items-start gap-4">
+              <div>
+                <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Momentary</div>
+                <button class="btn btn-sm btn-primary" :disabled="commanding" @click="grant(recordId)">
+                  Grant (unlock once)
+                </button>
+              </div>
+              <div class="sm:border-l sm:border-base-200 sm:pl-4 flex-1">
+                <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Posture override</div>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    v-for="p in POSTURES"
+                    :key="p.value"
+                    class="btn btn-sm"
+                    :class="p.danger ? 'btn-outline btn-warning' : 'btn-outline'"
+                    :disabled="commanding"
+                    @click="setPosture(recordId, p.value, { danger: p.danger, code: record.code })"
+                  >
+                    {{ p.label }}
+                  </button>
+                  <button
+                    class="btn btn-sm"
+                    :class="isOverridden ? 'btn-outline btn-warning' : 'btn-ghost'"
+                    :disabled="commanding || !isOverridden"
+                    @click="setPosture(recordId, 'clear')"
+                  >
+                    Clear override
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p class="text-xs opacity-50 mt-3">
+              <span v-if="isOverridden" class="text-warning font-medium">A manual override is in force. </span>
+              A posture override is operational state on the controller — it is not saved to this record, and
+              “Clear” reverts to the scheduled or standing posture.
+            </p>
+          </template>
+          <p v-else class="text-sm opacity-50">
+            Read-only — issuing grants and posture overrides needs the
+            <span class="font-medium">Door commands</span> capability.
+          </p>
+        </div>
+      </div>
+    </BaseCard>
+
     <BaseCard title="Identity">
       <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
         <DataField label="Code">
@@ -149,64 +220,6 @@ onBeforeUnmount(() => {
           </router-link>
           <span v-else class="opacity-40">—</span>
         </DataField>
-      </div>
-    </BaseCard>
-
-    <BaseCard title="Live status">
-      <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-6 gap-y-4">
-        <DataField label="Door">
-          <span class="badge badge-sm" :class="doorBadge.cls">{{ doorBadge.text }}</span>
-        </DataField>
-        <DataField label="Effective posture">
-          <PostureBadge :posture="status.posture" :source="status.posture_source" />
-        </DataField>
-        <DataField label="Held open">
-          <span v-if="status.held" class="badge badge-sm badge-warning">Held</span>
-          <span v-else class="opacity-40">No</span>
-        </DataField>
-        <DataField label="Updated">{{ changedAt() }}</DataField>
-      </div>
-      <p v-else class="text-sm opacity-50">
-        No live status yet — the controller driving this portal hasn’t reported (offline or unassigned).
-      </p>
-    </BaseCard>
-
-    <BaseCard title="Controls">
-      <div class="space-y-4">
-        <div>
-          <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Momentary</div>
-          <button class="btn btn-sm btn-primary" :disabled="commanding" @click="grant(recordId)">
-            Grant (unlock once)
-          </button>
-        </div>
-        <div class="border-t border-base-200 pt-4">
-          <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Posture override</div>
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="p in POSTURES"
-              :key="p.value"
-              class="btn btn-sm"
-              :class="p.danger ? 'btn-outline btn-warning' : 'btn-outline'"
-              :disabled="commanding"
-              @click="setPosture(recordId, p.value, { danger: p.danger, code: record.code })"
-            >
-              {{ p.label }}
-            </button>
-            <button
-              class="btn btn-sm"
-              :class="isOverridden ? 'btn-outline btn-warning' : 'btn-ghost'"
-              :disabled="commanding || !isOverridden"
-              @click="setPosture(recordId, 'clear')"
-            >
-              Clear override
-            </button>
-          </div>
-          <p class="text-xs opacity-50 mt-2">
-            <span v-if="isOverridden" class="text-warning font-medium">A manual override is in force. </span>
-            A posture override is operational state on the controller — it is not saved to this record, and
-            “Clear” reverts to the scheduled or standing posture.
-          </p>
-        </div>
       </div>
     </BaseCard>
 

@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import { useAuthStore } from '@/stores/auth'
 import { policyKey } from '@/utils/policyKey'
 import type { AuxOutput, PointStatus } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
@@ -15,6 +16,8 @@ const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 const { confirm } = useConfirm()
+const auth = useAuthStore()
+const canCommand = computed(() => auth.can('command'))
 
 const recordId = route.params.id as string
 const record = ref<AuxOutput | null>(null)
@@ -133,15 +136,20 @@ onBeforeUnmount(() => {
     </BaseCard>
 
     <BaseCard title="Controls">
-      <div class="flex flex-wrap gap-2">
-        <button class="btn btn-sm btn-outline btn-success" :disabled="commanding" @click="drive('on')">On</button>
-        <button class="btn btn-sm btn-outline" :disabled="commanding" @click="drive('off')">Off</button>
-        <button class="btn btn-sm btn-primary" :disabled="commanding" @click="drive('pulse')">
-          Pulse ({{ record.pulse_seconds }}s)
-        </button>
-      </div>
-      <p class="text-xs opacity-50 mt-2">
-        On/Off set the standing state; Pulse energizes momentarily. The live status reflects the standing state.
+      <template v-if="canCommand">
+        <div class="flex flex-wrap gap-2">
+          <button class="btn btn-sm btn-outline btn-success" :disabled="commanding" @click="drive('on')">On</button>
+          <button class="btn btn-sm btn-outline" :disabled="commanding" @click="drive('off')">Off</button>
+          <button class="btn btn-sm btn-primary" :disabled="commanding" @click="drive('pulse')">
+            Pulse ({{ record.pulse_seconds }}s)
+          </button>
+        </div>
+        <p class="text-xs opacity-50 mt-2">
+          On/Off set the standing state; Pulse energizes momentarily. The live status reflects the standing state.
+        </p>
+      </template>
+      <p v-else class="text-sm opacity-50">
+        Read-only — driving this output needs the <span class="font-medium">Door commands</span> capability.
       </p>
     </BaseCard>
 
