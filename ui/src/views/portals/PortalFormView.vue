@@ -229,15 +229,22 @@ onMounted(async () => {
 
       <BaseCard title="Posture &amp; timing">
         <div class="space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Standing posture" hint="Default state; a runtime command or scheduled posture can override it on the controller.">
-              <select v-model="form.posture" class="select select-bordered">
-                <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
-              </select>
-            </FormField>
-            <FormField label="Pulse (seconds)" hint="How long the lock releases on a grant.">
-              <input v-model.number="form.pulse_seconds" type="number" min="0" class="input input-bordered" />
-            </FormField>
+          <FormField label="Standing posture" hint="Default state; a runtime command or scheduled posture can override it on the controller.">
+            <select v-model="form.posture" class="select select-bordered">
+              <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
+            </select>
+          </FormField>
+
+          <div class="border-t border-base-200 pt-4">
+            <div class="text-sm font-medium text-base-content/90 mb-3">Timing</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField label="Pulse (seconds)" hint="How long the lock releases on a grant.">
+                <input v-model.number="form.pulse_seconds" type="number" min="0" class="input input-bordered" />
+              </FormField>
+              <FormField label="Held-open (seconds)" hint="Door-open-too-long: a held alarm fires if the door stays open this long after an authorized open. Needs a DPS input wired; 0 disables.">
+                <input v-model.number="form.held_open_seconds" type="number" min="0" class="input input-bordered" />
+              </FormField>
+            </div>
           </div>
 
           <div class="border-t border-base-200 pt-4 space-y-4">
@@ -285,11 +292,6 @@ onMounted(async () => {
             </FormField>
             <FormField label="REX input">
               <IndexPicker v-model="form.rex_input" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
-            </FormField>
-          </div>
-          <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <FormField label="Held-open (s)">
-              <input v-model.number="form.held_open_seconds" type="number" min="0" class="input input-bordered" />
             </FormField>
           </div>
 

@@ -225,11 +225,15 @@ onBeforeUnmount(() => {
 
     <BaseCard title="Posture &amp; timing">
       <div class="space-y-4">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-4">
           <DataField label="Standing posture">
             <span class="badge badge-sm badge-ghost">{{ record.posture || 'secure' }}</span>
           </DataField>
           <DataField label="Pulse">{{ record.pulse_seconds }} s</DataField>
+          <DataField label="Held-open">
+            <span v-if="record.held_open_seconds > 0">{{ record.held_open_seconds }} s</span>
+            <span v-else class="opacity-40">Disabled</span>
+          </DataField>
         </div>
         <div class="border-t border-base-200 pt-4">
           <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Scheduled override</div>
@@ -259,7 +263,6 @@ onBeforeUnmount(() => {
           </router-link>
           <span v-else class="opacity-40">Unassigned</span>
         </DataField>
-        <DataField label="Held-open">{{ record.held_open_seconds }} s</DataField>
         <DataField label="Lock relay">{{ record.lock_relay }}</DataField>
         <DataField label="DPS input">{{ record.dps_input }}</DataField>
         <DataField label="REX input">{{ record.rex_input }}</DataField>
