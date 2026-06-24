@@ -451,6 +451,11 @@ looping forever; the SMTP transport is PocketBase's own mail settings, configure
 in `/_`. It is **config-free and always started** (like the disarm sink) and stays
 inert unless two opt-ins line up: the alarm's source opts in
 (`portals`/`areas.notify_on_alarm`, `locations.notify_fire`) **and** at least one
-operator opts in (`users.notify`). The sink itself stays PocketBase-free — it parses
-the event and hands it to accessd, which resolves the source opt-in and recipients;
-`held_clear` (a held-open auto-clear) is never emailed.
+operator opts in (`users.notify`). Recipients are then **scoped by location**:
+`users.notify_locations` is the set of locations an operator is paged for, so an
+alarm at location *L* mails only the notify operators whose scope is empty (= all
+locations, the default) or contains *L* — routing site-local alarms to site-local
+people without a per-source→per-operator rules engine. The sink itself stays
+PocketBase-free — it parses the event and hands it to accessd, which resolves the
+source opt-in and the location-scoped recipients; `held_clear` (a held-open
+auto-clear) is never emailed.

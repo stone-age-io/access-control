@@ -14,7 +14,8 @@ Two Go binaries plus a Vue 3 management UI:
   sink** (`internal/notify`) — a *second*, independent durable on ACC_EVENTS that emails on alarm/fire
   (`DeliverNew`, always on but config-free and inert unless opted in: an alarm source sets
   `portals`/`areas.notify_on_alarm` or `locations.notify_fire`, **and** an operator sets `users.notify` to
-  receive it; SMTP transport is PocketBase's own mail settings) — and runs the **entry-disarm sink**
+  receive it — recipients optionally scoped to locations via `users.notify_locations`, empty = all; SMTP
+  transport is PocketBase's own mail settings) — and runs the **entry-disarm sink**
   (`internal/disarm`) — a *third* such durable that, on a valid credential grant at a `disarm_on_grant` portal,
   durably disarms that portal's area (`DeliverNew`, always on but inert unless a portal opts in). Serves the
   embedded UI at `/`.
@@ -208,7 +209,9 @@ the `policy.Decide` wire), `1750000018` (shareable holiday calendars), `17500000
 (`events` ack fields `acknowledged`/`ack_by`/`ack_at`), `1750000021` (a guarded areas demo fixture), and
 `1750000022` (portal `area`/`disarm_on_grant` — portals as area members + entry-disarm), and `1750000023`
 (notification opt-in: `users.notify` recipient flag + per-source `portals`/`areas.notify_on_alarm` and
-`locations.notify_fire` — moves the alarm-email "who"/"which" out of config into UI-managed data).
+`locations.notify_fire` — moves the alarm-email "who"/"which" out of config into UI-managed data), and
+`1750000024` (notification recipient scoping: `users.notify_locations` — an operator is paged only for
+alarms at locations in its scope; empty = all locations).
 The base `1750000000` stays frozen; everything is additive. `migratecmd`
 Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
 before committing.

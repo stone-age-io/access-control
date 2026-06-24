@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -291,7 +292,7 @@ func newNotifySend(app core.App, log *logger.Logger) notify.SendFunc {
 		if !sourceWantsNotify(app, ev) {
 			return false, nil // the source has not opted into email
 		}
-		recipients, err := notifyRecipients(app)
+		recipients, err := notifyRecipients(app, ev.Location)
 		if err != nil {
 			return false, err // a genuine read failure: redeliver
 		}
@@ -340,19 +341,35 @@ func sourceWantsNotify(app core.App, ev notify.Event) bool {
 }
 
 // notifyRecipients returns the email addresses of operators who opted into alarm
-// email (users.notify). The operator set is tiny, so it filters in Go rather than
-// risk a backend-specific bool query. A read failure is surfaced (→ redeliver).
-func notifyRecipients(app core.App) ([]string, error) {
+// email (users.notify) and whose location scope covers this alarm. The operator
+// set is tiny, so it filters in Go rather than risk a backend-specific query. A
+// read failure is surfaced (→ redeliver).
+//
+// Scoping (users.notify_locations): an empty scope means all locations — so an
+// operator who never narrows keeps the pre-scoping receive-everything behavior; a
+// non-empty scope must contain this alarm's location. The relation stores location
+// record ids while the wire carries the stable code, so the alarm's locationCode
+// is resolved to its id once. A missing/dangling location resolves to "" (no scoped
+// operator can match it), so it falls through to the unscoped recipients only.
+func notifyRecipients(app core.App, locationCode string) ([]string, error) {
 	recs, err := app.FindAllRecords("users")
 	if err != nil {
 		return nil, err
 	}
+	var locID string
+	if loc, err := app.FindFirstRecordByFilter("locations", "code = {:code}", dbx.Params{"code": locationCode}); err == nil {
+		locID = loc.Id
+	}
 	out := make([]string, 0, len(recs))
 	for _, r := range recs {
-		if r.GetBool("notify") {
-			if email := r.GetString("email"); email != "" {
-				out = append(out, email)
-			}
+		if !r.GetBool("notify") {
+			continue
+		}
+		if scope := r.GetStringSlice("notify_locations"); len(scope) > 0 && !slices.Contains(scope, locID) {
+			continue // operator is scoped to other locations
+		}
+		if email := r.GetString("email"); email != "" {
+			out = append(out, email)
 		}
 	}
 	return out, nil

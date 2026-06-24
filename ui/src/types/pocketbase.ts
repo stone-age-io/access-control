@@ -288,6 +288,8 @@ export interface User extends BaseRecord {
   permissions: Capability[]
   /** When true, this operator receives alarm email from sources that opt in (portals/areas/locations). */
   notify: boolean
+  /** Location ids this operator is paged for; empty = all locations. Scopes users.notify. */
+  notify_locations: string[]
 }
 
 export type AuditEventType = 'create' | 'update' | 'delete' | 'auth'

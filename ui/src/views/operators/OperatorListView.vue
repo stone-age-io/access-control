@@ -25,6 +25,14 @@ const { items: operators, page, totalPages, totalItems, loading, error, load, ne
 const searchQuery = ref('')
 const deleting = ref(false)
 
+// The Notify column conveys both the opt-in and its location scope at a glance:
+// off, all sites (empty scope), or a count when narrowed to specific locations.
+function notifyLabel(u: User): string {
+  if (!u.notify) return 'no'
+  const n = u.notify_locations?.length ?? 0
+  return n ? `${n} site${n > 1 ? 's' : ''}` : 'all sites'
+}
+
 function queryOpts() {
   const q = searchQuery.value.trim().replace(/["\\]/g, '')
   const filter = q ? `email ~ "${q}" || name ~ "${q}"` : ''
@@ -124,10 +132,10 @@ onMounted(reload)
         </template>
 
         <template #cell-notify="{ item }">
-          <span class="badge badge-sm" :class="item.notify ? 'badge-warning' : 'badge-ghost'">{{ item.notify ? 'alarms' : 'no' }}</span>
+          <span class="badge badge-sm" :class="item.notify ? 'badge-warning' : 'badge-ghost'">{{ notifyLabel(item) }}</span>
         </template>
         <template #card-notify="{ item }">
-          <span class="badge badge-sm" :class="item.notify ? 'badge-warning' : 'badge-ghost'">{{ item.notify ? 'alarms' : 'no' }}</span>
+          <span class="badge badge-sm" :class="item.notify ? 'badge-warning' : 'badge-ghost'">{{ notifyLabel(item) }}</span>
         </template>
 
         <template #empty>

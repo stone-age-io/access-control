@@ -147,13 +147,18 @@ It is inert until **two opt-ins** line up:
 | Opt-in | Where (UI) | Effect |
 |---|---|---|
 | `users.notify` | Operators → Notify | the operator is a recipient of alarm email |
+| `users.notify_locations` | Operators → Notify locations | scope the operator to specific locations (empty = all locations) |
 | `portals.notify_on_alarm` | Portal → Posture & timing | email the recipients on this door's forced/held-open alarms |
 | `areas.notify_on_alarm` | Area → Email on intrusion | email the recipients on this area's intrusion alarms |
 | `locations.notify_fire` | Location → Email on fire | email the recipients on this location's fire-input alarms |
 
 A source flag without any `users.notify` operator (or vice-versa) sends nothing.
-The auto-clear of a held-open door (`held_clear`) is never emailed — only the
-raise. There is no `notify.*` config block and no `SA_NOTIFY_*` env var.
+**Recipients are scoped by location:** an alarm at a location emails only the
+notify operators whose `notify_locations` is empty (= all locations) or contains
+that location — so a multi-site deployment can page site-local operators without a
+per-source routing matrix. The auto-clear of a held-open door (`held_clear`) is
+never emailed — only the raise. There is no `notify.*` config block and no
+`SA_NOTIFY_*` env var.
 
 > **SMTP lives in PocketBase, not here.** The mail transport (host/port/
 > credentials/sender) is configured in the PocketBase admin UI at `/_` ("Mail

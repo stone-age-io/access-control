@@ -3,11 +3,12 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
-import type { User, Capability } from '@/types/pocketbase'
+import type { User, Capability, Location } from '@/types/pocketbase'
 import { CAPABILITIES, PRESETS, presetLabel } from '@/utils/capabilities'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import RelationPicker from '@/components/ui/RelationPicker.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,10 +23,12 @@ const form = ref({
   permissions: [] as Capability[],
   verified: true,
   notify: false,
+  notify_locations: [] as string[],
   password: '',
   passwordConfirm: '',
 })
 
+const locations = ref<Location[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
 
@@ -46,6 +49,7 @@ async function loadRecord() {
       permissions: (u.permissions || []) as Capability[],
       verified: !!u.verified,
       notify: !!u.notify,
+      notify_locations: [...(u.notify_locations || [])],
       password: '',
       passwordConfirm: '',
     }
@@ -72,6 +76,9 @@ async function handleSubmit() {
       permissions: form.value.permissions,
       verified: form.value.verified,
       notify: form.value.notify,
+      // Empty = all locations. Only meaningful while notify is on, but it is
+      // harmless to persist regardless, so the scope survives toggling notify off/on.
+      notify_locations: form.value.notify_locations,
     }
     // Password is set on create, and on edit only when a new one was entered.
     if (form.value.password) {
@@ -93,8 +100,17 @@ async function handleSubmit() {
   }
 }
 
-onMounted(() => {
-  if (isEdit.value) loadRecord()
+async function loadLocations() {
+  try {
+    locations.value = await pb.collection('locations').getFullList<Location>({ sort: 'code' })
+  } catch (err: any) {
+    toast.error(err?.message || 'Failed to load locations')
+  }
+}
+
+onMounted(async () => {
+  await loadLocations()
+  if (isEdit.value) await loadRecord()
 })
 </script>
 
@@ -133,6 +149,20 @@ onMounted(() => {
               </label>
             </FormField>
           </div>
+
+          <FormField
+            v-if="form.notify"
+            label="Notify locations"
+            hint="Page this operator only for alarms at these locations. Leave empty to receive alarms from every location."
+          >
+            <RelationPicker
+              v-model="form.notify_locations"
+              :options="locations"
+              :primary="(l) => l.code"
+              :secondary="(l) => l.name"
+              empty="No locations exist yet — create one under Locations."
+            />
+          </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label="Password" :hint="isEdit ? 'Leave blank to keep the current password.' : 'Required.'">

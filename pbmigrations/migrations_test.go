@@ -316,6 +316,31 @@ func TestHolidayCalendars(t *testing.T) {
 	}
 }
 
+// TestNotifyLocations verifies migration 1750000024: the users.notify_locations
+// multi-relation to locations, the recipient-scoping field for alarm email.
+func TestNotifyLocations(t *testing.T) {
+	app := newApp(t)
+
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("users collection: %v", err)
+	}
+	f, ok := users.Fields.GetByName("notify_locations").(*core.RelationField)
+	if !ok || f == nil {
+		t.Fatal("users.notify_locations relation field missing")
+	}
+	if f.MaxSelect <= 1 {
+		t.Errorf("users.notify_locations MaxSelect = %d, want >1 (multi-select)", f.MaxSelect)
+	}
+	locations, err := app.FindCollectionByNameOrId("locations")
+	if err != nil {
+		t.Fatalf("locations collection: %v", err)
+	}
+	if f.CollectionId != locations.Id {
+		t.Errorf("users.notify_locations targets %q, want locations (%q)", f.CollectionId, locations.Id)
+	}
+}
+
 // TestFixtureSingleLocation re-runs the fixture migration's seeding guard logic:
 // the migration no-ops when locations already exist, so a second
 // RunAllMigrations still yields exactly one hq.
