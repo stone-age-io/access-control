@@ -42,6 +42,12 @@ const routes: RouteRecordRaw[] = [
       { path: 'schedules/:id', name: 'Schedule', component: () => import('@/views/schedules/ScheduleDetailView.vue'), meta: { title: 'Schedule' } },
       { path: 'schedules/:id/edit', name: 'ScheduleEdit', component: () => import('@/views/schedules/ScheduleFormView.vue'), meta: { title: 'Edit Schedule', capability: POLICY } },
 
+      // Holiday calendars (shareable date sets observed by locations)
+      { path: 'holiday-calendars', name: 'HolidayCalendars', component: () => import('@/views/holiday_calendars/HolidayCalendarListView.vue'), meta: { title: 'Holiday Calendars' } },
+      { path: 'holiday-calendars/new', name: 'HolidayCalendarNew', component: () => import('@/views/holiday_calendars/HolidayCalendarFormView.vue'), meta: { title: 'New Calendar', capability: POLICY } },
+      { path: 'holiday-calendars/:id', name: 'HolidayCalendar', component: () => import('@/views/holiday_calendars/HolidayCalendarDetailView.vue'), meta: { title: 'Holiday Calendar' } },
+      { path: 'holiday-calendars/:id/edit', name: 'HolidayCalendarEdit', component: () => import('@/views/holiday_calendars/HolidayCalendarFormView.vue'), meta: { title: 'Edit Calendar', capability: POLICY } },
+
       // Holidays
       { path: 'holidays', name: 'Holidays', component: () => import('@/views/holidays/HolidayListView.vue'), meta: { title: 'Holidays' } },
       { path: 'holidays/new', name: 'HolidayNew', component: () => import('@/views/holidays/HolidayFormView.vue'), meta: { title: 'New Holiday', capability: POLICY } },

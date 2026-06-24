@@ -49,6 +49,15 @@ export interface Location extends BaseRecord {
   coordinates: GeoPoint
   /** Uploaded floor-plan image filename (UI only; '' = none). */
   floorplan: string
+  /** Holiday calendar ids this site observes (M:N). Their dates union into the location's holiday set. */
+  holiday_calendars: string[]
+  expand?: { holiday_calendars?: HolidayCalendar[] }
+}
+
+/** A named, shareable set of holiday dates. A location observes one or more; many sites can share one. */
+export interface HolidayCalendar extends BaseRecord {
+  code: string
+  name: string
 }
 
 /** One weekly time window. days are ISO weekdays (1=Mon..7=Sun). */
@@ -183,15 +192,16 @@ export interface Credential extends BaseRecord {
   expand?: { user?: Cardholder }
 }
 
-/** A date a location is closed; closes every window of any holiday-observing schedule that day. */
+/** A date on a holiday calendar; closes every window of any holiday-observing schedule that day. */
 export interface Holiday extends BaseRecord {
-  location: string
+  /** The owning calendar id (a location observes a set of calendars). */
+  calendar: string
   /** Local calendar day (only the date part is used). */
   date: string
   name: string
   /** Match this month/day every year (for fixed-date holidays like Dec 25). */
   recurring: boolean
-  expand?: { location?: Location }
+  expand?: { calendar?: HolidayCalendar }
 }
 
 export type DoorState = 'open' | 'closed' | 'unknown'

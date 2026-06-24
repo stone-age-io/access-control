@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -149,18 +150,18 @@ func TestKeyAndValue_ScheduleWindows(t *testing.T) {
 	}
 }
 
-// A holiday keys under holiday.<id>, resolves its location to a code, and emits
+// A holiday keys under holiday.<id>, resolves its calendar to a code, and emits
 // the calendar-date part only.
 func TestKeyAndValue_Holiday(t *testing.T) {
 	app := newApp(t)
-	location := find(t, app, "locations", "code", "hq")
+	cal := newCalendar(t, app, "us", "US Holidays")
 
 	col, err := app.FindCollectionByNameOrId("holidays")
 	if err != nil {
 		t.Fatalf("collection: %v", err)
 	}
 	rec := core.NewRecord(col)
-	rec.Set("location", location.Id)
+	rec.Set("calendar", cal.Id)
 	rec.Set("date", "2026-12-25 00:00:00.000Z")
 	rec.Set("name", "Christmas")
 	rec.Set("recurring", true)
@@ -179,9 +180,52 @@ func TestKeyAndValue_Holiday(t *testing.T) {
 	if err := json.Unmarshal(val, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.Location != "hq" || got.Date != "2026-12-25" || !got.Recurring {
-		t.Errorf("holiday = %+v, want location=hq date=2026-12-25 recurring=true", got)
+	if got.Calendar != "us" || got.Date != "2026-12-25" || !got.Recurring {
+		t.Errorf("holiday = %+v, want calendar=us date=2026-12-25 recurring=true", got)
 	}
+}
+
+// A location resolves its holiday_calendars relation to a slice of calendar codes.
+func TestKeyAndValue_LocationHolidayCalendars(t *testing.T) {
+	app := newApp(t)
+	us := newCalendar(t, app, "us", "US Holidays")
+	plant := newCalendar(t, app, "plant-a", "Plant A shutdowns")
+
+	location := find(t, app, "locations", "code", "hq")
+	location.Set("holiday_calendars", []string{us.Id, plant.Id})
+	if err := app.Save(location); err != nil {
+		t.Fatalf("save location: %v", err)
+	}
+
+	_, val, err := keyAndValue(app, location)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	var got policykv.Location
+	if err := json.Unmarshal(val, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.HolidayCalendars) != 2 ||
+		!slices.Contains(got.HolidayCalendars, "us") ||
+		!slices.Contains(got.HolidayCalendars, "plant-a") {
+		t.Errorf("holidayCalendars = %v, want [us plant-a]", got.HolidayCalendars)
+	}
+}
+
+// newCalendar creates a holiday_calendars record and returns it.
+func newCalendar(t *testing.T, app core.App, code, name string) *core.Record {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("holiday_calendars")
+	if err != nil {
+		t.Fatalf("holiday_calendars collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("code", code)
+	rec.Set("name", name)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save calendar %q: %v", code, err)
+	}
+	return rec
 }
 
 // Cardholders are keyed by PocketBase id under the user. prefix.

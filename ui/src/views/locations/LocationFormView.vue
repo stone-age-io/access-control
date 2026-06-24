@@ -4,11 +4,12 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
-import type { Location } from '@/types/pocketbase'
+import type { Location, HolidayCalendar } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
 import LocationPicker from '@/components/locations/LocationPicker.vue'
+import RelationPicker from '@/components/ui/RelationPicker.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -25,8 +26,10 @@ const form = ref({
   description: '',
   lat: 0,
   lon: 0,
+  holiday_calendars: [] as string[],
 })
 
+const calendars = ref<HolidayCalendar[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
 
@@ -76,6 +79,7 @@ async function loadRecord() {
       description: location.description || '',
       lat: location.coordinates?.lat ?? 0,
       lon: location.coordinates?.lon ?? 0,
+      holiday_calendars: [...(location.holiday_calendars || [])],
     }
     existingFloorplan.value = location.floorplan || ''
   } catch (err: any) {
@@ -99,6 +103,7 @@ async function handleSubmit() {
       fai_suppress: form.value.fai_suppress,
       description: form.value.description.trim(),
       coordinates: { lat: Number(form.value.lat) || 0, lon: Number(form.value.lon) || 0 },
+      holiday_calendars: form.value.holiday_calendars,
     }
     // Clear the existing image only when removing and not replacing it.
     if (removeFloorplan.value && !selectedFile.value) data.floorplan = null
@@ -129,8 +134,17 @@ async function handleSubmit() {
   }
 }
 
-onMounted(() => {
-  if (isEdit.value) loadRecord()
+async function loadOptions() {
+  try {
+    calendars.value = await pb.collection('holiday_calendars').getFullList<HolidayCalendar>({ sort: 'code' })
+  } catch (err: any) {
+    toast.error(err?.message || 'Failed to load holiday calendars')
+  }
+}
+
+onMounted(async () => {
+  await loadOptions()
+  if (isEdit.value) await loadRecord()
 })
 </script>
 
@@ -165,6 +179,16 @@ onMounted(() => {
 
           <FormField inline label="Suppress alarms while fire input is active (FAI)" hint="Hardware owns egress; software only suppresses false forced/held-open alarms during fire.">
             <input v-model="form.fai_suppress" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
+
+          <FormField label="Holiday calendars" hint="Calendars this site observes. Their dates close holiday-observing schedules here; multiple calendars compose (e.g. national + site-specific).">
+            <RelationPicker
+              v-model="form.holiday_calendars"
+              :options="calendars"
+              :primary="(c) => c.code"
+              :secondary="(c) => c.name"
+              empty="No holiday calendars exist yet — create one under Holiday Calendars."
+            />
           </FormField>
 
           <FormField label="Description" hint="Optional notes about this location.">

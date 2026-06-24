@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
-import type { Holiday, Location } from '@/types/pocketbase'
+import type { Holiday, HolidayCalendar } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
@@ -17,14 +17,14 @@ const recordId = route.params.id as string | undefined
 const isEdit = computed(() => !!recordId)
 
 const form = ref({
-  // Prefill the location when arriving from a location page (?location=<id>).
-  location: (route.query.location as string) || '',
+  // Prefill the calendar when arriving from a calendar page (?calendar=<id>).
+  calendar: (route.query.calendar as string) || '',
   date: '',
   name: '',
   recurring: false,
 })
 
-const locations = ref<Location[]>([])
+const calendars = ref<HolidayCalendar[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
 
@@ -33,9 +33,9 @@ const kvKey = computed(() => (recordId ? policyKey('holidays', { id: recordId })
 
 async function loadOptions() {
   try {
-    locations.value = await pb.collection('locations').getFullList<Location>({ sort: 'code' })
+    calendars.value = await pb.collection('holiday_calendars').getFullList<HolidayCalendar>({ sort: 'code' })
   } catch (err: any) {
-    toast.error(err?.message || 'Failed to load locations')
+    toast.error(err?.message || 'Failed to load calendars')
   }
 }
 
@@ -45,7 +45,7 @@ async function loadRecord() {
   try {
     const h = await pb.collection('holidays').getOne<Holiday>(recordId)
     form.value = {
-      location: h.location || '',
+      calendar: h.calendar || '',
       // PocketBase stores "YYYY-MM-DD HH:MM:SS.sssZ"; a date input wants "YYYY-MM-DD".
       date: (h.date || '').slice(0, 10),
       name: h.name || '',
@@ -60,13 +60,13 @@ async function loadRecord() {
 }
 
 async function handleSubmit() {
-  if (!form.value.location) { toast.error('Location is required'); return }
+  if (!form.value.calendar) { toast.error('Calendar is required'); return }
   if (!form.value.date) { toast.error('Date is required'); return }
 
   loading.value = true
   try {
     const data = {
-      location: form.value.location,
+      calendar: form.value.calendar,
       date: form.value.date,
       name: form.value.name.trim(),
       recurring: form.value.recurring,
@@ -107,12 +107,12 @@ onMounted(async () => {
     >
       <BaseCard title="Holiday">
         <div class="space-y-4">
-          <FormField label="Location" required>
-            <select v-model="form.location" class="select select-bordered" required>
-              <option value="">Select a location...</option>
-              <option v-for="l in locations" :key="l.id" :value="l.id">{{ l.code }} — {{ l.name || l.code }}</option>
+          <FormField label="Calendar" required hint="Which holiday calendar this date belongs to. Locations observe calendars, so one date can serve many sites.">
+            <select v-model="form.calendar" class="select select-bordered" required>
+              <option value="">Select a calendar...</option>
+              <option v-for="c in calendars" :key="c.id" :value="c.id">{{ c.code }} — {{ c.name || c.code }}</option>
             </select>
-            <p v-if="locations.length === 0" class="text-xs text-warning">No locations exist yet — create one first.</p>
+            <p v-if="calendars.length === 0" class="text-xs text-warning">No calendars exist yet — create one first.</p>
           </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

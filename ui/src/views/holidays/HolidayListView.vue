@@ -26,7 +26,7 @@ const deleting = ref(false)
 function queryOpts() {
   const q = searchQuery.value.trim().replace(/["\\]/g, '')
   const filter = q ? `name ~ "${q}"` : ''
-  return { sort: 'date', filter, expand: 'location' }
+  return { sort: 'date', filter, expand: 'calendar' }
 }
 
 function reload() {
@@ -38,7 +38,7 @@ const columns: Column<Holiday>[] = [
   { key: 'name', label: 'Name' },
   { key: 'date', label: 'Date', format: (v) => formatDate(v, 'PP') },
   { key: 'recurring', label: 'Recurring' },
-  { key: 'location', label: 'Location' },
+  { key: 'calendar', label: 'Calendar' },
 ]
 
 async function handleDelete(h: Holiday) {
@@ -70,7 +70,7 @@ onMounted(reload)
   <ListLayout
     v-model:search="searchQuery"
     title="Holidays"
-    subtitle="Days a location is closed — they close every window of any holiday-observing schedule."
+    subtitle="Dates on a holiday calendar — they close every window of any holiday-observing schedule at the locations that observe the calendar."
     search-placeholder="Search by name..."
     :loading="loading"
     :error="error"
@@ -109,11 +109,11 @@ onMounted(reload)
           </span>
         </template>
 
-        <template #cell-location="{ item }">
-          <code class="text-xs">{{ item.expand?.location?.code || '—' }}</code>
+        <template #cell-calendar="{ item }">
+          <code class="text-xs">{{ item.expand?.calendar?.code || '—' }}</code>
         </template>
-        <template #card-location="{ item }">
-          <code class="text-xs">{{ item.expand?.location?.code || '—' }}</code>
+        <template #card-calendar="{ item }">
+          <code class="text-xs">{{ item.expand?.calendar?.code || '—' }}</code>
         </template>
 
         <template #empty>
