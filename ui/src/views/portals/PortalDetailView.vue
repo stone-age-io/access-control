@@ -60,7 +60,7 @@ async function load() {
   loading.value = true
   try {
     const [p, g] = await Promise.all([
-      pb.collection('portals').getOne<Portal>(recordId, { expand: 'location,controller,auto_schedule' }),
+      pb.collection('portals').getOne<Portal>(recordId, { expand: 'location,controller,auto_schedule,area' }),
       pb.collection('access_groups').getFullList<AccessGroup>({ filter: `portals ~ "${recordId}"`, sort: 'code' }),
     ])
     record.value = p
@@ -282,6 +282,20 @@ onBeforeUnmount(() => {
         <DataField label="Reader">
           <span v-if="record.reader_address >= 0">OSDP @ PD {{ record.reader_address }}</span>
           <span v-else>NATS-only</span>
+        </DataField>
+      </div>
+    </BaseCard>
+
+    <BaseCard v-if="record.expand?.area" title="Area &amp; intrusion">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+        <DataField label="Area">
+          <router-link :to="`/areas/${record.expand.area.id}`" class="link link-primary">
+            {{ record.expand.area.code }}
+          </router-link>
+        </DataField>
+        <DataField label="Disarm on grant">
+          <span v-if="record.disarm_on_grant" class="badge badge-sm badge-warning">Entry door — grant disarms</span>
+          <span v-else class="opacity-40">No — monitored only (forced-while-armed = intrusion)</span>
         </DataField>
       </div>
     </BaseCard>

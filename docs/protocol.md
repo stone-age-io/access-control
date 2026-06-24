@@ -131,7 +131,7 @@ a **door-position switch** (DPS, `dpsInput`) and an optional **request-to-exit**
 | `forced` | door opened with no recent grant or REX — a break-in |
 | `held` | an authorized-open door stayed open past `heldOpenSeconds` (DOTL) |
 | `held_clear` | a previously-held door closed |
-| `intrusion` | an armed area's `intrusion` aux point — or any `tamper_24h` point — went active |
+| `intrusion` | an armed area's `intrusion` aux point — or any `tamper_24h` point — went active, **or** a member portal was forced while its area is armed |
 
 A grant (an `allow` tap or a `grant` command) and a REX press each open a short
 window during which a door-open reads as *authorized* (no `forced`), arming the
@@ -143,17 +143,33 @@ held-open threshold are hardware-local timing, not policy.
 ### Areas & intrusion-lite arming
 
 An **area** is a logical, single-location arm-state grouping that may span several
-controllers. Membership lives on the **aux input** (`aux_input.area` +
-`point_type`): a `monitor` point is observe-only (the default), an `intrusion`
-point raises an `intrusion` alarm **while its area is armed**, and a `tamper_24h`
-point raises one **regardless** of arm-state. Intrusion alarms are addressed as a
-Thing of type `area` and reuse the generic alarm subject —
-`acc.{location}.area.{areacode}.evt.alarm`, body `{"type":"intrusion","point":"<auxcode>","ts"}`
-— captured by the existing 6-token portal-event wildcard with no new stream
-subject. They go through the same fire-suppression gate as door alarms. Like
-`forced`, an intrusion alarm is **edge-triggered** (one per active edge; a
-continuously-asserted point fires once) — there is no controller-side latch and no
-new timer; the events row stays unacknowledged until an operator acks it.
+controllers. A **point** of an area is either an **aux input** (a bare contact /
+DPS-only door) or a **portal** (a full reader/DPS/REX door) — membership lives on
+each (`aux_input.area` + `point_type`, or `portal.area`). The participant set
+(`peers`) and "which areas this box drives" union both kinds.
+
+For an **aux input**, `point_type` decides the trip: a `monitor` point is
+observe-only (the default), an `intrusion` point raises an `intrusion` alarm
+**while its area is armed**, and a `tamper_24h` point raises one **regardless** of
+arm-state — any active edge trips, because a bare contact has no notion of an
+"authorized" open.
+
+For a **portal**, the reader changes the rule: an authorized open (a grant/REX) is
+normal passage and never an intrusion, so a member portal trips intrusion only on
+its **forced** condition (a DPS open with no grant/REX window — exactly what the
+door state machine already detects) **while the area is armed**. That forced open
+still emits its door-level `forced` event; the area `intrusion` is an additional
+armed-zone roll-up. A portal with no area, or whose area is disarmed, escalates
+nothing.
+
+Intrusion alarms are addressed as a Thing of type `area` and reuse the generic
+alarm subject — `acc.{location}.area.{areacode}.evt.alarm`, body
+`{"type":"intrusion","point":"<aux-or-portal-code>","ts"}` — captured by the
+existing 6-token portal-event wildcard with no new stream subject. They go through
+the same fire-suppression gate as door alarms. Like `forced`, an intrusion alarm is
+**edge-triggered** (one per active edge; a continuously-asserted point fires once) —
+there is no controller-side latch and no new timer; the events row stays
+unacknowledged until an operator acks it.
 
 **Arm-state is durable, not a RAM override.** Unlike posture, a reboot must not
 silently disarm, so arming rides the policy KV: an operator arm/disarm writes a
@@ -166,6 +182,24 @@ unresolved or unknown area falls back to standing (default disarmed) and never
 spuriously arms. Arm-state boundaries themselves fire no alarm; they only change
 whether a future trip alarms. There is **no `cmd.arm` subject** — arming is a record
 write, not a fire-and-forget command.
+
+**Entry-disarm (a valid grant disarms the area).** A portal flagged
+`disarmOnGrant` is an *entry* door: a valid credential grant there durably disarms
+its area. Because arm-state is durable and central (and an area spans controllers),
+this can't be a local edge action — so the edge just emits the `evt.tap` it already
+emits, and accessd's **disarm sink** (`internal/disarm`, a third independent durable
+on ACC_EVENTS alongside the audit and notify consumers, `DeliverNew`, filter
+`acc.*.*.*.evt.tap`) observes the grant and writes the same durable `armOverride:
+disarmed` the manual disarm route writes; the mirror then converges every peer
+controller. Only a **credential** grant disarms (`allow` with a `cred`): a deny is
+ignored, and an operator remote `cmd.grant` carries no `cred`, so a remote door-pop
+can't silently disarm a building. The write is idempotent and skips an area that is
+already disarmed / can never be armed, so a redelivery is a harmless no-op (no dedup
+needed). Each disarm writes its own `audit_logs` row attributed to the credential +
+portal. **Re-arm is explicit (a v1 limitation):** `armOverride: disarmed` is sticky
+and outranks `autoArm`, so entry-disarm does **not** compose with scheduled
+auto-re-arm — re-arm via an operator action (or don't put `autoArm` on an
+entry-disarm area). Automatic re-arm is a deliberate fast-follow.
 
 Each input's **contact sense** is configurable per install (`dpsContact`/
 `rexContact`/`aux_input.contact`, see Policy KV below): a normally-open vs
@@ -227,7 +261,7 @@ sole writer; controllers are read-only watchers.
 |---|---|
 | `location.{code}` | `{"code","name","timezone","faiSuppress","holidayCalendars":["<calendar code>"]?}` |
 | `sched.{code}` | `{"code","windows":[{"days":[1..7],"start":"HH:MM","end":"HH:MM"}],"observeHolidays"}` |
-| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?,"readerAddress"?,`<br>`"dpsContact"?,"rexContact"?,"lockType"?,"rexUnlock"?}` |
+| `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?,"readerAddress"?,`<br>`"dpsContact"?,"rexContact"?,"lockType"?,"rexUnlock"?,`<br>`"area"?,"disarmOnGrant"?}` |
 | `controller.{code}` | `{"code","name","location","model"}` |
 | `holiday.{pbid}` | `{"calendar":"<calendar code>","date":"YYYY-MM-DD","recurring"}` |
 | `group.{code}` | `{"code","portals":["<portal code>"],"schedule":"<sched code>"}` |

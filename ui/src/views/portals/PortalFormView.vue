@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
-import type { Portal, Location, Controller, Schedule, Posture, PortalType } from '@/types/pocketbase'
+import type { Portal, Location, Controller, Schedule, Posture, PortalType, Area } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
@@ -52,11 +52,14 @@ const form = ref({
   reader_address: 0,
   auto_posture: '' as Posture | '',
   auto_schedule: '',
+  area: '',
+  disarm_on_grant: false,
 })
 
 const locations = ref<Location[]>([])
 const controllers = ref<Controller[]>([])
 const schedules = ref<Schedule[]>([])
+const areas = ref<Area[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
 
@@ -71,14 +74,16 @@ const inputLines = computed(() => profile.value?.inputs ?? [])
 
 async function loadOptions() {
   try {
-    const [locs, ctrls, scheds] = await Promise.all([
+    const [locs, ctrls, scheds, ars] = await Promise.all([
       pb.collection('locations').getFullList<Location>({ sort: 'code' }),
       pb.collection('controllers').getFullList<Controller>({ sort: 'code' }),
       pb.collection('schedules').getFullList<Schedule>({ sort: 'code' }),
+      pb.collection('areas').getFullList<Area>({ sort: 'code' }),
     ])
     locations.value = locs
     controllers.value = ctrls
     schedules.value = scheds
+    areas.value = ars
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load options')
   }
@@ -110,6 +115,8 @@ async function loadRecord() {
       reader_address: typeof p.reader_address === 'number' && p.reader_address >= 0 ? p.reader_address : 0,
       auto_posture: (p.auto_posture || '') as Posture | '',
       auto_schedule: p.auto_schedule || '',
+      area: p.area || '',
+      disarm_on_grant: !!p.disarm_on_grant,
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load portal')
@@ -175,6 +182,8 @@ async function handleSubmit() {
       reader_address: form.value.osdpEnabled ? (Number(form.value.reader_address) || 0) : -1,
       auto_posture: form.value.auto_posture,
       auto_schedule: form.value.auto_schedule,
+      area: form.value.area,
+      disarm_on_grant: form.value.disarm_on_grant,
     }
     if (isEdit.value) {
       await pb.collection('portals').update(recordId!, data)
@@ -348,6 +357,28 @@ onMounted(async () => {
             Door-position (DPS) and request-to-exit (REX) drive forced/held-open detection; leave at “none” if unmonitored. Ignored for logical portals.
             Pick a controller to see its lines (otherwise enter the raw index).
           </p>
+        </div>
+      </BaseCard>
+
+      <BaseCard title="Area &amp; intrusion">
+        <div class="space-y-4">
+          <p class="text-sm text-base-content/60">
+            Make this door a monitored point of an area. While the area is armed, a <em>forced</em> open
+            (a DPS open with no grant/REX) raises an intrusion alarm — an authorized open is normal passage.
+            A bare contact uses an Aux Input instead.
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField label="Area" hint="Optional. Assign this door to an area for intrusion arming.">
+              <select v-model="form.area" class="select select-bordered">
+                <option value="">None</option>
+                <option v-for="a in areas" :key="a.id" :value="a.id">{{ a.code }} — {{ a.name || a.code }}</option>
+              </select>
+            </FormField>
+            <FormField inline label="Disarm on grant"
+                       hint="Entry door: a valid credential grant here durably disarms the area. Needs an area assigned. Operator remote-grants do not disarm.">
+              <input v-model="form.disarm_on_grant" type="checkbox" class="toggle toggle-primary" :disabled="!form.area" />
+            </FormField>
+          </div>
         </div>
       </BaseCard>
 

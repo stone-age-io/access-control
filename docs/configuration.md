@@ -154,6 +154,12 @@ independent durable consumer on `ACC_EVENTS` that emails on `alarm`/`fire`. It i
 > (a freshly enabled sink starts from "now", not the whole event history) with
 > bounded redelivery, so a dead SMTP server can't loop forever.
 
+> **Entry-disarm has no config.** The disarm sink ([`internal/disarm`](../internal/disarm)),
+> which disarms an area on a valid grant at a `disarm_on_grant` portal, is **always
+> started** and needs no settings — the feature is purely data-driven: it is inert
+> unless a portal opts in (set `disarm_on_grant` + an `area` on the portal in the
+> UI). Like notify it is a `DeliverNew` durable on `ACC_EVENTS`.
+
 ## controller
 
 A controller's config is just its identity and hardware selection — **which

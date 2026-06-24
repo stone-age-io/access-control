@@ -260,6 +260,8 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			RexContact:      r.GetString("rex_contact"),
 			LockType:        r.GetString("lock_type"),
 			RexUnlock:       r.GetBool("rex_unlock"),
+			Area:            resolveCode(app, "areas", r.GetString("area")),
+			DisarmOnGrant:   r.GetBool("disarm_on_grant"),
 		}
 	case "controllers":
 		if err := validToken("controller code", r.GetString("code")); err != nil {

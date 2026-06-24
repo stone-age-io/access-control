@@ -209,6 +209,14 @@ func (s Subjects) AlarmWildcards() []string {
 	}
 }
 
+// TapEventWildcard is the disarm sink's consumer filter: every portal decision
+// event. The sink inspects each for an authorizing credential grant at an
+// entry (disarm_on_grant) portal and durably disarms that portal's area. Covered
+// by the ACC_EVENTS portal-event stream subject (6-token {app}.*.*.*.evt.>).
+func (s Subjects) TapEventWildcard() string {
+	return fmt.Sprintf("%s.*.*.*.evt.tap", s.App())
+}
+
 // ParseEvent splits an event subject into its location/type/thing/kind. Two forms
 // are recognized; ok is false for anything else (wrong app, wrong shape):
 //
