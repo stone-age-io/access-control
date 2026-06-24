@@ -42,6 +42,26 @@ func TestRowForAuxInput(t *testing.T) {
 	}
 }
 
+// An area shadow has a compound key (area.<controller>.<code>); rowFor takes the
+// bare code/controller from the value, and peers/source ride the payload.
+func TestRowForArea(t *testing.T) {
+	val := []byte(`{"code":"zone1","location":"hq","controller":"ctrl-hq-1","arm":"armed","source":"override","peers":["ctrl-hq-1","ctrl-hq-2"],"updatedAt":"2026-01-05T09:00:00Z"}`)
+	r, ok := rowFor(statuskv.PrefixArea+"ctrl-hq-1.zone1", val)
+	if !ok {
+		t.Fatal("rowFor area returned ok=false")
+	}
+	if r.kind != statuskv.KindArea || r.code != "zone1" || r.controller != "ctrl-hq-1" {
+		t.Errorf("identity = kind=%q code=%q controller=%q, want area/zone1/ctrl-hq-1", r.kind, r.code, r.controller)
+	}
+	if r.state != "armed" || r.location != "hq" {
+		t.Errorf("state=%q location=%q, want armed/hq", r.state, r.location)
+	}
+	peers, _ := r.payload["peers"].([]any)
+	if len(peers) != 2 {
+		t.Errorf("payload peers = %v, want 2 entries", r.payload["peers"])
+	}
+}
+
 func TestRowForUnknownPrefix(t *testing.T) {
 	if _, ok := rowFor("widget.foo", []byte(`{}`)); ok {
 		t.Error("unknown prefix should not produce a row")

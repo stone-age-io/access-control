@@ -1,0 +1,132 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { watchDebounced } from '@vueuse/core'
+import { usePagination } from '@/composables/usePagination'
+import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
+import { pb } from '@/utils/pb'
+import type { Area } from '@/types/pocketbase'
+import type { Column } from '@/components/ui/ResponsiveList.vue'
+import BaseCard from '@/components/ui/BaseCard.vue'
+import ResponsiveList from '@/components/ui/ResponsiveList.vue'
+import ListLayout from '@/components/ui/ListLayout.vue'
+import ListPagination from '@/components/ui/ListPagination.vue'
+
+const router = useRouter()
+const toast = useToast()
+const { confirm } = useConfirm()
+
+const { items, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
+  usePagination<Area>('areas', 50)
+const searchQuery = ref('')
+const deleting = ref(false)
+
+function queryOpts() {
+  const q = searchQuery.value.trim().replace(/["\\]/g, '')
+  const filter = q ? `code ~ "${q}" || name ~ "${q}"` : ''
+  return { sort: 'code', filter, expand: 'location' }
+}
+
+function reload() {
+  page.value = 1
+  load(queryOpts())
+}
+
+const columns: Column<Area>[] = [
+  { key: 'code', label: 'Code' },
+  { key: 'name', label: 'Name' },
+  { key: 'location', label: 'Location' },
+  { key: 'arm', label: 'Standing' },
+  { key: 'arm_override', label: 'Override' },
+]
+
+async function handleDelete(a: Area) {
+  const confirmed = await confirm({
+    title: 'Delete Area',
+    message: `Delete area "${a.code}"?`,
+    details: 'Member inputs keep their wiring but stop arming. This cannot be undone.',
+    confirmText: 'Delete',
+    variant: 'danger',
+  })
+  if (!confirmed) return
+  deleting.value = true
+  try {
+    await pb.collection('areas').delete(a.id)
+    toast.success('Area deleted')
+    reload()
+  } catch (err: any) {
+    toast.error(err?.message || 'Failed to delete area')
+  } finally {
+    deleting.value = false
+  }
+}
+
+watchDebounced(searchQuery, reload, { debounce: 300 })
+onMounted(reload)
+</script>
+
+<template>
+  <ListLayout
+    v-model:search="searchQuery"
+    title="Areas"
+    subtitle="Arm-state groupings for intrusion-lite. Membership is set on each aux input."
+    search-placeholder="Search by code or name..."
+    :loading="loading"
+    :error="error"
+    :is-empty="items.length === 0"
+    :has-query="!!searchQuery"
+    empty-icon="🛡️"
+    empty-title="No areas yet"
+    empty-message="Create an area, then assign intrusion inputs to it."
+    error-title="Failed to load areas"
+    @retry="reload"
+  >
+    <template #actions>
+      <router-link to="/areas/new" class="btn btn-primary w-full sm:w-auto">
+        <span class="text-lg">+</span><span>New Area</span>
+      </router-link>
+    </template>
+    <template #empty-action>
+      <router-link to="/areas/new" class="btn btn-primary">Create Area</router-link>
+    </template>
+
+    <BaseCard :no-padding="true">
+      <ResponsiveList :items="items" :columns="columns" :loading="loading" @row-click="(a) => router.push(`/areas/${a.id}`)">
+        <template #cell-code="{ item }"><code class="text-sm font-bold">{{ item.code }}</code></template>
+        <template #card-code="{ item }"><code class="text-sm font-bold">{{ item.code }}</code></template>
+
+        <template #cell-name="{ item }">{{ item.name || '—' }}</template>
+        <template #card-name="{ item }">{{ item.name || '—' }}</template>
+
+        <template #cell-location="{ item }"><code class="text-xs">{{ item.expand?.location?.code || '—' }}</code></template>
+        <template #card-location="{ item }"><code class="text-xs">{{ item.expand?.location?.code || '—' }}</code></template>
+
+        <template #cell-arm="{ item }">
+          <span class="badge badge-sm" :class="item.arm === 'armed' ? 'badge-error' : 'badge-ghost'">{{ item.arm || 'disarmed' }}</span>
+        </template>
+        <template #card-arm="{ item }">
+          <span class="badge badge-sm" :class="item.arm === 'armed' ? 'badge-error' : 'badge-ghost'">{{ item.arm || 'disarmed' }}</span>
+        </template>
+
+        <template #cell-arm_override="{ item }">
+          <span v-if="item.arm_override" class="badge badge-sm badge-warning">{{ item.arm_override }}</span>
+          <span v-else class="opacity-40">—</span>
+        </template>
+        <template #card-arm_override="{ item }">
+          <span v-if="item.arm_override" class="badge badge-sm badge-warning">{{ item.arm_override }}</span>
+          <span v-else class="opacity-40">—</span>
+        </template>
+
+        <template #actions="{ item }">
+          <router-link :to="`/areas/${item.id}/edit`" class="btn btn-xs">Edit</router-link>
+          <button @click="handleDelete(item)" class="btn btn-xs text-error" :disabled="deleting">Delete</button>
+        </template>
+      </ResponsiveList>
+
+      <ListPagination :page="page" :total-pages="totalPages" :loading="loading" @prev="prevPage(queryOpts())" @next="nextPage(queryOpts())">
+        {{ items.length }} of {{ totalItems }} area(s)
+      </ListPagination>
+    </BaseCard>
+  </ListLayout>
+</template>

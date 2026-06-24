@@ -228,6 +228,113 @@ func newCalendar(t *testing.T, app core.App, code, name string) *core.Record {
 	return rec
 }
 
+// An area keys under area.<code>, resolves location + auto_schedule to codes, and
+// keeps a complete auto_arm/auto_schedule pair.
+func TestKeyAndValue_Area(t *testing.T) {
+	app := newApp(t)
+	hq := find(t, app, "locations", "code", "hq")
+
+	col, err := app.FindCollectionByNameOrId("areas")
+	if err != nil {
+		t.Fatalf("areas collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("code", "vault")
+	rec.Set("name", "Vault")
+	rec.Set("location", hq.Id)
+	rec.Set("arm", "armed")
+	sched := find(t, app, "schedules", "code", "business-hours")
+	rec.Set("auto_arm", "armed")
+	rec.Set("auto_schedule", sched.Id)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save area: %v", err)
+	}
+
+	key, val, err := keyAndValue(app, rec)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	if key != "area.vault" {
+		t.Errorf("key = %q, want area.vault", key)
+	}
+	var got policykv.Area
+	if err := json.Unmarshal(val, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Location != "hq" || got.Arm != "armed" || got.AutoArm != "armed" || got.AutoSchedule != "business-hours" {
+		t.Errorf("area = %+v, want location=hq arm=armed autoArm=armed autoSchedule=business-hours", got)
+	}
+}
+
+// A half-configured auto_arm (no auto_schedule) is dropped — both-or-neither.
+func TestKeyAndValue_AreaAutoArmBothOrNeither(t *testing.T) {
+	app := newApp(t)
+	hq := find(t, app, "locations", "code", "hq")
+
+	col, err := app.FindCollectionByNameOrId("areas")
+	if err != nil {
+		t.Fatalf("areas collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("code", "dock-area")
+	rec.Set("location", hq.Id)
+	rec.Set("auto_arm", "armed") // auto_schedule intentionally empty
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save area: %v", err)
+	}
+
+	_, val, err := keyAndValue(app, rec)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	var got policykv.Area
+	if err := json.Unmarshal(val, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.AutoArm != "" || got.AutoSchedule != "" {
+		t.Errorf("autoArm/autoSchedule = (%q,%q), want both empty (dropped)", got.AutoArm, got.AutoSchedule)
+	}
+}
+
+// An aux_input resolves its area relation to a code and carries point_type.
+func TestKeyAndValue_AuxInputAreaMembership(t *testing.T) {
+	app := newApp(t)
+	hq := find(t, app, "locations", "code", "hq")
+
+	areaCol, _ := app.FindCollectionByNameOrId("areas")
+	area := core.NewRecord(areaCol)
+	area.Set("code", "zone1")
+	area.Set("location", hq.Id)
+	if err := app.Save(area); err != nil {
+		t.Fatalf("save area: %v", err)
+	}
+
+	col, err := app.FindCollectionByNameOrId("aux_input")
+	if err != nil {
+		t.Fatalf("aux_input collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("code", "pir-1")
+	rec.Set("location", hq.Id)
+	rec.Set("area", area.Id)
+	rec.Set("point_type", "intrusion")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save aux_input: %v", err)
+	}
+
+	_, val, err := keyAndValue(app, rec)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	var got policykv.AuxInput
+	if err := json.Unmarshal(val, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Area != "zone1" || got.PointType != "intrusion" {
+		t.Errorf("auxInput = %+v, want area=zone1 pointType=intrusion", got)
+	}
+}
+
 // Cardholders are keyed by PocketBase id under the user. prefix.
 func TestRecordKey_Cardholder(t *testing.T) {
 	app := newApp(t)

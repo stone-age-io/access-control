@@ -212,10 +212,15 @@ func main() {
 
 	mgr := controller.NewPortalManager(cfg.Controller.Code, cfg.Controller.Location, store, reader, rt, portalHW, log)
 	auxMgr := controller.NewAuxManager(cfg.Controller.Code, cfg.Controller.Location, store, rt, auxHW, log)
-	// Fan policy changes out to both reconcilers (portals and aux points).
+	// AreaManager publishes per-area arm shadows; it needs the status writer (nil =
+	// inert). The runtime tick nudges it so scheduled-arm boundaries refresh.
+	areaMgr := controller.NewAreaManager(cfg.Controller.Code, cfg.Controller.Location, store, statusWriter, log)
+	rt.SetTickHook(func(time.Time) { areaMgr.Notify() })
+	// Fan policy changes out to all reconcilers (portals, aux points, areas).
 	store.SetOnChange(func() {
 		mgr.Notify()
 		auxMgr.Notify()
+		areaMgr.Notify()
 	}) // must be set before Watch
 
 	if err := store.Watch(ctx); err != nil {
@@ -227,6 +232,8 @@ func main() {
 	defer mgr.Stop()
 	auxMgr.Start(ctx)
 	defer auxMgr.Stop()
+	areaMgr.Start(ctx)
+	defer areaMgr.Stop()
 
 	go func() { _ = rt.Run(ctx) }()
 

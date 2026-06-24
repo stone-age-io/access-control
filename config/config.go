@@ -70,6 +70,7 @@ type Config struct {
 	Subjects    SubjectsConfig    `json:"subjects" yaml:"subjects" mapstructure:"subjects"`
 	Accessd     AccessdConfig     `json:"accessd" yaml:"accessd" mapstructure:"accessd"`
 	Controller  ControllerConfig  `json:"controller" yaml:"controller" mapstructure:"controller"`
+	Notify      NotifyConfig      `json:"notify" yaml:"notify" mapstructure:"notify"`
 }
 
 // NATSConfig contains NATS connection settings. Exactly one auth method (or
@@ -193,6 +194,21 @@ type ControllerConfig struct {
 	Reader string `json:"reader" yaml:"reader" mapstructure:"reader"`
 }
 
+// NotifyConfig configures the alarm notification sink (internal/notify) — a
+// second ACC_EVENTS consumer that emails on alarm/fire. accessd reads it; the
+// controller ignores it. Disabled by default. The SMTP transport (host/port/
+// credentials/sender) is configured in PocketBase's own settings (the /_ admin
+// "Mail settings"), NOT here — this section only names who to notify.
+type NotifyConfig struct {
+	// Enabled turns the sink on. When false, no consumer is created.
+	Enabled bool `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	// Recipients are the email addresses every alarm/fire notification is sent to.
+	Recipients []string `json:"recipients" yaml:"recipients" mapstructure:"recipients"`
+	// From overrides the sender address; empty falls back to PocketBase's
+	// configured sender (Settings.Meta.SenderAddress).
+	From string `json:"from" yaml:"from" mapstructure:"from"`
+}
+
 // Load reads configuration from the given file path, layering in env vars
 // (prefix SA_) and applying defaults. A missing config file is not an error —
 // the app can run on defaults plus env vars.
@@ -233,6 +249,7 @@ func Load(path string) (*Config, error) {
 		"accessd.dataDir", "accessd.controllerOfflineAfter",
 		"controller.code", "controller.location", "controller.heartbeatInterval",
 		"controller.driver", "controller.model", "controller.reader",
+		"notify.enabled", "notify.recipients", "notify.from",
 	} {
 		_ = v.BindEnv(key)
 	}

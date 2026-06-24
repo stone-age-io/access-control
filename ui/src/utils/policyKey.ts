@@ -16,6 +16,7 @@ const PREFIX: Record<string, string> = {
   holidays: 'holiday.',
   aux_input: 'auxin.',
   aux_output: 'auxout.',
+  areas: 'area.',
 }
 
 /** Build the KV key for a record, or '' when the natural key isn't set yet. */

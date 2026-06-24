@@ -19,6 +19,7 @@ const (
 	AlarmForced    = "forced"     // door opened without a grant or REX
 	AlarmHeld      = "held"       // door held open past its DOTL threshold
 	AlarmHeldClear = "held_clear" // a held-open door closed
+	AlarmIntrusion = "intrusion"  // an armed area's intrusion point (or a tamper_24h point) tripped
 )
 
 // Door-monitoring timing. Vars (not consts) so tests can shorten them — same
@@ -105,6 +106,11 @@ type Runtime struct {
 
 	statusWriter *StatusWriter // upward live-state channel; nil = not publishing status
 
+	// tickHook, if set, is invoked on each hold-eval tick. The AreaManager wires it
+	// to its Notify so scheduled-arm window boundaries refresh area shadows on the
+	// existing timer — no new ticker (D5).
+	tickHook func(time.Time)
+
 	// Recent-activity rings for the opt-in diagnostics page. Guarded by their own
 	// mutexes (inside ring), never r.mu, so appends on the tap/alarm path never
 	// contend with the decision read lock.
@@ -146,6 +152,11 @@ func NewRuntime(location string, store *PolicyStore, reader drivers.ReaderDriver
 // SetStatusWriter attaches the upward status channel. Optional: when nil (e.g. in
 // tests) the runtime simply publishes no live state. Set once at wiring time.
 func (r *Runtime) SetStatusWriter(w *StatusWriter) { r.statusWriter = w }
+
+// SetTickHook registers a callback fired on each hold-eval tick. Set once at
+// wiring time (the AreaManager uses it to refresh arm shadows at schedule
+// boundaries without adding a timer).
+func (r *Runtime) SetTickHook(fn func(time.Time)) { r.tickHook = fn }
 
 // SetLock arms (or replaces) the lock driver for a portal. Called by the portal
 // reconciler when a portal appears in or changes type within policy.
@@ -293,8 +304,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 			r.handleInput(ev)
 		case <-holdTicker.C:
-			// No-event fallback: flip scheduled-posture holds at window boundaries.
-			r.reconcileHolds(time.Now().UTC())
+			// No-event fallback: flip scheduled-posture holds at window boundaries,
+			// and nudge the area manager so scheduled-arm boundaries refresh shadows.
+			now := time.Now().UTC()
+			r.reconcileHolds(now)
+			if r.tickHook != nil {
+				r.tickHook(now)
+			}
 		}
 	}
 }
@@ -691,7 +707,8 @@ func (r *Runtime) setAuxEnergized(code string, st *auxOutputState, energized boo
 	}
 }
 
-// setAuxInput records an aux input transition (deduped) and publishes it.
+// setAuxInput records an aux input transition (deduped) and publishes it. On a
+// rising edge it also evaluates whether the input should raise an intrusion alarm.
 func (r *Runtime) setAuxInput(code string, active bool, at time.Time) {
 	r.mu.Lock()
 	st, ok := r.auxInputs[code]
@@ -710,6 +727,79 @@ func (r *Runtime) setAuxInput(code string, active bool, at time.Time) {
 	if r.statusWriter != nil {
 		r.statusWriter.SetAuxInput(code, loc, active, at)
 	}
+	if active {
+		r.maybeIntrusionAlarm(code, at)
+	}
+}
+
+// maybeIntrusionAlarm raises an intrusion alarm for an aux input that just went
+// active, based on its point type:
+//
+//   - monitor (or untyped): observe-only — no alarm (status already published).
+//   - intrusion: alarm only while its area is armed.
+//   - tamper_24h: alarm regardless of arm-state.
+//
+// Edge-triggered, like forced-door alarms: setAuxInput's no-change dedup means a
+// continuously-asserted point alarms once, and a flapping point alarms once per
+// active edge — exactly as a repeatedly-forced door does. There is no controller-
+// side latch and no timer (D5: zero new timer types); the alarm is "latched" only
+// in the sense that its events row stays unacknowledged until an operator acks it.
+// A typed point with no area can't be addressed (the subject needs an area token),
+// so it is skipped.
+func (r *Runtime) maybeIntrusionAlarm(code string, at time.Time) {
+	area, ptype, ok := r.store.AuxInputMeta(code)
+	if !ok {
+		return
+	}
+	switch ptype {
+	case "tamper_24h":
+		if area == "" {
+			r.log.Debug("tamper_24h input has no area; cannot address alarm", "code", code)
+			return
+		}
+		r.emitIntrusionAlarm(area, code, at)
+	case "intrusion":
+		if area == "" {
+			r.log.Debug("intrusion input has no area; cannot address alarm", "code", code)
+			return
+		}
+		if armed, _, _ := r.store.ResolveArmState(area, at); armed {
+			r.emitIntrusionAlarm(area, code, at)
+		}
+	default:
+		// monitor / untyped: observe-only.
+	}
+}
+
+// emitIntrusionAlarm emits an area intrusion alarm on
+// {app}.{location}.area.{area}.evt.alarm, unless the area's location fire input is
+// active (the same suppression gate as door alarms — egress/evacuation owns the
+// site). point is the aux input code that tripped.
+func (r *Runtime) emitIntrusionAlarm(area, point string, at time.Time) {
+	location := r.location
+	if a, ok := r.store.Area(area); ok && a.Location != "" {
+		location = a.Location
+	}
+
+	r.mu.RLock()
+	suppressed := r.fire[location]
+	r.mu.RUnlock()
+	if suppressed {
+		r.log.Info("intrusion alarm suppressed (fire active)", "location", location, "area", area, "point", point)
+		return
+	}
+
+	if err := r.emit.Emit(r.subs.EventAlarm(location, subjects.AreaType, area), map[string]any{
+		"type":  AlarmIntrusion,
+		"point": point,
+		"ts":    at.UTC().Format(time.RFC3339),
+	}); err != nil {
+		r.log.Error("failed to emit intrusion alarm", "area", area, "point", point, "error", err)
+		return
+	}
+	r.m.IncEventPublished("alarm")
+	r.alarms.add(AlarmRecord{At: at, Portal: area, Kind: AlarmIntrusion})
+	r.log.Info("intrusion alarm", "location", location, "area", area, "point", point)
 }
 
 // SetFire records a location's fire-alarm-input state. While active, the

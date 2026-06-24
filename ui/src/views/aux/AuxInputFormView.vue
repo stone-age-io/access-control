@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { policyKey } from '@/utils/policyKey'
-import type { AuxInput, Location, Controller } from '@/types/pocketbase'
+import type { AuxInput, Location, Controller, Area } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
@@ -26,10 +26,13 @@ const form = ref({
   controller: (route.query.controller as string) || '',
   input_index: 0,
   contact: 'no' as 'no' | 'nc',
+  area: (route.query.area as string) || '',
+  point_type: '' as '' | 'monitor' | 'intrusion' | 'tamper_24h',
 })
 
 const locations = ref<Location[]>([])
 const controllers = ref<Controller[]>([])
+const areas = ref<Area[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
 
@@ -42,12 +45,14 @@ const inputLines = computed(() => profile.value?.inputs ?? [])
 
 async function loadOptions() {
   try {
-    const [locs, ctrls] = await Promise.all([
+    const [locs, ctrls, ars] = await Promise.all([
       pb.collection('locations').getFullList<Location>({ sort: 'code' }),
       pb.collection('controllers').getFullList<Controller>({ sort: 'code' }),
+      pb.collection('areas').getFullList<Area>({ sort: 'code' }),
     ])
     locations.value = locs
     controllers.value = ctrls
+    areas.value = ars
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load options')
   }
@@ -65,6 +70,8 @@ async function loadRecord() {
       controller: a.controller || '',
       input_index: a.input_index || 0,
       contact: a.contact === 'nc' ? 'nc' : 'no',
+      area: a.area || '',
+      point_type: a.point_type || '',
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load aux input')
@@ -91,6 +98,8 @@ async function handleSubmit() {
       controller: form.value.controller,
       input_index: Number(form.value.input_index) || 0,
       contact: form.value.contact,
+      area: form.value.area,
+      point_type: form.value.point_type,
     }
     if (isEdit.value) {
       await pb.collection('aux_input').update(recordId!, data)
@@ -160,6 +169,22 @@ onMounted(async () => {
               <select v-model="form.contact" class="select select-bordered">
                 <option value="no">Normally open (N.O.)</option>
                 <option value="nc">Normally closed (N.C.)</option>
+              </select>
+            </FormField>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField label="Area" hint="Optional. Assign this input to an area for intrusion arming.">
+              <select v-model="form.area" class="select select-bordered">
+                <option value="">None</option>
+                <option v-for="a in areas" :key="a.id" :value="a.id">{{ a.code }} — {{ a.name || a.code }}</option>
+              </select>
+            </FormField>
+            <FormField label="Point type" hint="Monitor = observe-only. Intrusion = alarms while its area is armed. Tamper (24h) = alarms regardless of arm-state.">
+              <select v-model="form.point_type" class="select select-bordered">
+                <option value="">Monitor (observe-only)</option>
+                <option value="intrusion">Intrusion</option>
+                <option value="tamper_24h">Tamper (24h)</option>
               </select>
             </FormField>
           </div>

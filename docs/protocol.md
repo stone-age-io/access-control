@@ -131,13 +131,41 @@ a **door-position switch** (DPS, `dpsInput`) and an optional **request-to-exit**
 | `forced` | door opened with no recent grant or REX — a break-in |
 | `held` | an authorized-open door stayed open past `heldOpenSeconds` (DOTL) |
 | `held_clear` | a previously-held door closed |
+| `intrusion` | an armed area's `intrusion` aux point — or any `tamper_24h` point — went active |
 
 A grant (an `allow` tap or a `grant` command) and a REX press each open a short
 window during which a door-open reads as *authorized* (no `forced`), arming the
 held-open timer instead. While
 a location's **fire** input is active, all alarm emission is suppressed
-(forced/held during evacuation would be false alarms). The DOTL timer and the
+(forced/held/intrusion during evacuation would be false alarms). The DOTL timer and the
 held-open threshold are hardware-local timing, not policy.
+
+### Areas & intrusion-lite arming
+
+An **area** is a logical, single-location arm-state grouping that may span several
+controllers. Membership lives on the **aux input** (`aux_input.area` +
+`point_type`): a `monitor` point is observe-only (the default), an `intrusion`
+point raises an `intrusion` alarm **while its area is armed**, and a `tamper_24h`
+point raises one **regardless** of arm-state. Intrusion alarms are addressed as a
+Thing of type `area` and reuse the generic alarm subject —
+`acc.{location}.area.{areacode}.evt.alarm`, body `{"type":"intrusion","point":"<auxcode>","ts"}`
+— captured by the existing 6-token portal-event wildcard with no new stream
+subject. They go through the same fire-suppression gate as door alarms. Like
+`forced`, an intrusion alarm is **edge-triggered** (one per active edge; a
+continuously-asserted point fires once) — there is no controller-side latch and no
+new timer; the events row stays unacknowledged until an operator acks it.
+
+**Arm-state is durable, not a RAM override.** Unlike posture, a reboot must not
+silently disarm, so arming rides the policy KV: an operator arm/disarm writes a
+durable `armOverride` field on the area record (via accessd), the mirror propagates
+it, and every participating controller converges. The controller resolves the
+effective arm-state exactly as it resolves scheduled posture —
+`armOverride` → `autoArm` (while `autoSchedule`'s window is open, holidays honored)
+→ standing `arm` — and the fail-safe direction is the **inverse of access**: an
+unresolved or unknown area falls back to standing (default disarmed) and never
+spuriously arms. Arm-state boundaries themselves fire no alarm; they only change
+whether a future trip alarms. There is **no `cmd.arm` subject** — arming is a record
+write, not a fire-and-forget command.
 
 Each input's **contact sense** is configurable per install (`dpsContact`/
 `rexContact`/`aux_input.contact`, see Policy KV below): a normally-open vs
@@ -206,8 +234,9 @@ sole writer; controllers are read-only watchers.
 | `role.{code}` | `{"code","groups":["<group code>"]}` |
 | `user.{pbid}` | `{"id","status","roles":["<role code>"]}` |
 | `cred.{value}` | `{"value","user":"<cardholder pbid>","status","validFrom"?,"validUntil"?}` |
-| `auxin.{code}` | `{"code","location","controller"?,"inputIndex"?,"contact"?}` |
+| `auxin.{code}` | `{"code","location","controller"?,"inputIndex"?,"contact"?,"area"?,"pointType"?}` |
 | `auxout.{code}` | `{"code","location","controller"?,"relayIndex"?,"pulseSeconds"?}` |
+| `area.{code}` | `{"code","name"?,"location","arm"?,"armOverride"?,"autoArm"?,"autoSchedule"?}` |
 
 **UI-only fields are deliberately excluded.** The management UI adds
 `locations.description`/`coordinates`/`floorplan` and `portals.floorplan_position`
@@ -300,6 +329,14 @@ rows whose KV key is gone — so a deleted shadow key removes the projection row
 | `portal.{code}` | `{"code","location","controller","door":"open"\|"closed"\|"unknown","posture","source":"standing"\|"scheduled"\|"override","held","updatedAt"}` |
 | `auxin.{code}` | `{"code","location","controller","active","updatedAt"}` |
 | `auxout.{code}` | `{"code","location","controller","energized","updatedAt"}` |
+| `area.{controller}.{code}` | `{"code","location","controller","arm":"armed"\|"disarmed","source","peers":["<controller code>"],"updatedAt"}` |
+
+The area key is **compound** (one shadow per participating controller for the same
+area) — `code`/`controller` come from the value, not the key. `peers` is the full
+participant set (every controller with a member input in the area), so the console
+has a **denominator**: the area is "armed" only when *every* peer reports armed,
+"partial/arming" if a peer disagrees or hasn't reported (e.g. it was offline at arm
+time and converges on reconnect), and "disarmed" when all peers report disarmed.
 
 `door` is `unknown` on a controller without a DPS input wired (e.g. the mock
 driver) or before the first edge. `posture` is the current **effective** posture
@@ -358,6 +395,23 @@ consumer (`acc-audit`) delivers from the start of the stream and is
 | `location`, `type`, `portal`, `kind` | parsed from the subject (`kind` ∈ `tap`/`state`/`alarm`/`fire`) |
 | `credential`, `user`, `allow`, `reason`, `ts` | corresponding body fields |
 | `source` | tap body field (`nats`/`osdp`) — which reader produced a tap; empty for non-tap and legacy rows |
+| `acknowledged`, `ack_by`, `ack_at` | operator acknowledgement (set via `POST /api/events/{id}/ack`, the `command` capability) |
 | `payload` | the full event body (JSON) |
 
 For `acc.{location}.evt.fire`, `portal` and `type` are empty and `kind` is `fire`.
+For an area intrusion alarm, `type` is `area`, `portal` is the area code, `kind` is
+`alarm`, and `payload.type` is `intrusion` (with `payload.point` naming the tripped
+input). The ack fields live on the projection row; because the audit consumer is
+at-least-once a stream replay can resurrect an unacked duplicate (the v1 wart) —
+the **alarm console** bounds this with a recency window, and a dedicated
+`active_alarms` upsert-projection is the deferred clean fix.
+
+**Notification sink.** A *second, independent* durable consumer (`acc-notify`,
+[`internal/notify`](../internal/notify)) on `ACC_EVENTS` emails on `alarm`/`fire`.
+It is parallel to `acc-audit`, not coupled to it (the audit consumer is an
+at-least-once projection; coupling alerting there would double-send on redelivery).
+It diverges in one way: **`DeliverNew`, not `DeliverAll`** — alerting is not a
+backfillable projection, so a freshly enabled sink starts from "now" instead of
+emailing every historical alarm. Bounded redelivery (`MaxDeliver`) keeps a dead
+SMTP server from looping forever; the SMTP transport is PocketBase's own mail
+settings, configured in `/_`.

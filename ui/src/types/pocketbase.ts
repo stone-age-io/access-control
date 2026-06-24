@@ -25,6 +25,10 @@ export type CredentialStatus = 'active' | 'revoked' | 'suspended'
 export type CredentialType = 'generic' | 'wiegand' | 'pin' | 'mobile'
 export type PortalType = 'door' | 'turnstile' | 'elevator' | 'gate' | 'logical'
 export type EventKind = 'tap' | 'state' | 'alarm' | 'fire' | 'command'
+/** Arm-state of an area (intrusion-lite). Empty standing ⇒ disarmed. */
+export type AreaArm = 'armed' | 'disarmed'
+/** How an aux input behaves: observe-only, intrusion (armed-gated), or always-on tamper. */
+export type PointType = 'monitor' | 'intrusion' | 'tamper_24h'
 export type EventSource = 'nats' | 'osdp'
 export type ControllerModel = 'kincony-server-mini' | 'kincony-pi5r8'
 export type ControllerStatus = 'online' | 'offline'
@@ -125,7 +129,7 @@ export interface Portal extends BaseRecord {
   expand?: { location?: Location; controller?: Controller; auto_schedule?: Schedule }
 }
 
-/** A named auxiliary digital input bound to a controller (observe-only). */
+/** A named auxiliary digital input bound to a controller. */
 export interface AuxInput extends BaseRecord {
   code: string
   name: string
@@ -135,7 +139,32 @@ export interface AuxInput extends BaseRecord {
   input_index: number
   /** Contact sense: '' / 'no' (default, closed when asserted) / 'nc'. Controller-only wiring hint. */
   contact: 'nc' | 'no' | ''
-  expand?: { location?: Location; controller?: Controller }
+  /** Arming membership: the area this input belongs to ('' = none). */
+  area: string
+  /** Point type: '' / 'monitor' (default, observe-only) / 'intrusion' (alarms while its area is armed) / 'tamper_24h' (alarms always). */
+  point_type: PointType | ''
+  expand?: { location?: Location; controller?: Controller; area?: Area }
+}
+
+/**
+ * An arm-state grouping for intrusion-lite. Logical, single-location, possibly
+ * spanning several controllers. Members are aux inputs (membership lives on the
+ * input). Arm-state resolves arm_override → auto_arm (while auto_schedule open) →
+ * standing arm; an unresolved/unknown area is disarmed (never spuriously arms).
+ */
+export interface Area extends BaseRecord {
+  code: string
+  name: string
+  location: string
+  /** Standing floor; empty ⇒ disarmed. */
+  arm: AreaArm | ''
+  /** Durable operator override ('' = none); set by the arm/disarm command. */
+  arm_override: AreaArm | ''
+  /** Scheduled arm-state while auto_schedule's window is open ('' = no automation). */
+  auto_arm: AreaArm | ''
+  /** Schedule id gating auto_arm ('' = none). Both-or-neither with auto_arm. */
+  auto_schedule: string
+  expand?: { location?: Location; auto_schedule?: Schedule }
 }
 
 /** A named auxiliary output relay driven by the cmd.output command. */
@@ -205,7 +234,7 @@ export interface Holiday extends BaseRecord {
 }
 
 export type DoorState = 'open' | 'closed' | 'unknown'
-export type PointKind = 'portal' | 'aux_input' | 'aux_output'
+export type PointKind = 'portal' | 'aux_input' | 'aux_output' | 'area'
 
 /**
  * Live "device shadow" projection of the ACC_STATUS KV bucket — the current state
@@ -281,4 +310,8 @@ export interface AccessEvent extends BaseRecord {
   source: EventSource | ''
   payload: Record<string, any>
   ts: string
+  /** Operator acknowledgement of an alarm/fire (set via POST /api/events/{id}/ack). */
+  acknowledged: boolean
+  ack_by: string
+  ack_at: string
 }

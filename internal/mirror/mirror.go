@@ -30,7 +30,7 @@ const opTimeout = 5 * time.Second
 var mirroredCollections = []string{
 	"locations", "schedules", "controllers", "portals", "access_groups",
 	"roles", "cardholders", "credentials", "holidays",
-	"aux_input", "aux_output",
+	"aux_input", "aux_output", "areas",
 }
 
 // Publisher writes policy records to the KV bucket.
@@ -181,6 +181,8 @@ func recordKey(r *core.Record) (string, error) {
 		return naturalKey(policykv.PrefixAuxInput, r.GetString("code"))
 	case "aux_output":
 		return naturalKey(policykv.PrefixAuxOutput, r.GetString("code"))
+	case "areas":
+		return naturalKey(policykv.PrefixArea, r.GetString("code"))
 	default:
 		return "", fmt.Errorf("not a mirrored collection: %s", name)
 	}
@@ -310,6 +312,8 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			Controller: resolveCode(app, "controllers", r.GetString("controller")),
 			InputIndex: r.GetInt("input_index"),
 			Contact:    r.GetString("contact"),
+			Area:       resolveCode(app, "areas", r.GetString("area")),
+			PointType:  r.GetString("point_type"),
 		}
 	case "aux_output":
 		if err := validToken("aux output code", r.GetString("code")); err != nil {
@@ -321,6 +325,27 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			Controller:   resolveCode(app, "controllers", r.GetString("controller")),
 			RelayIndex:   r.GetInt("relay_index"),
 			PulseSeconds: r.GetInt("pulse_seconds"),
+		}
+	case "areas":
+		if err := validToken("area code", r.GetString("code")); err != nil {
+			return "", nil, err
+		}
+		// Scheduled arm-state is both-or-neither (clone the portal auto_posture
+		// logic): an auto_arm with no resolvable auto_schedule is incomplete
+		// automation, so drop both — the area keeps its standing arm (fail-safe).
+		autoArm := r.GetString("auto_arm")
+		autoSchedule := resolveCode(app, "schedules", r.GetString("auto_schedule"))
+		if autoArm == "" || autoSchedule == "" {
+			autoArm, autoSchedule = "", ""
+		}
+		payload = policykv.Area{
+			Code:         r.GetString("code"),
+			Name:         r.GetString("name"),
+			Location:     resolveCode(app, "locations", r.GetString("location")),
+			Arm:          r.GetString("arm"),
+			ArmOverride:  r.GetString("arm_override"),
+			AutoArm:      autoArm,
+			AutoSchedule: autoSchedule,
 		}
 	default:
 		return "", nil, fmt.Errorf("not a mirrored collection: %s", r.Collection().Name)

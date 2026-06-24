@@ -36,7 +36,7 @@ function changedAt(): string {
 async function load() {
   loading.value = true
   try {
-    record.value = await pb.collection('aux_input').getOne<AuxInput>(recordId, { expand: 'location,controller' })
+    record.value = await pb.collection('aux_input').getOne<AuxInput>(recordId, { expand: 'location,controller,area' })
     await loadStatus()
     await subscribeStatus()
   } catch (err: any) {
@@ -138,6 +138,17 @@ onBeforeUnmount(() => {
         <DataField label="Input index">{{ record.input_index }}</DataField>
         <DataField label="Contact">
           {{ record.contact === 'nc' ? 'Normally closed' : 'Normally open' }}
+        </DataField>
+        <DataField label="Area">
+          <router-link v-if="record.expand?.area" :to="`/areas/${record.expand.area.id}`" class="link link-primary">
+            {{ record.expand.area.code }}
+          </router-link>
+          <span v-else class="opacity-40">None</span>
+        </DataField>
+        <DataField label="Point type">
+          <span class="badge badge-sm" :class="record.point_type === 'intrusion' ? 'badge-error' : record.point_type === 'tamper_24h' ? 'badge-warning' : 'badge-ghost'">
+            {{ record.point_type || 'monitor' }}
+          </span>
         </DataField>
       </div>
     </BaseCard>

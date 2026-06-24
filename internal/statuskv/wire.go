@@ -22,6 +22,11 @@ const (
 	PrefixPortal = "portal." // portal.<code>
 	PrefixAuxIn  = "auxin."  // auxin.<code>  (aux-I/O phase)
 	PrefixAuxOut = "auxout." // auxout.<code> (aux-I/O phase)
+	// PrefixArea keys an area's arm shadow PER CONTROLLER: "area.<controller>.<code>".
+	// Unlike the others this is a compound key (one shadow per participating
+	// controller for the same area), so the bare remainder after the prefix is NOT a
+	// usable code — the projector reads code/controller from the AreaStatus value.
+	PrefixArea = "area." // area.<controller>.<code>
 )
 
 // Kind names used in the point_status projection (and the kind select field).
@@ -29,12 +34,23 @@ const (
 	KindPortal    = "portal"
 	KindAuxInput  = "aux_input"
 	KindAuxOutput = "aux_output"
+	KindArea      = "area"
+)
+
+// Area arm states carried in AreaStatus.Arm and the area point_status row's state.
+const (
+	AreaArmed    = "armed"
+	AreaDisarmed = "disarmed"
 )
 
 // Parse splits a status KV key into its projection kind and bare code. ok is
-// false for an unrecognized prefix (a foreign key the projector should skip).
+// false for an unrecognized prefix (a foreign key the projector should skip). For
+// the area kind the returned code is the compound remainder ("<controller>.<code>")
+// and is unused — the projector takes code/controller from the AreaStatus value.
 func Parse(key string) (kind, code string, ok bool) {
 	switch {
+	case strings.HasPrefix(key, PrefixArea):
+		return KindArea, strings.TrimPrefix(key, PrefixArea), true
 	case strings.HasPrefix(key, PrefixPortal):
 		return KindPortal, strings.TrimPrefix(key, PrefixPortal), true
 	case strings.HasPrefix(key, PrefixAuxIn):
@@ -98,4 +114,24 @@ type AuxOutputStatus struct {
 	Controller string `json:"controller"`
 	Energized  bool   `json:"energized"` // standing held state (on/off)
 	UpdatedAt  string `json:"updatedAt"`
+}
+
+// AreaStatus is one controller's view of an area's effective arm-state. Because
+// an area can span several controllers, each participating controller writes its
+// OWN shadow (key area.<controller>.<code>), and the console aggregates them.
+//
+// Peers carries the FULL participant set (every controller code with a member
+// input in this area) so the console has a denominator: "armed" is true only when
+// every peer has reported armed — a peer that was offline at arm time and never
+// wrote a shadow is detectable as missing, rather than silently ignored. Every
+// participant computes the same Peers from the shared policy graph, so any one
+// shadow row carries the authoritative set.
+type AreaStatus struct {
+	Code       string   `json:"code"`
+	Location   string   `json:"location"`
+	Controller string   `json:"controller"`
+	Arm        string   `json:"arm"`            // AreaArmed | AreaDisarmed (this controller's effective state)
+	Source     string   `json:"source"`         // standing | scheduled | override (provenance, PostureSource*)
+	Peers      []string `json:"peers"`          // all participating controller codes (the denominator)
+	UpdatedAt  string   `json:"updatedAt"`
 }

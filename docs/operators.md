@@ -67,7 +67,7 @@ where noted; the table shows the **write** rules:
 | `cardholders`, `credentials` | `enroll` | `operators` |
 | `schedules`, `access_groups`, `roles` | `policy` | `operators` |
 | `holidays` | `policy` | `policy` |
-| `locations`, `controllers`, `portals`, `aux_input`, `aux_output` | `topology` | `operators` |
+| `locations`, `controllers`, `portals`, `aux_input`, `aux_output`, `areas` | `topology` | `operators` |
 | `users` | `operators` (create) · self-or-`operators` (update) | `operators` |
 | `audit_logs` | — (superuser-only; hook-written) | — |
 | `events`, `point_status` | — (machine-written; accessd's `app.Save` bypasses rules) | — |
@@ -97,10 +97,24 @@ so they call `authz.RequireCapability` per handler:
 | `POST /api/portals/{id}/grant` | `command` | momentary strike pulse → `cmd.grant` |
 | `POST /api/portals/{id}/posture` | `command` | posture override / clear → `cmd.posture` |
 | `POST /api/aux-outputs/{id}/output` | `command` | drive an aux output → `cmd.output` |
+| `POST /api/events/{id}/ack` | `command` | acknowledge an alarm/fire (sets ack fields) |
+| `POST /api/areas/{id}/arm` · `/disarm` · `/arm-clear` | `command` | set/clear an area's durable `arm_override` |
 | `GET /api/models` | any authenticated | enum/options metadata for the UI |
 
-These routes bridge the UI to the **NATS command plane**; the wire subjects and
+Most of these bridge the UI to the **NATS command plane**; the wire subjects and
 bodies they publish are documented in [`protocol.md`](protocol.md#command-details).
+The **ack** and **arm/disarm** routes are the exception: they write a PocketBase
+record (the ack fields; the area `arm_override`) rather than publishing a
+fire-and-forget command, because arm-state must be *durable* (a reboot must not
+silently disarm). Each therefore writes its own `audit_logs` row (a custom-route
+`app.Save` doesn't trip the changelog `*Request` hooks).
+
+> **`command` now covers arming.** Adding arm/disarm and alarm-ack under `command`
+> widens that capability's meaning: an operator you trust to buzz a door open can
+> now also arm/disarm the intrusion system and acknowledge alarms. That is a
+> deliberate v1 choice (no separate `arm` capability yet) — keep it in mind when
+> granting `command`. Area *configuration* (membership, schedules) stays at
+> `topology`; only the operational arm/disarm is `command`.
 
 ## Presets
 

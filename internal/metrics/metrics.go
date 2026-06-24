@@ -30,6 +30,10 @@ type Metrics struct {
 	eventsPublishedTotal *prometheus.CounterVec // labels: kind
 	auditWritesTotal     *prometheus.CounterVec // labels: status (ok/error)
 
+	// Notification sink (accessd): the second ACC_EVENTS consumer that emails on
+	// alarm/fire. status = ok/error/skip/dedup.
+	notifySendsTotal *prometheus.CounterVec // labels: status
+
 	// Controller heartbeats: sent by the controller, received by accessd.
 	heartbeatsSentTotal     prometheus.Counter     // controller
 	heartbeatsReceivedTotal *prometheus.CounterVec // labels: status (ok/unknown/error) (accessd)
@@ -88,6 +92,13 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 			},
 			[]string{"status"},
 		),
+		notifySendsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "notify_sends_total",
+				Help: "Total notification-sink outcomes by status (ok/error/skip/dedup)",
+			},
+			[]string{"status"},
+		),
 		heartbeatsSentTotal: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "controller_heartbeats_sent_total",
@@ -134,6 +145,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.kvWatchState,
 		m.eventsPublishedTotal,
 		m.auditWritesTotal,
+		m.notifySendsTotal,
 		m.heartbeatsSentTotal,
 		m.heartbeatsReceivedTotal,
 		m.natsConnectionStatus,
@@ -211,6 +223,15 @@ func (m *Metrics) IncAuditWrite(status string) {
 		return
 	}
 	m.auditWritesTotal.WithLabelValues(status).Inc()
+}
+
+// IncNotify records one notification-sink outcome (status =
+// "ok"/"error"/"skip"/"dedup").
+func (m *Metrics) IncNotify(status string) {
+	if m == nil {
+		return
+	}
+	m.notifySendsTotal.WithLabelValues(status).Inc()
 }
 
 // IncHeartbeatSent records one liveness heartbeat published by the controller.

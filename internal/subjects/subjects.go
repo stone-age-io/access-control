@@ -112,6 +112,12 @@ func (s Subjects) GrantWildcard(location string) string {
 // Things addressed like portals, with this reserved type token.
 const AuxOutType = "auxout"
 
+// AreaType is the fixed {type} subject segment for areas. An area's intrusion
+// alarm is addressed as a Thing of this type — {app}.{location}.area.{areacode}
+// .evt.alarm — so it reuses the generic EventAlarm constructor and is captured by
+// the existing 6-token portal-event wildcard with no new stream subject.
+const AreaType = "area"
+
 // Output is the subject an operator publishes an auxiliary-output command to
 // (on/off/pulse). Aux outputs ride the same {app}.{location}.{type}.{thing}
 // hierarchy as portals, with the fixed AuxOutType token.
@@ -188,6 +194,20 @@ func (s Subjects) EventsWildcards() []string {
 }
 
 // --- parsing ---
+
+// AlarmWildcards is the notification sink's consumer filter: the alarm/fire subset
+// of the events surface, so the sink is never delivered taps/state just to drop
+// them. Both patterns are covered by the ACC_EVENTS stream subjects and do not
+// overlap each other (6-token alarm vs 4-token fire):
+//
+//	{app}.*.*.*.evt.alarm   portal/area forced/held/intrusion alarms
+//	{app}.*.evt.fire        location-scoped fire input
+func (s Subjects) AlarmWildcards() []string {
+	return []string{
+		fmt.Sprintf("%s.*.*.*.evt.alarm", s.App()),
+		fmt.Sprintf("%s.*.evt.fire", s.App()),
+	}
+}
 
 // ParseEvent splits an event subject into its location/type/thing/kind. Two forms
 // are recognized; ok is false for anything else (wrong app, wrong shape):
