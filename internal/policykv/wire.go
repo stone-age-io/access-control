@@ -22,6 +22,7 @@ const (
 	PrefixHoliday    = "holiday."
 	PrefixAuxInput   = "auxin."
 	PrefixAuxOutput  = "auxout."
+	PrefixArea       = "area."
 )
 
 // Location carries the timezone (the controller resolves it once per evaluation)
@@ -115,16 +116,37 @@ type Controller struct {
 }
 
 // AuxInput is a named auxiliary digital input bound to a controller — like a
-// portal's DPS/REX but standalone (observe-only, no door semantics). Location and
-// Controller are codes; InputIndex is a logical input index on the box (the model
-// template maps it to a physical line). Consumed only by the controller's
-// AuxManager/runtime, never by policy.Decide.
+// portal's DPS/REX but standalone (no door semantics). Location and Controller
+// are codes; InputIndex is a logical input index on the box (the model template
+// maps it to a physical line). Area is the code of the area this input belongs to
+// (empty = none); PointType ("" / "monitor" / "intrusion" / "tamper_24h") decides
+// whether an active edge raises an intrusion alarm (see the controller runtime).
+// Consumed only by the controller's AuxManager/runtime, never by policy.Decide.
 type AuxInput struct {
 	Code       string `json:"code"`
 	Location   string `json:"location"`
 	Controller string `json:"controller,omitempty"`
 	InputIndex int    `json:"inputIndex,omitempty"`
-	Contact    string `json:"contact,omitempty"` // "" / "no" (default) / "nc" contact sense
+	Contact    string `json:"contact,omitempty"`   // "" / "no" (default) / "nc" contact sense
+	Area       string `json:"area,omitempty"`      // area code this input belongs to
+	PointType  string `json:"pointType,omitempty"` // "" / monitor (default) / intrusion / tamper_24h
+}
+
+// Area is an arm-state grouping (logical, single-location, possibly spanning
+// several controllers). All cross-refs are codes. Arm is the standing floor;
+// ArmOverride is the durable operator override (empty = none); AutoArm/AutoSchedule
+// are the scheduled arm-state (both-or-neither). The controller resolves the
+// effective arm-state from these exactly as it resolves scheduled posture, and
+// arming is purely derived from KV so a reboot re-derives it. Consumed only by the
+// controller's AreaManager/runtime, never by policy.Decide.
+type Area struct {
+	Code         string `json:"code"`
+	Name         string `json:"name,omitempty"`
+	Location     string `json:"location"`
+	Arm          string `json:"arm,omitempty"`          // standing: "" (=disarmed) / disarmed / armed
+	ArmOverride  string `json:"armOverride,omitempty"`  // durable override: "" (none) / armed / disarmed
+	AutoArm      string `json:"autoArm,omitempty"`      // scheduled arm-state while AutoSchedule open
+	AutoSchedule string `json:"autoSchedule,omitempty"` // schedule code gating AutoArm
 }
 
 // Invert reports whether the aux input's contact sense is inverted from the

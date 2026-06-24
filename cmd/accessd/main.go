@@ -16,6 +16,7 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
+	"net/mail"
 	"os"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
+	"github.com/pocketbase/pocketbase/tools/mailer"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/audit"
@@ -34,6 +36,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/mirror"
 	"github.com/stone-age-io/access-control/internal/modelsapi"
 	"github.com/stone-age-io/access-control/internal/natsx"
+	"github.com/stone-age-io/access-control/internal/notify"
 	"github.com/stone-age-io/access-control/internal/status"
 	"github.com/stone-age-io/access-control/internal/subjects"
 	"github.com/stone-age-io/access-control/internal/webui"
@@ -87,6 +90,7 @@ func main() {
 		metricsSrv *http.Server
 		collector  *metrics.Collector
 		auditC     *audit.Consumer
+		notifier   *notify.Notifier
 		healthMon  *health.Monitor
 		statusProj *status.Projector
 	)
@@ -175,6 +179,38 @@ func main() {
 			return err
 		}
 
+		// Notification sink: a SECOND, independent durable on ACC_EVENTS that emails
+		// on alarm/fire (DeliverNew — alerting is not a backfillable projection).
+		// Off unless cfg.Notify.Enabled. SMTP transport comes from PocketBase's own
+		// mail settings; this only names recipients/sender.
+		if cfg.Notify.Enabled {
+			if len(cfg.Notify.Recipients) == 0 {
+				log.Warn("notify enabled but no recipients configured; sink not started")
+			} else {
+				app := e.App
+				send := func(msg notify.Message) error {
+					from := cfg.Notify.From
+					if from == "" {
+						from = app.Settings().Meta.SenderAddress
+					}
+					to := make([]mail.Address, 0, len(cfg.Notify.Recipients))
+					for _, r := range cfg.Notify.Recipients {
+						to = append(to, mail.Address{Address: r})
+					}
+					return app.NewMailClient().Send(&mailer.Message{
+						From:    mail.Address{Address: from, Name: app.Settings().Meta.SenderName},
+						To:      to,
+						Subject: msg.Subject,
+						Text:    msg.Body,
+					})
+				}
+				notifier = notify.New(nc.JS, cfg.Events.Stream, subj, send, log, m)
+				if err := notifier.Start(ctx); err != nil {
+					return err
+				}
+			}
+		}
+
 		// Controller health: core-NATS heartbeat subscriber → controllers
 		// last_seen/status (a direct record update, not an events row). Owns its
 		// own lifetime; stopped in OnTerminate.
@@ -215,6 +251,9 @@ func main() {
 		}
 		if healthMon != nil {
 			healthMon.Stop()
+		}
+		if notifier != nil {
+			notifier.Stop()
 		}
 		if auditC != nil {
 			auditC.Stop()

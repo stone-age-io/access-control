@@ -9,12 +9,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Two Go binaries plus a Vue 3 management UI:
 
 - **`accessd`** (`cmd/accessd`) — central system of record. Embeds PocketBase (control plane + schema),
-  mirrors the policy graph to NATS KV (one key per record), runs the JetStream audit consumer, and runs the
-  controller-health monitor (heartbeats → `controllers.last_seen`/`status`). Serves the embedded UI at `/`.
+  mirrors the policy graph to NATS KV (one key per record), runs the JetStream audit consumer, runs the
+  controller-health monitor (heartbeats → `controllers.last_seen`/`status`), and runs an optional **notification
+  sink** (`internal/notify`) — a *second*, independent durable on ACC_EVENTS that emails on alarm/fire
+  (`DeliverNew`, off by default). Serves the embedded UI at `/`.
 - **`access-controller`** (`cmd/access-controller`) — edge runtime. Watches the KV keyspace into in-memory
   maps, decides credential presentations **locally** with the pure `policy.Decide`, drives reader/lock/door-input
-  hardware, runs a per-door forced/held-open state machine, emits access events to JetStream, and publishes a
-  liveness heartbeat.
+  hardware, runs a per-door forced/held-open state machine, evaluates **area arm-state** (intrusion-lite: an armed
+  area's `intrusion` aux input — or any `tamper_24h` input — raises an `intrusion` alarm), emits access events to
+  JetStream, and publishes a liveness heartbeat.
 
 v1 status: the reader is selectable via `controller.reader` (orthogonal to the lock/door driver) — `nats` (default;
 simulated taps published to `acc.{location}.{type}.{thing}.tap`, for dev), `osdp` (a real OSDP reader on the
@@ -123,6 +126,16 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   (no `forced`) and arms the held-open (DOTL) timer; a location's fire input suppresses all alarm emission. The
   hardware binding (logical relay/input indices, held-open threshold) rides policy on the portal record, never
   the pure `policy.Decide`; the box maps logical indices to physical lines via its `model` profile.
+- **AreaManager** (`internal/controller/areamanager.go`) — the arming sibling of AuxManager. The desired set is
+  every area with a member `aux_input` on this box (`PolicyStore.AreasForController`); for each it resolves the
+  effective arm-state (`ResolveArmState`: `armOverride` → scheduled `autoArm` → standing `arm`, fail-safe to
+  disarmed) and writes a **per-controller arm shadow** to ACC_STATUS (`area.{controller}.{areacode}`), stamping
+  the full participant set (`peers`) so the console can tell "all armed" from "a box never reported." It reconciles
+  on policy change *and* on the runtime's hold-eval tick (so scheduled-arm boundaries refresh — **no new timer**),
+  and drops a shadow when an area leaves the box. The arm decision is **not** in `policy.Decide` (it's
+  time/schedule-dependent operational state, like posture); at trip time `runtime.setAuxInput` looks up the input's
+  area/`point_type` and emits an `intrusion` alarm through the same fire-suppression gate — edge-triggered, no
+  latch, like `forced`.
 - **Audit** (`internal/audit`) — JetStream is the system of record for events; the PocketBase `events`
   collection is a rebuildable projection. Durable consumer, at-least-once (a redelivery may dup a row in v1).
 - **Controller health** (`internal/health`, accessd-side) — a core-NATS subscriber to the heartbeat subject
@@ -139,8 +152,8 @@ stream rooted at a literal first token (`things.>`, `cameras.>`, `kiosk.*.event.
 overlapping stream subjects (err 10065). Leading with `acc` keeps our subject space disjoint from theirs.
 
 - `acc.{location}.{type}.{thing}.tap` — credential presentation (the `nats` reader subscribes here; the `osdp` reader reads RS485 instead; under `both`, NATS for every portal and RS485 for the reader portals)
-- `acc.{location}.{type}.{thing}.evt.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS
-- `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget)
+- `acc.{location}.{type}.{thing}.evt.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS. An **area intrusion alarm** reuses this as `acc.{location}.area.{areacode}.evt.alarm` (type token `area`, body `{type:"intrusion",point,ts}`) — captured by the existing 6-token wildcard, no new stream subject.
+- `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget). **There is no `cmd.arm`**: arm/disarm is a *durable record write* (`areas.arm_override` → mirror → KV → controllers converge), so a reboot can't silently disarm.
 - `acc.{location}.ctrl.{code}.heartbeat` — controller liveness. A controller is addressed under the reserved
   `ctrl` namespace (not a portal type); the heartbeat sits **outside** the `.evt` subtree (5 tokens, no `evt`) on
   purpose, so ACC_EVENTS never captures it — accessd updates the `controllers` record directly instead.
@@ -181,7 +194,10 @@ role-based rules + `audit_logs`), `1750000011` (location-map/floor-plan UI field
 (replace the operator `role` rank with the orthogonal `permissions` capabilities), and `1750000017`
 (per-install wiring sense: portal `dps_contact`/`rex_contact` NO/NC + `lock_type` strike/maglock + `rex_unlock`,
 and `aux_input.contact` — controller-only hints folded onto the board profile's electrical polarity, never on
-the `policy.Decide` wire). The base `1750000000` stays frozen; everything is additive. `migratecmd`
+the `policy.Decide` wire), `1750000018` (shareable holiday calendars), `1750000019` (the **intrusion-lite**
+`areas` collection + `aux_input.area`/`point_type` + a `point_status.kind` of `area`), `1750000020`
+(`events` ack fields `acknowledged`/`ack_by`/`ack_at`), and `1750000021` (a guarded areas demo fixture).
+The base `1750000000` stays frozen; everything is additive. `migratecmd`
 Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
 before committing.
 

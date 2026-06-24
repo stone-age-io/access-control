@@ -43,6 +43,7 @@ const sections: NavSection[] = [
       { label: 'Portals', icon: '🚪', path: '/portals' },
       { label: 'Aux Inputs', icon: '🔌', path: '/aux-inputs' },
       { label: 'Aux Outputs', icon: '🔆', path: '/aux-outputs' },
+      { label: 'Areas', icon: '🛡️', path: '/areas' },
       { label: 'Schedules', icon: '🗓️', path: '/schedules' },
       { label: 'Holiday Calendars', icon: '🗓️', path: '/holiday-calendars' },
       { label: 'Holidays', icon: '📅', path: '/holidays', child: true },
@@ -50,7 +51,10 @@ const sections: NavSection[] = [
   },
   {
     title: 'Activity',
-    items: [{ label: 'Events', icon: '📋', path: '/events' }],
+    items: [
+      { label: 'Alarm Console', icon: '🚨', path: '/alarms' },
+      { label: 'Events', icon: '📋', path: '/events' },
+    ],
   },
   {
     title: 'Administration',

@@ -6,6 +6,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,7 @@ type PolicyStore struct {
 	holidayRecords map[string]policykv.Holiday    // holiday id -> record (graph.Holidays is rebuilt from this)
 	auxInputs      map[string]policykv.AuxInput   // aux input code -> record
 	auxOutputs     map[string]policykv.AuxOutput  // aux output code -> record
+	areas          map[string]policykv.Area       // area code -> record
 
 	onChange func() // fired (off the lock) after each applied change and each sync
 
@@ -103,6 +105,7 @@ func NewPolicyStore(kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metric
 		holidayRecords: make(map[string]policykv.Holiday),
 		auxInputs:      make(map[string]policykv.AuxInput),
 		auxOutputs:     make(map[string]policykv.AuxOutput),
+		areas:          make(map[string]policykv.Area),
 		graph: policy.Policy{
 			Schedules: make(map[string]policy.Schedule),
 			Portals:   make(map[string]policy.Portal),
@@ -170,6 +173,112 @@ func (s *PolicyStore) ResolvePosture(portal, override string, atUTC time.Time) (
 		}
 	}
 	return ap.Posture, statuskv.PostureSourceStanding, true
+}
+
+// ResolveArmState computes an area's effective arm-state under one read lock, the
+// arming analogue of ResolvePosture:
+//
+//  1. a durable arm_override (on the area record; "" means none) wins;
+//  2. else, while the area's auto_schedule window is open, its auto_arm;
+//  3. else the standing arm (empty ⇒ disarmed).
+//
+// source reports which of the three produced it (a statuskv.PostureSource*
+// constant). resolved is false only when an auto_schedule is configured but its
+// schedule/timezone is not loaded yet — armed is then the safe standing value, but
+// the caller should keep the previous shadow rather than flap during a re-sync.
+//
+// Fail-safe direction is the INVERSE of access: an unknown/dangling/unresolved
+// area must never spuriously arm (a false arm storms alarms), so everything
+// uncertain falls back to standing, default disarmed. An unknown area is disarmed.
+func (s *PolicyStore) ResolveArmState(areaCode string, atUTC time.Time) (armed bool, source string, resolved bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	a, ok := s.areas[areaCode]
+	if !ok {
+		return false, statuskv.PostureSourceStanding, true // unknown area: disarmed
+	}
+	if a.ArmOverride != "" {
+		return a.ArmOverride == "armed", statuskv.PostureSourceOverride, true
+	}
+	standing := a.Arm == "armed"
+	if a.AutoSchedule != "" {
+		sched, schedOK := s.graph.Schedules[a.AutoSchedule]
+		le, locOK := s.locations[a.Location]
+		if !schedOK || !locOK || le.loc == nil {
+			return standing, statuskv.PostureSourceStanding, false // configured but unresolved: keep previous
+		}
+		if policy.ScheduleOpen(sched, le.loc, atUTC, s.graph.Holidays[a.Location]) {
+			return a.AutoArm == "armed", statuskv.PostureSourceScheduled, true
+		}
+	}
+	return standing, statuskv.PostureSourceStanding, true
+}
+
+// Area returns a copy of the area and whether it is known (for its location).
+func (s *PolicyStore) Area(code string) (policykv.Area, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.areas[code]
+	return a, ok
+}
+
+// AreasForController returns the areas this controller participates in — those
+// with at least one member aux_input whose controller relation points at this
+// box. The AreaManager uses it to decide which areas' shadows this box writes.
+// Returns a fresh slice each call.
+func (s *PolicyStore) AreasForController(controllerCode string) []policykv.Area {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if controllerCode == "" {
+		return nil
+	}
+	member := make(map[string]struct{})
+	for _, ai := range s.auxInputs {
+		if ai.Controller == controllerCode && ai.Area != "" {
+			member[ai.Area] = struct{}{}
+		}
+	}
+	var out []policykv.Area
+	for code := range member {
+		if a, ok := s.areas[code]; ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// AreaControllers returns the sorted, distinct set of controller codes with a
+// member aux_input in the given area — the full participant set ("peers"). Each
+// controller stamps this into its arm shadow so the console can tell "all
+// participants armed" from "a participant never reported." Returns a fresh slice.
+func (s *PolicyStore) AreaControllers(areaCode string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	set := make(map[string]struct{})
+	for _, ai := range s.auxInputs {
+		if ai.Area == areaCode && ai.Controller != "" {
+			set[ai.Controller] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for c := range set {
+		out = append(out, c)
+	}
+	sort.Strings(out) // stable peers list so identical state doesn't churn the shadow
+	return out
+}
+
+// AuxInputMeta returns an aux input's area code and point type, looked up at trip
+// time so a config change needs no re-arm. ok is false for an unknown input.
+func (s *PolicyStore) AuxInputMeta(code string) (area, pointType string, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ai, ok := s.auxInputs[code]
+	if !ok {
+		return "", "", false
+	}
+	return ai.Area, ai.PointType, true
 }
 
 // Portal returns a copy of the portal and whether it is known. The tap loop uses
@@ -346,6 +455,7 @@ func (s *PolicyStore) Counts() map[string]int {
 		"controllers": len(s.controllers),
 		"auxInputs":   len(s.auxInputs),
 		"auxOutputs":  len(s.auxOutputs),
+		"areas":       len(s.areas),
 	}
 }
 
@@ -587,6 +697,13 @@ func (s *PolicyStore) apply(key string, value []byte) {
 		}
 		s.auxOutputs[w.Code] = w
 
+	case strings.HasPrefix(key, policykv.PrefixArea):
+		var w policykv.Area
+		if !s.unmarshal(key, value, &w) {
+			return
+		}
+		s.areas[w.Code] = w
+
 	default:
 		s.log.Warn("policystore: unknown key prefix, ignoring", "key", key)
 		return
@@ -626,6 +743,8 @@ func (s *PolicyStore) remove(key string) {
 		delete(s.auxInputs, strings.TrimPrefix(key, policykv.PrefixAuxInput))
 	case strings.HasPrefix(key, policykv.PrefixAuxOutput):
 		delete(s.auxOutputs, strings.TrimPrefix(key, policykv.PrefixAuxOutput))
+	case strings.HasPrefix(key, policykv.PrefixArea):
+		delete(s.areas, strings.TrimPrefix(key, policykv.PrefixArea))
 	default:
 		s.log.Warn("policystore: unknown key prefix on delete, ignoring", "key", key)
 		return

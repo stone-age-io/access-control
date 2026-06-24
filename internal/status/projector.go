@@ -253,6 +253,19 @@ func rowFor(key string, value []byte) (row, bool) {
 		r.controller = ao.Controller
 		r.location = ao.Location
 		r.changed = ao.UpdatedAt
+	case statuskv.KindArea:
+		var as statuskv.AreaStatus
+		if err := json.Unmarshal(value, &as); err != nil {
+			return row{}, false
+		}
+		// The area key is compound (area.<controller>.<code>), so take the bare code
+		// and controller from the value, not the key remainder. peers + source ride
+		// the payload (set above) for the console to aggregate by code.
+		r.code = as.Code
+		r.state = as.Arm
+		r.controller = as.Controller
+		r.location = as.Location
+		r.changed = as.UpdatedAt
 	default:
 		return row{}, false
 	}

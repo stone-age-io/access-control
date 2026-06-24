@@ -66,6 +66,12 @@ const routes: RouteRecordRaw[] = [
       { path: 'aux-inputs/:id', name: 'AuxInput', component: () => import('@/views/aux/AuxInputDetailView.vue'), meta: { title: 'Aux Input' } },
       { path: 'aux-inputs/:id/edit', name: 'AuxInputEdit', component: () => import('@/views/aux/AuxInputFormView.vue'), meta: { title: 'Edit Aux Input', capability: TOPOLOGY } },
 
+      // Areas (arm-state groupings for intrusion-lite)
+      { path: 'areas', name: 'Areas', component: () => import('@/views/areas/AreaListView.vue'), meta: { title: 'Areas' } },
+      { path: 'areas/new', name: 'AreaNew', component: () => import('@/views/areas/AreaFormView.vue'), meta: { title: 'New Area', capability: TOPOLOGY } },
+      { path: 'areas/:id', name: 'Area', component: () => import('@/views/areas/AreaDetailView.vue'), meta: { title: 'Area' } },
+      { path: 'areas/:id/edit', name: 'AreaEdit', component: () => import('@/views/areas/AreaFormView.vue'), meta: { title: 'Edit Area', capability: TOPOLOGY } },
+
       // Aux outputs (named relays driven by cmd.output)
       { path: 'aux-outputs', name: 'AuxOutputs', component: () => import('@/views/aux/AuxOutputListView.vue'), meta: { title: 'Aux Outputs' } },
       { path: 'aux-outputs/new', name: 'AuxOutputNew', component: () => import('@/views/aux/AuxOutputFormView.vue'), meta: { title: 'New Aux Output', capability: TOPOLOGY } },
@@ -109,6 +115,9 @@ const routes: RouteRecordRaw[] = [
 
       // Import (bulk-create cardholders + credentials from CSV)
       { path: 'import', name: 'Import', component: () => import('@/views/import/ImportView.vue'), meta: { title: 'Import', capability: ENROLL } },
+
+      // Alarm console (unacknowledged alarms/fire — operator ack)
+      { path: 'alarms', name: 'Alarms', component: () => import('@/views/alarms/AlarmConsoleView.vue'), meta: { title: 'Alarm Console' } },
 
       // Events (read-only audit timeline)
       { path: 'events', name: 'Events', component: () => import('@/views/events/EventListView.vue'), meta: { title: 'Events' } },

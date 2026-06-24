@@ -149,6 +149,38 @@ func (w *StatusWriter) DeleteAuxOutput(code string) {
 	w.del(statuskv.PrefixAuxOut + code)
 }
 
+// areaKey is this controller's shadow key for an area: area.<controller>.<code>.
+// Per-controller, so each participant's view of the same area is its own row.
+func (w *StatusWriter) areaKey(areaCode string) string {
+	return statuskv.PrefixArea + w.code + "." + areaCode
+}
+
+// SetArea records this controller's view of an area's effective arm-state. peers
+// is the full participant set (every controller with a member input), stamped so
+// the console can aggregate "all armed" vs "a participant never reported."
+func (w *StatusWriter) SetArea(areaCode, location, arm, source string, peers []string, at time.Time) {
+	b, err := json.Marshal(statuskv.AreaStatus{
+		Code:       areaCode,
+		Location:   location,
+		Controller: w.code,
+		Arm:        arm,
+		Source:     source,
+		Peers:      peers,
+		UpdatedAt:  at.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		w.log.Error("marshal area status", "code", areaCode, "error", err)
+		return
+	}
+	w.set(w.areaKey(areaCode), b)
+}
+
+// DeleteArea removes this controller's arm shadow for an area (when the area no
+// longer has a member input here, or is removed).
+func (w *StatusWriter) DeleteArea(areaCode string) {
+	w.del(w.areaKey(areaCode))
+}
+
 // Resync re-publishes the entire current shadow on the next drain. Wire it to the
 // NATS reconnect handler: a reconnect can drop in-flight writes, so we force every
 // key to be re-put (and accessd's own watcher re-syncs to receive them).
