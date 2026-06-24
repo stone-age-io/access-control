@@ -34,6 +34,10 @@ type Metrics struct {
 	// alarm/fire. status = ok/error/skip/dedup.
 	notifySendsTotal *prometheus.CounterVec // labels: status
 
+	// Disarm sink (accessd): the ACC_EVENTS tap consumer that durably disarms an
+	// area on a valid grant at an entry portal. status = disarmed/skip/error.
+	disarmsTotal *prometheus.CounterVec // labels: status
+
 	// Controller heartbeats: sent by the controller, received by accessd.
 	heartbeatsSentTotal     prometheus.Counter     // controller
 	heartbeatsReceivedTotal *prometheus.CounterVec // labels: status (ok/unknown/error) (accessd)
@@ -99,6 +103,13 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 			},
 			[]string{"status"},
 		),
+		disarmsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "disarm_sink_total",
+				Help: "Total disarm-sink outcomes by status (disarmed/skip/error)",
+			},
+			[]string{"status"},
+		),
 		heartbeatsSentTotal: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "controller_heartbeats_sent_total",
@@ -146,6 +157,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.eventsPublishedTotal,
 		m.auditWritesTotal,
 		m.notifySendsTotal,
+		m.disarmsTotal,
 		m.heartbeatsSentTotal,
 		m.heartbeatsReceivedTotal,
 		m.natsConnectionStatus,
@@ -232,6 +244,15 @@ func (m *Metrics) IncNotify(status string) {
 		return
 	}
 	m.notifySendsTotal.WithLabelValues(status).Inc()
+}
+
+// IncDisarm records one disarm-sink outcome (status =
+// "disarmed"/"skip"/"error").
+func (m *Metrics) IncDisarm(status string) {
+	if m == nil {
+		return
+	}
+	m.disarmsTotal.WithLabelValues(status).Inc()
 }
 
 // IncHeartbeatSent records one liveness heartbeat published by the controller.

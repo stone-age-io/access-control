@@ -124,9 +124,13 @@ export interface Portal extends BaseRecord {
   auto_posture: Posture | ''
   /** Schedules relation id that gates auto_posture ('' = no automation). Both-or-neither with auto_posture. */
   auto_schedule: string
+  /** Area relation id this portal belongs to ('' = none). While that area is armed, a forced open escalates to an area intrusion alarm. */
+  area: string
+  /** When true, a valid credential grant at this portal durably disarms its area (an entry door). */
+  disarm_on_grant: boolean
   /** {x, y} pixel position on the location's floorplan (UI only; null/absent = not placed). */
   floorplan_position?: { x: number; y: number } | null
-  expand?: { location?: Location; controller?: Controller; auto_schedule?: Schedule }
+  expand?: { location?: Location; controller?: Controller; auto_schedule?: Schedule; area?: Area }
 }
 
 /** A named auxiliary digital input bound to a controller. */

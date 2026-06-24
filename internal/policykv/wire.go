@@ -94,6 +94,13 @@ type Portal struct {
 	RexContact string `json:"rexContact,omitempty"` // "" / "no" (default) / "nc" request-to-exit contact
 	LockType   string `json:"lockType,omitempty"`   // "" / "strike" (default) / "maglock"
 	RexUnlock  bool   `json:"rexUnlock,omitempty"`  // REX press also pulses the lock, not just shunts the alarm
+	// Area membership (intrusion-lite). Area is the code of the area this portal
+	// belongs to (empty = none); while that area is armed, a forced open escalates
+	// to an area intrusion alarm. DisarmOnGrant marks an entry door: a valid grant
+	// here durably disarms Area. Both are consumed only by the controller runtime
+	// (Area) and accessd's disarm sink (DisarmOnGrant), never by policy.Decide.
+	Area          string `json:"area,omitempty"`
+	DisarmOnGrant bool   `json:"disarmOnGrant,omitempty"`
 }
 
 // DPSInvert / REXInvert / IsMaglock translate the operator's contact-type / lock-type

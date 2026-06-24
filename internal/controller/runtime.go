@@ -411,6 +411,7 @@ func (r *Runtime) handleDPS(portal string, closed bool, at time.Time) {
 
 	if emitForced {
 		r.EmitAlarm(portal, AlarmForced, at)
+		r.maybeForcedIntrusion(portal, at)
 	}
 	if emitHeldClear {
 		r.EmitAlarm(portal, AlarmHeldClear, at)
@@ -768,6 +769,24 @@ func (r *Runtime) maybeIntrusionAlarm(code string, at time.Time) {
 		}
 	default:
 		// monitor / untyped: observe-only.
+	}
+}
+
+// maybeForcedIntrusion escalates a just-emitted forced-door event to an area
+// intrusion alarm when the portal is a member of a currently-armed area. A portal
+// has a reader, so — unlike a bare aux_input that trips on any open while armed —
+// it trips intrusion only on an *unauthorized* open, which is exactly the forced
+// condition handleDPS already detected (an authorized grant/REX open never reaches
+// here). The door-level `forced` event is still emitted; this is the additional
+// armed-zone roll-up onto the area. Edge-triggered, no latch, like forced itself;
+// a portal with no area, or whose area is disarmed, escalates nothing.
+func (r *Runtime) maybeForcedIntrusion(portal string, at time.Time) {
+	b, ok := r.store.Binding(portal)
+	if !ok || b.Area == "" {
+		return
+	}
+	if armed, _, _ := r.store.ResolveArmState(b.Area, at); armed {
+		r.emitIntrusionAlarm(b.Area, portal, at)
 	}
 }
 

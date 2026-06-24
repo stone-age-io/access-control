@@ -21,15 +21,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 	"github.com/pocketbase/pocketbase/tools/mailer"
+	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/audit"
 	"github.com/stone-age-io/access-control/internal/changelog"
 	"github.com/stone-age-io/access-control/internal/commandapi"
+	"github.com/stone-age-io/access-control/internal/disarm"
 	"github.com/stone-age-io/access-control/internal/health"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
@@ -91,6 +94,7 @@ func main() {
 		collector  *metrics.Collector
 		auditC     *audit.Consumer
 		notifier   *notify.Notifier
+		disarmer   *disarm.Disarmer
 		healthMon  *health.Monitor
 		statusProj *status.Projector
 	)
@@ -211,6 +215,15 @@ func main() {
 			}
 		}
 
+		// Entry-disarm sink: a durable on ACC_EVENTS (DeliverNew) that durably
+		// disarms an area on a valid grant at an entry (disarm_on_grant) portal —
+		// the central, reboot-safe half of badge-disarms-the-area. Always on; it is
+		// inert unless a portal opts in via disarm_on_grant, so it needs no config.
+		disarmer = disarm.New(nc.JS, cfg.Events.Stream, subj, newDisarmFunc(e.App, log), log, m)
+		if err := disarmer.Start(ctx); err != nil {
+			return err
+		}
+
 		// Controller health: core-NATS heartbeat subscriber → controllers
 		// last_seen/status (a direct record update, not an events row). Owns its
 		// own lifetime; stopped in OnTerminate.
@@ -255,6 +268,9 @@ func main() {
 		if notifier != nil {
 			notifier.Stop()
 		}
+		if disarmer != nil {
+			disarmer.Stop()
+		}
 		if auditC != nil {
 			auditC.Stop()
 		}
@@ -274,6 +290,80 @@ func main() {
 
 	if err := pb.Start(); err != nil {
 		log.Fatal("pocketbase exited with error", "error", err)
+	}
+}
+
+// newDisarmFunc builds the disarm sink's PocketBase-backed action: a valid grant
+// at an entry portal durably disarms that portal's area (arm_override=disarmed),
+// which the mirror propagates to KV so every peer controller converges. Idempotent
+// and fail-safe — an unknown portal/area, a non-entry door, or an area that is
+// already disarmed (or can never be armed) is a silent no-op, never an error.
+func newDisarmFunc(app core.App, log *logger.Logger) disarm.DisarmFunc {
+	return func(portalCode, cred string) (bool, error) {
+		portal, err := app.FindFirstRecordByFilter("portals", "code = {:code}", dbx.Params{"code": portalCode})
+		if err != nil {
+			return false, nil // unknown portal: nothing to disarm
+		}
+		if !portal.GetBool("disarm_on_grant") {
+			return false, nil // not an entry door
+		}
+		areaID := portal.GetString("area")
+		if areaID == "" {
+			return false, nil // entry door with no area
+		}
+		area, err := app.FindRecordById("areas", areaID)
+		if err != nil {
+			return false, nil // dangling area relation
+		}
+		if !shouldDisarm(area) {
+			return false, nil
+		}
+		area.Set("arm_override", "disarmed")
+		if err := app.Save(area); err != nil {
+			return false, err // a real write failure: redeliver
+		}
+		writeDisarmAudit(app, area, portalCode, cred, log)
+		log.Info("area disarmed on entry grant", "area", area.GetString("code"), "portal", portalCode, "cred", cred)
+		return true, nil
+	}
+}
+
+// shouldDisarm reports whether disarming the area would be meaningful. Skip an area
+// already explicitly overridden-disarmed, and an area that can never be armed (no
+// armed override, no standing armed, no auto_arm schedule) — that avoids writing a
+// redundant override (and an audit row) every time a permanently-disarmed entry
+// door is used. accessd cannot evaluate a schedule window, so a scheduled area is
+// treated as possibly-armed and is disarmed.
+func shouldDisarm(area *core.Record) bool {
+	if area.GetString("arm_override") == "disarmed" {
+		return false
+	}
+	return area.GetString("arm_override") == "armed" ||
+		area.GetString("arm") == "armed" ||
+		area.GetString("auto_arm") == "armed"
+}
+
+// writeDisarmAudit records an entry-disarm to audit_logs. There is no request
+// context (the disarm originates from a controller's grant event, not an operator
+// API call), so it is attributed to the credential + portal rather than an
+// operator. Fail-safe: the disarm has already committed, so a write failure is
+// logged, never propagated.
+func writeDisarmAudit(app core.App, area *core.Record, portal, cred string, log *logger.Logger) {
+	col, err := app.FindCollectionByNameOrId("audit_logs")
+	if err != nil {
+		log.Error("disarm audit sink unavailable", "error", err)
+		return
+	}
+	rec := core.NewRecord(col)
+	rec.Set("event_type", "update")
+	rec.Set("collection_name", "areas")
+	rec.Set("record_id", area.Id)
+	rec.Set("actor_email", "entry-disarm") // a system actor, not an operator
+	rec.Set("request_url", "/disarm/grant")
+	rec.Set("timestamp", types.NowDateTime())
+	rec.Set("after", map[string]any{"arm_override": "disarmed", "by_credential": cred, "at_portal": portal})
+	if err := app.Save(rec); err != nil {
+		log.Error("failed to write disarm audit row", "area", area.GetString("code"), "error", err)
 	}
 }
 

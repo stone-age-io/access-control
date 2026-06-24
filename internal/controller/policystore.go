@@ -56,6 +56,12 @@ type Binding struct {
 	DpsInvert       bool // DPS contact sense inverted (normally-open door contact)
 	RexInvert       bool // REX contact sense inverted (normally-closed REX contact)
 	RexUnlock       bool // a REX press also pulses the lock, not just shunts the alarm
+	// Area membership (intrusion-lite). Area is the area code this portal belongs to
+	// (empty = none); while armed, a forced open escalates to an area intrusion
+	// alarm. DisarmOnGrant marks an entry door (a valid grant disarms Area — handled
+	// centrally by accessd, not the controller). Operational, never in policy.Decide.
+	Area          string
+	DisarmOnGrant bool
 }
 
 // PolicyStore holds the whole-org policy graph in plain maps behind an RWMutex
@@ -224,9 +230,9 @@ func (s *PolicyStore) Area(code string) (policykv.Area, bool) {
 }
 
 // AreasForController returns the areas this controller participates in — those
-// with at least one member aux_input whose controller relation points at this
-// box. The AreaManager uses it to decide which areas' shadows this box writes.
-// Returns a fresh slice each call.
+// with at least one member point (aux_input OR portal) whose controller relation
+// points at this box. The AreaManager uses it to decide which areas' shadows this
+// box writes. Returns a fresh slice each call.
 func (s *PolicyStore) AreasForController(controllerCode string) []policykv.Area {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -239,6 +245,11 @@ func (s *PolicyStore) AreasForController(controllerCode string) []policykv.Area 
 			member[ai.Area] = struct{}{}
 		}
 	}
+	for _, b := range s.bindings {
+		if b.Controller == controllerCode && b.Area != "" {
+			member[b.Area] = struct{}{}
+		}
+	}
 	var out []policykv.Area
 	for code := range member {
 		if a, ok := s.areas[code]; ok {
@@ -249,9 +260,10 @@ func (s *PolicyStore) AreasForController(controllerCode string) []policykv.Area 
 }
 
 // AreaControllers returns the sorted, distinct set of controller codes with a
-// member aux_input in the given area — the full participant set ("peers"). Each
-// controller stamps this into its arm shadow so the console can tell "all
-// participants armed" from "a participant never reported." Returns a fresh slice.
+// member point (aux_input OR portal) in the given area — the full participant set
+// ("peers"). Each controller stamps this into its arm shadow so the console can
+// tell "all participants armed" from "a participant never reported." Returns a
+// fresh slice.
 func (s *PolicyStore) AreaControllers(areaCode string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -259,6 +271,11 @@ func (s *PolicyStore) AreaControllers(areaCode string) []string {
 	for _, ai := range s.auxInputs {
 		if ai.Area == areaCode && ai.Controller != "" {
 			set[ai.Controller] = struct{}{}
+		}
+	}
+	for _, b := range s.bindings {
+		if b.Area == areaCode && b.Controller != "" {
+			set[b.Controller] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(set))
@@ -622,6 +639,7 @@ func (s *PolicyStore) apply(key string, value []byte) {
 			HeldOpenSeconds: w.HeldOpenSeconds, ReaderAddress: w.ReaderAddress,
 			Maglock: w.IsMaglock(), DpsInvert: w.DPSInvert(), RexInvert: w.REXInvert(),
 			RexUnlock: w.RexUnlock,
+			Area:      w.Area, DisarmOnGrant: w.DisarmOnGrant,
 		}
 
 	case strings.HasPrefix(key, policykv.PrefixController):

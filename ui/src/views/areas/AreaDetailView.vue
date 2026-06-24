@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useAreaCommands } from '@/composables/useAreaCommands'
 import { policyKey } from '@/utils/policyKey'
 import { aggregateArm, armBadge, armLabel } from '@/utils/arming'
-import type { Area, AuxInput, PointStatus } from '@/types/pocketbase'
+import type { Area, AuxInput, Portal, PointStatus } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
@@ -24,6 +24,7 @@ const { commanding, arm, disarm, armClear } = useAreaCommands()
 const recordId = route.params.id as string
 const record = ref<Area | null>(null)
 const members = ref<AuxInput[]>([])
+const memberPortals = ref<Portal[]>([])
 const shadows = ref<PointStatus[]>([]) // per-controller arm shadows for this area
 const loading = ref(true)
 const deleting = ref(false)
@@ -39,6 +40,11 @@ async function load() {
   try {
     record.value = await pb.collection('areas').getOne<Area>(recordId, { expand: 'location,auto_schedule' })
     members.value = await pb.collection('aux_input').getFullList<AuxInput>({
+      filter: `area = "${recordId}"`,
+      sort: 'code',
+      expand: 'controller',
+    })
+    memberPortals.value = await pb.collection('portals').getFullList<Portal>({
       filter: `area = "${recordId}"`,
       sort: 'code',
       expand: 'controller',
@@ -169,7 +175,7 @@ onBeforeUnmount(() => {
       </div>
     </BaseCard>
 
-    <BaseCard title="Members">
+    <BaseCard title="Member inputs">
       <p class="text-sm opacity-60 mb-3">
         Aux inputs assigned to this area. Edit membership on the aux input.
         Only <code>intrusion</code> and <code>tamper_24h</code> points raise alarms.
@@ -184,6 +190,28 @@ onBeforeUnmount(() => {
           <div class="flex items-center gap-2">
             <code v-if="m.expand?.controller" class="text-xs opacity-60">{{ m.expand.controller.code }}</code>
             <span class="badge badge-sm" :class="pointTypeBadge(m.point_type)">{{ m.point_type || 'monitor' }}</span>
+          </div>
+        </li>
+      </ul>
+    </BaseCard>
+
+    <BaseCard title="Member doors">
+      <p class="text-sm opacity-60 mb-3">
+        Portals assigned to this area. Edit membership on the portal. While armed, a <em>forced</em>
+        open (no grant/REX) raises intrusion; a <span class="badge badge-xs badge-warning align-middle">grant disarms</span>
+        door also disarms the area on a valid credential.
+      </p>
+      <div v-if="memberPortals.length === 0" class="text-sm opacity-50">No member doors yet.</div>
+      <ul v-else class="divide-y divide-base-200">
+        <li v-for="p in memberPortals" :key="p.id" class="flex items-center justify-between py-2">
+          <router-link :to="`/portals/${p.id}`" class="link">
+            <code class="text-sm">{{ p.code }}</code>
+            <span class="opacity-60 ml-2">{{ p.name }}</span>
+          </router-link>
+          <div class="flex items-center gap-2">
+            <code v-if="p.expand?.controller" class="text-xs opacity-60">{{ p.expand.controller.code }}</code>
+            <span v-if="p.disarm_on_grant" class="badge badge-sm badge-warning">grant disarms</span>
+            <span v-else class="badge badge-sm badge-ghost">monitored</span>
           </div>
         </li>
       </ul>

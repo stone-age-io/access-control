@@ -335,6 +335,46 @@ func TestKeyAndValue_AuxInputAreaMembership(t *testing.T) {
 	}
 }
 
+// A portal resolves its area relation to a code and carries disarm_on_grant.
+func TestKeyAndValue_PortalAreaMembership(t *testing.T) {
+	app := newApp(t)
+	hq := find(t, app, "locations", "code", "hq")
+
+	areaCol, _ := app.FindCollectionByNameOrId("areas")
+	area := core.NewRecord(areaCol)
+	area.Set("code", "perimeter")
+	area.Set("location", hq.Id)
+	if err := app.Save(area); err != nil {
+		t.Fatalf("save area: %v", err)
+	}
+
+	col, err := app.FindCollectionByNameOrId("portals")
+	if err != nil {
+		t.Fatalf("portals collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("code", "side-door")
+	rec.Set("type", "door")
+	rec.Set("location", hq.Id)
+	rec.Set("area", area.Id)
+	rec.Set("disarm_on_grant", true)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save portal: %v", err)
+	}
+
+	_, val, err := keyAndValue(app, rec)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	var got policykv.Portal
+	if err := json.Unmarshal(val, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Area != "perimeter" || !got.DisarmOnGrant {
+		t.Errorf("portal = %+v, want area=perimeter disarmOnGrant=true", got)
+	}
+}
+
 // Cardholders are keyed by PocketBase id under the user. prefix.
 func TestRecordKey_Cardholder(t *testing.T) {
 	app := newApp(t)

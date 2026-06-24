@@ -116,6 +116,14 @@ silently disarm). Each therefore writes its own `audit_logs` row (a custom-route
 > granting `command`. Area *configuration* (membership, schedules) stays at
 > `topology`; only the operational arm/disarm is `command`.
 
+> **Entry-disarm is credential-driven, not capability-gated.** A valid credential
+> grant at a portal flagged `disarm_on_grant` durably disarms that portal's area —
+> this is a *cardholder* action (badging in), not an operator API call, so no
+> operator capability is involved. accessd's disarm sink (`internal/disarm`) writes
+> the `arm_override` and an `audit_logs` row attributed to the **credential + portal**
+> (`actor_email: entry-disarm`), not to an operator. An operator remote `cmd.grant`
+> carries no credential and therefore never disarms.
+
 ## Presets
 
 The operator-management UI offers **named presets** that tick capability boxes —

@@ -118,6 +118,25 @@ func TestAreasForControllerAndPeers(t *testing.T) {
 	}
 }
 
+// A portal member (no aux_input) makes its area participated-in, and the portal's
+// controller joins the peer set — membership unions portals with aux inputs.
+func TestAreasForControllerPortalMember(t *testing.T) {
+	s := seeded(t)
+	s.apply("area.zone1", []byte(`{"code":"zone1","location":"hq","arm":"armed"}`))
+	// lobby-main (ctrl-hq-1, seeded) joins zone1; a second box's portal too.
+	s.apply("portal.lobby-main", []byte(`{"code":"lobby-main","type":"door","location":"hq","controller":"ctrl-hq-1","area":"zone1"}`))
+	s.apply("portal.dock-door", []byte(`{"code":"dock-door","type":"door","location":"hq","controller":"ctrl-hq-2","area":"zone1"}`))
+
+	got := s.AreasForController("ctrl-hq-1")
+	if len(got) != 1 || got[0].Code != "zone1" {
+		t.Fatalf("AreasForController(ctrl-hq-1) via portal = %+v, want [zone1]", got)
+	}
+	peers := s.AreaControllers("zone1")
+	if len(peers) != 2 || peers[0] != "ctrl-hq-1" || peers[1] != "ctrl-hq-2" {
+		t.Errorf("AreaControllers(zone1) = %v, want [ctrl-hq-1 ctrl-hq-2]", peers)
+	}
+}
+
 // armedRuntime builds a runtime over a store seeded with an area + intrusion input
 // and arms that input on the runtime. arm is the area's standing arm value.
 func armedRuntime(t *testing.T, areaJSON, pointType string) (*Runtime, *fakeEmitter) {
@@ -189,6 +208,81 @@ func TestIntrusionEdgeTriggeredOnce(t *testing.T) {
 	rt.handleInput(drivers.InputEvent{Kind: drivers.InputAux, Portal: "motion-1", Active: true, At: at}) // still active
 	if n := emit.countSubject(intrusionSubject); n != 1 {
 		t.Errorf("intrusion alarms = %d, want 1 (dedup on no-change)", n)
+	}
+}
+
+// forcedRuntime builds a runtime over a store seeded with an area and a lobby-main
+// portal carrying the given KV record (so it can be made an area member). Ready to
+// drive a DPS open with no grant (a forced condition).
+func forcedRuntime(t *testing.T, areaJSON, portalJSON string) (*Runtime, *fakeEmitter) {
+	t.Helper()
+	s := seeded(t)
+	s.apply("area.zone1", []byte(areaJSON))
+	s.apply("portal.lobby-main", []byte(portalJSON))
+	emit := &fakeEmitter{}
+	rt := NewRuntime("hq", s, drivers.NewMockReader(8), nil, nil, emit,
+		subjects.Default(), logger.NewNopLogger(), nil)
+	return rt, emit
+}
+
+const memberPortal = `{"code":"lobby-main","type":"door","location":"hq","controller":"ctrl-hq-1","area":"zone1"}`
+
+// A forced open on a member portal of an ARMED area escalates to an area intrusion
+// alarm, in addition to the door-level forced event.
+func TestForcedWhileArmedEscalatesToIntrusion(t *testing.T) {
+	rt, emit := forcedRuntime(t, `{"code":"zone1","location":"hq","arm":"armed"}`, memberPortal)
+	rt.handleDPS("lobby-main", false /* open */, ny(t, 2026, 1, 5, 2, 0))
+
+	if got := countAlarm(emit, AlarmForced); got != 1 {
+		t.Errorf("forced alarms = %d, want 1 (door-level forced still emits)", got)
+	}
+	if !emit.hasSubject(intrusionSubject) {
+		t.Errorf("forced-while-armed did not escalate to %s", intrusionSubject)
+	}
+}
+
+// A forced open while the area is DISARMED stays a plain forced event — no
+// intrusion escalation.
+func TestForcedWhileDisarmedNoIntrusion(t *testing.T) {
+	rt, emit := forcedRuntime(t, `{"code":"zone1","location":"hq","arm":"disarmed"}`, memberPortal)
+	rt.handleDPS("lobby-main", false, ny(t, 2026, 1, 5, 2, 0))
+
+	if got := countAlarm(emit, AlarmForced); got != 1 {
+		t.Errorf("forced alarms = %d, want 1", got)
+	}
+	if emit.hasSubject(intrusionSubject) {
+		t.Errorf("disarmed forced open escalated to intrusion, want none")
+	}
+}
+
+// A forced open on a portal with no area never escalates (membership gates it).
+func TestForcedNonMemberPortalNoIntrusion(t *testing.T) {
+	rt, emit := forcedRuntime(t, `{"code":"zone1","location":"hq","arm":"armed"}`,
+		`{"code":"lobby-main","type":"door","location":"hq","controller":"ctrl-hq-1"}`) // no area
+	rt.handleDPS("lobby-main", false, ny(t, 2026, 1, 5, 2, 0))
+
+	if got := countAlarm(emit, AlarmForced); got != 1 {
+		t.Errorf("forced alarms = %d, want 1", got)
+	}
+	if emit.hasSubject(intrusionSubject) {
+		t.Errorf("non-member portal escalated to intrusion, want none")
+	}
+}
+
+// An AUTHORIZED open (a prior grant) on an armed member portal is normal passage:
+// no forced, no intrusion. The reader is what distinguishes a portal from a bare
+// contact — a valid entry is not a break-in.
+func TestGrantedOpenWhileArmedNoIntrusion(t *testing.T) {
+	rt, emit := forcedRuntime(t, `{"code":"zone1","location":"hq","arm":"armed"}`, memberPortal)
+	at := ny(t, 2026, 1, 5, 2, 0)
+	rt.noteGrant("lobby-main", at)
+	rt.handleDPS("lobby-main", false, at)
+
+	if got := countAlarm(emit, AlarmForced); got != 0 {
+		t.Errorf("forced alarms = %d, want 0 (authorized open)", got)
+	}
+	if emit.hasSubject(intrusionSubject) {
+		t.Errorf("authorized open escalated to intrusion, want none")
 	}
 }
 
