@@ -47,6 +47,8 @@ export interface Location extends BaseRecord {
   timezone: string
   /** Suppress forced/held-open alarms while the location fire input is active. */
   fai_suppress: boolean
+  /** Email opted-in operators (users.notify) when this location's fire input activates. */
+  notify_fire: boolean
   /** Free-form description (UI only; not mirrored to KV). */
   description: string
   /** Geographic position for the location map (UI only; {0,0} = unset). */
@@ -128,6 +130,8 @@ export interface Portal extends BaseRecord {
   area: string
   /** When true, a valid credential grant at this portal durably disarms its area (an entry door). */
   disarm_on_grant: boolean
+  /** Email opted-in operators (users.notify) when this portal raises a forced/held-open alarm. */
+  notify_on_alarm: boolean
   /** {x, y} pixel position on the location's floorplan (UI only; null/absent = not placed). */
   floorplan_position?: { x: number; y: number } | null
   expand?: { location?: Location; controller?: Controller; auto_schedule?: Schedule; area?: Area }
@@ -168,6 +172,8 @@ export interface Area extends BaseRecord {
   auto_arm: AreaArm | ''
   /** Schedule id gating auto_arm ('' = none). Both-or-neither with auto_arm. */
   auto_schedule: string
+  /** Email opted-in operators (users.notify) when this area raises an intrusion alarm. */
+  notify_on_alarm: boolean
   expand?: { location?: Location; auto_schedule?: Schedule }
 }
 
@@ -280,6 +286,8 @@ export interface User extends BaseRecord {
   verified: boolean
   /** The operator's capability set (empty = read-only viewer). */
   permissions: Capability[]
+  /** When true, this operator receives alarm email from sources that opt in (portals/areas/locations). */
+  notify: boolean
 }
 
 export type AuditEventType = 'create' | 'update' | 'delete' | 'auth'

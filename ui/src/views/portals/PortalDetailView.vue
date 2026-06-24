@@ -234,6 +234,10 @@ onBeforeUnmount(() => {
             <span v-if="record.held_open_seconds > 0">{{ record.held_open_seconds }} s</span>
             <span v-else class="opacity-40">Disabled</span>
           </DataField>
+          <DataField label="Email on alarm">
+            <span v-if="record.notify_on_alarm" class="badge badge-sm badge-warning">Emails opted-in operators</span>
+            <span v-else class="opacity-40">Off</span>
+          </DataField>
         </div>
         <div class="border-t border-base-200 pt-4">
           <div class="text-[10px] uppercase font-bold opacity-50 tracking-wide mb-2">Scheduled override</div>

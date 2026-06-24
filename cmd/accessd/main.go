@@ -185,34 +185,14 @@ func main() {
 
 		// Notification sink: a SECOND, independent durable on ACC_EVENTS that emails
 		// on alarm/fire (DeliverNew — alerting is not a backfillable projection).
-		// Off unless cfg.Notify.Enabled. SMTP transport comes from PocketBase's own
-		// mail settings; this only names recipients/sender.
-		if cfg.Notify.Enabled {
-			if len(cfg.Notify.Recipients) == 0 {
-				log.Warn("notify enabled but no recipients configured; sink not started")
-			} else {
-				app := e.App
-				send := func(msg notify.Message) error {
-					from := cfg.Notify.From
-					if from == "" {
-						from = app.Settings().Meta.SenderAddress
-					}
-					to := make([]mail.Address, 0, len(cfg.Notify.Recipients))
-					for _, r := range cfg.Notify.Recipients {
-						to = append(to, mail.Address{Address: r})
-					}
-					return app.NewMailClient().Send(&mailer.Message{
-						From:    mail.Address{Address: from, Name: app.Settings().Meta.SenderName},
-						To:      to,
-						Subject: msg.Subject,
-						Text:    msg.Body,
-					})
-				}
-				notifier = notify.New(nc.JS, cfg.Events.Stream, subj, send, log, m)
-				if err := notifier.Start(ctx); err != nil {
-					return err
-				}
-			}
+		// Like the disarm sink it is ALWAYS started and config-free: inert unless
+		// both the alarm's source opts in (portals/areas.notify_on_alarm,
+		// locations.notify_fire) AND an operator opts in (users.notify). The SendFunc
+		// owns every PocketBase concern; SMTP transport is PocketBase's own mail
+		// settings.
+		notifier = notify.New(nc.JS, cfg.Events.Stream, subj, newNotifySend(e.App, log), log, m)
+		if err := notifier.Start(ctx); err != nil {
+			return err
 		}
 
 		// Entry-disarm sink: a durable on ACC_EVENTS (DeliverNew) that durably
@@ -291,6 +271,91 @@ func main() {
 	if err := pb.Start(); err != nil {
 		log.Fatal("pocketbase exited with error", "error", err)
 	}
+}
+
+// newNotifySend builds the notification sink's PocketBase-backed SendFunc. It is
+// the inverse of the config it replaces: the "who" (recipient operators) and the
+// "which" (per-source opt-in) both live in data. For each alarm/fire it (1) checks
+// the source record's opt-in flag and (2) resolves the opted-in operators, then
+// mails them via PocketBase's configured transport. It reports sent=false (a benign
+// skip, NOT an error) when the source hasn't opted in or no operator wants mail, so
+// the sink stays inert until both line up. A real DB-read or SMTP failure returns an
+// error → Nak → redelivery (bounded by the sink's MaxDeliver).
+func newNotifySend(app core.App, log *logger.Logger) notify.SendFunc {
+	return func(ev notify.Event) (bool, error) {
+		// The auto-clear of a held-open door is operational noise, not an alarm to
+		// page on — only the raise (forced/held/intrusion) and fire are emailed.
+		if ev.Kind == "alarm" && ev.AlarmType == "held_clear" {
+			return false, nil
+		}
+		if !sourceWantsNotify(app, ev) {
+			return false, nil // the source has not opted into email
+		}
+		recipients, err := notifyRecipients(app)
+		if err != nil {
+			return false, err // a genuine read failure: redeliver
+		}
+		if len(recipients) == 0 {
+			return false, nil // no operator opted in
+		}
+
+		msg := notify.Format(ev)
+		to := make([]mail.Address, 0, len(recipients))
+		for _, r := range recipients {
+			to = append(to, mail.Address{Address: r})
+		}
+		if err := app.NewMailClient().Send(&mailer.Message{
+			From:    mail.Address{Address: app.Settings().Meta.SenderAddress, Name: app.Settings().Meta.SenderName},
+			To:      to,
+			Subject: msg.Subject,
+			Text:    msg.Body,
+		}); err != nil {
+			return false, err // SMTP failure: Nak → redeliver
+		}
+		log.Info("alarm notification sent", "kind", ev.Kind, "type", ev.AlarmType,
+			"location", ev.Location, "thing", ev.Thing, "recipients", len(recipients))
+		return true, nil
+	}
+}
+
+// sourceWantsNotify reports whether the record that emitted this alarm has opted
+// into email. The flag rides the source: fire is location-scoped
+// (locations.notify_fire); an intrusion alarm is area-scoped (the subject's type
+// token is the literal "area" → areas.notify_on_alarm); every other alarm is a
+// portal forced/held (portals.notify_on_alarm). Subject tokens are stable codes, so
+// each source is found by code. Fail-safe: a missing/dangling source reads as no
+// opt-in (no email), never an error.
+func sourceWantsNotify(app core.App, ev notify.Event) bool {
+	switch {
+	case ev.Kind == "fire":
+		loc, err := app.FindFirstRecordByFilter("locations", "code = {:code}", dbx.Params{"code": ev.Location})
+		return err == nil && loc.GetBool("notify_fire")
+	case ev.Type == "area":
+		area, err := app.FindFirstRecordByFilter("areas", "code = {:code}", dbx.Params{"code": ev.Thing})
+		return err == nil && area.GetBool("notify_on_alarm")
+	default:
+		portal, err := app.FindFirstRecordByFilter("portals", "code = {:code}", dbx.Params{"code": ev.Thing})
+		return err == nil && portal.GetBool("notify_on_alarm")
+	}
+}
+
+// notifyRecipients returns the email addresses of operators who opted into alarm
+// email (users.notify). The operator set is tiny, so it filters in Go rather than
+// risk a backend-specific bool query. A read failure is surfaced (→ redeliver).
+func notifyRecipients(app core.App) ([]string, error) {
+	recs, err := app.FindAllRecords("users")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(recs))
+	for _, r := range recs {
+		if r.GetBool("notify") {
+			if email := r.GetString("email"); email != "" {
+				out = append(out, email)
+			}
+		}
+	}
+	return out, nil
 }
 
 // newDisarmFunc builds the disarm sink's PocketBase-backed action: a valid grant

@@ -117,6 +117,11 @@ onMounted(load)
             {{ record.fai_suppress ? 'suppressed' : 'off' }}
           </span>
         </DataField>
+        <DataField label="Email on fire">
+          <span class="badge badge-sm" :class="record.notify_fire ? 'badge-warning' : 'badge-ghost'">
+            {{ record.notify_fire ? 'emails opted-in operators' : 'off' }}
+          </span>
+        </DataField>
         <DataField label="Coordinates">
           <span v-if="hasCoords" class="font-mono text-sm">
             {{ record.coordinates.lat.toFixed(5) }}, {{ record.coordinates.lon.toFixed(5) }}

@@ -13,6 +13,15 @@
 // been running for months would email every alarm that ever happened. The
 // durable still tracks position across accessd restarts (a brief restart
 // redelivers only un-acked messages, not the whole history).
+//
+// Like internal/disarm, the sink is ALWAYS started and config-free; the "who"
+// (recipients) and "which" (per-source opt-in) both live in PocketBase data, not
+// config. This package stays PocketBase-free: it parses the event and hands the
+// structured Event to a SendFunc the caller (accessd) supplies. That SendFunc owns
+// every PocketBase concern — checking the source's opt-in flag, resolving the
+// recipient operators, and the SMTP transport — and reports back whether it
+// actually sent (sent=false is a no-op, e.g. nobody opted in, NOT an error). So
+// the sink is inert until both an alarm source and an operator opt in.
 package notify
 
 import (
@@ -41,17 +50,38 @@ const (
 	dedupTTL = 5 * time.Minute
 )
 
-// Message is the rendered notification handed to a SendFunc. It is intentionally
-// transport-free (subject + plain-text body): recipients, From, and the SMTP
+// Message is the rendered notification (subject + plain-text body) produced by
+// Format. It is intentionally transport-free: recipients, From, and the SMTP
 // transport are the caller's concern, so this package never imports PocketBase.
 type Message struct {
 	Subject string
 	Body    string
 }
 
-// SendFunc delivers one notification. accessd supplies one backed by PocketBase's
-// mailer; tests supply a fake. A returned error triggers a Nak (redelivery).
-type SendFunc func(Message) error
+// Event is the parsed alarm/fire the sink hands to a SendFunc. It carries the
+// routing discriminators (so the caller can resolve the source's opt-in and the
+// recipients) alongside the raw body (so the caller can Format it). For a portal
+// alarm: Type is the portal kind (door/turnstile/…), Thing the portal code,
+// AlarmType one of forced/held/held_clear. For an intrusion alarm: Type is the
+// literal "area", Thing the area code, AlarmType "intrusion". For fire: Kind is
+// "fire" and Type/Thing/AlarmType are empty (the source is the Location).
+type Event struct {
+	Location  string
+	Type      string
+	Thing     string
+	Kind      string // "alarm" or "fire"
+	AlarmType string // forced/held/held_clear/intrusion; empty for fire
+	Body      map[string]any
+	TS        string
+}
+
+// SendFunc delivers one notification. accessd supplies one backed by PocketBase
+// (source opt-in lookup + recipient resolution + mailer); tests supply a fake. It
+// reports whether it actually sent: sent=false is a benign no-op (the source or
+// every operator has opted out) that the sink acks and skips. A returned error
+// triggers a Nak (redelivery) — use it only for genuine failures (SMTP down, a DB
+// read error), never for "nobody wanted this".
+type SendFunc func(Event) (sent bool, err error)
 
 // Notifier consumes alarm/fire events and emails them.
 type Notifier struct {
@@ -123,10 +153,10 @@ func (n *Notifier) Stop() {
 	}
 }
 
-// process handles one event identified by (subject, body). It returns a status
-// to record and ack on ("ok" sent / "skip" not-an-alarm / "dedup" already-sent),
-// or a non-nil error for a send failure that should be Nak'd (redelivered). It
-// takes no jetstream.Msg so tests can drive it directly.
+// process handles one event identified by (subject, body). It returns a status to
+// record and ack on ("ok" sent / "skip" not-an-alarm or nobody-opted-in / "dedup"
+// already-sent), or a non-nil error for a send failure that should be Nak'd
+// (redelivered). It takes no jetstream.Msg so tests can drive it directly.
 func (n *Notifier) process(subject string, data []byte) (string, error) {
 	location, ptype, thing, kind, ok := n.subj.ParseEvent(subject)
 	if !ok {
@@ -146,8 +176,20 @@ func (n *Notifier) process(subject string, data []byte) (string, error) {
 		return "dedup", nil // a redelivery we already emailed about
 	}
 
-	if err := n.send(format(location, ptype, thing, kind, body)); err != nil {
+	sent, err := n.send(Event{
+		Location:  location,
+		Type:      ptype,
+		Thing:     thing,
+		Kind:      kind,
+		AlarmType: str(body["type"]),
+		Body:      body,
+		TS:        ts,
+	})
+	if err != nil {
 		return "", err
+	}
+	if !sent {
+		return "skip", nil // source or every operator opted out — nothing emailed
 	}
 	n.markSent(subject, ts)
 	return "ok", nil
@@ -179,23 +221,23 @@ func (n *Notifier) markSent(subject, ts string) {
 	n.seen[dedupKey(subject, ts)] = now
 }
 
-// format renders an event into an operator-readable notification. Plain text:
-// notifications go to phones/pagers, so keep it terse and greppable.
-func format(location, ptype, thing, kind string, body map[string]any) Message {
-	if kind == "fire" {
+// Format renders an event into an operator-readable notification. Plain text:
+// notifications go to phones/pagers, so keep it terse and greppable. The caller's
+// SendFunc uses this to produce the message body once it has decided to send.
+func Format(ev Event) Message {
+	if ev.Kind == "fire" {
 		return Message{
-			Subject: fmt.Sprintf("[stone-access] FIRE input active at %s", location),
-			Body:    fmt.Sprintf("Fire-alarm input active at location %q.\nts: %s\n", location, str(body["ts"])),
+			Subject: fmt.Sprintf("[stone-access] FIRE input active at %s", ev.Location),
+			Body:    fmt.Sprintf("Fire-alarm input active at location %q.\nts: %s\n", ev.Location, ev.TS),
 		}
 	}
 	// alarm
-	atype := str(body["type"]) // forced / held / held_clear / intrusion
-	subj := fmt.Sprintf("[stone-access] %s alarm: %s/%s/%s", atype, location, ptype, thing)
-	body2 := fmt.Sprintf("Alarm type: %s\nlocation: %s\ntype: %s\nthing: %s\n", atype, location, ptype, thing)
-	if point := str(body["point"]); point != "" {
+	subj := fmt.Sprintf("[stone-access] %s alarm: %s/%s/%s", ev.AlarmType, ev.Location, ev.Type, ev.Thing)
+	body2 := fmt.Sprintf("Alarm type: %s\nlocation: %s\ntype: %s\nthing: %s\n", ev.AlarmType, ev.Location, ev.Type, ev.Thing)
+	if point := str(ev.Body["point"]); point != "" {
 		body2 += fmt.Sprintf("point: %s\n", point) // intrusion alarms name the tripped aux input
 	}
-	body2 += fmt.Sprintf("ts: %s\n", str(body["ts"]))
+	body2 += fmt.Sprintf("ts: %s\n", ev.TS)
 	return Message{Subject: subj, Body: body2}
 }
 

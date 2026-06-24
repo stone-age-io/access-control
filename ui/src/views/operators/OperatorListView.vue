@@ -41,6 +41,7 @@ const columns: Column<User>[] = [
   { key: 'name', label: 'Name' },
   { key: 'permissions', label: 'Permissions' },
   { key: 'verified', label: 'Verified' },
+  { key: 'notify', label: 'Notify' },
 ]
 
 async function handleDelete(u: User) {
@@ -120,6 +121,13 @@ onMounted(reload)
         </template>
         <template #card-verified="{ item }">
           <span class="badge badge-sm" :class="item.verified ? 'badge-success' : 'badge-ghost'">{{ item.verified ? 'yes' : 'no' }}</span>
+        </template>
+
+        <template #cell-notify="{ item }">
+          <span class="badge badge-sm" :class="item.notify ? 'badge-warning' : 'badge-ghost'">{{ item.notify ? 'alarms' : 'no' }}</span>
+        </template>
+        <template #card-notify="{ item }">
+          <span class="badge badge-sm" :class="item.notify ? 'badge-warning' : 'badge-ghost'">{{ item.notify ? 'alarms' : 'no' }}</span>
         </template>
 
         <template #empty>

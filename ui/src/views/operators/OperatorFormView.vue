@@ -21,6 +21,7 @@ const form = ref({
   name: '',
   permissions: [] as Capability[],
   verified: true,
+  notify: false,
   password: '',
   passwordConfirm: '',
 })
@@ -44,6 +45,7 @@ async function loadRecord() {
       name: u.name || '',
       permissions: (u.permissions || []) as Capability[],
       verified: !!u.verified,
+      notify: !!u.notify,
       password: '',
       passwordConfirm: '',
     }
@@ -69,6 +71,7 @@ async function handleSubmit() {
       name: form.value.name.trim(),
       permissions: form.value.permissions,
       verified: form.value.verified,
+      notify: form.value.notify,
     }
     // Password is set on create, and on edit only when a new one was entered.
     if (form.value.password) {
@@ -121,6 +124,12 @@ onMounted(() => {
               <label class="label cursor-pointer justify-start gap-3">
                 <input v-model="form.verified" type="checkbox" class="toggle toggle-primary" />
                 <span class="label-text">{{ form.verified ? 'Verified' : 'Unverified' }}</span>
+              </label>
+            </FormField>
+            <FormField label="Notify" hint="Email this operator on alarms from sources that opt into email (portals/areas/locations).">
+              <label class="label cursor-pointer justify-start gap-3">
+                <input v-model="form.notify" type="checkbox" class="toggle toggle-primary" />
+                <span class="label-text">{{ form.notify ? 'Receives alarm email' : 'No alarm email' }}</span>
               </label>
             </FormField>
           </div>

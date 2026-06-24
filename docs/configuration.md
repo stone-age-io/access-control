@@ -139,26 +139,33 @@ See [`protocol.md`](protocol.md) for what each carries.
 ### Notifications (accessd-only)
 
 The alarm notification sink ([`internal/notify`](../internal/notify)) is a second,
-independent durable consumer on `ACC_EVENTS` that emails on `alarm`/`fire`. It is
-**off by default**.
+independent durable consumer on `ACC_EVENTS` that emails on `alarm`/`fire`. **It has
+no config** — like the disarm sink it is always started and purely data-driven, so
+the "who" and "which" are UI-managed and changing them never requires a redeploy.
+It is inert until **two opt-ins** line up:
 
-| Key | Default | Env var | Notes |
-|---|---|---|---|
-| `notify.enabled` | `false` | `SA_NOTIFY_ENABLED` | turn the sink on. When off, no consumer is created. |
-| `notify.recipients` | `[]` | `SA_NOTIFY_RECIPIENTS` | comma-separated email addresses every alarm/fire is sent to. Enabled with an empty list logs a warning and does not start. |
-| `notify.from` | `""` | `SA_NOTIFY_FROM` | sender address; empty falls back to PocketBase's configured sender. |
+| Opt-in | Where (UI) | Effect |
+|---|---|---|
+| `users.notify` | Operators → Notify | the operator is a recipient of alarm email |
+| `portals.notify_on_alarm` | Portal → Posture & timing | email the recipients on this door's forced/held-open alarms |
+| `areas.notify_on_alarm` | Area → Email on intrusion | email the recipients on this area's intrusion alarms |
+| `locations.notify_fire` | Location → Email on fire | email the recipients on this location's fire-input alarms |
+
+A source flag without any `users.notify` operator (or vice-versa) sends nothing.
+The auto-clear of a held-open door (`held_clear`) is never emailed — only the
+raise. There is no `notify.*` config block and no `SA_NOTIFY_*` env var.
 
 > **SMTP lives in PocketBase, not here.** The mail transport (host/port/
 > credentials/sender) is configured in the PocketBase admin UI at `/_` ("Mail
-> settings") — `notify.*` only names *who* to notify. The sink uses `DeliverNew`
-> (a freshly enabled sink starts from "now", not the whole event history) with
+> settings"); the sink's `From` is PocketBase's configured sender. The sink uses
+> `DeliverNew` (it starts from "now", never replaying historical alarms) with
 > bounded redelivery, so a dead SMTP server can't loop forever.
 
-> **Entry-disarm has no config.** The disarm sink ([`internal/disarm`](../internal/disarm)),
+> **Entry-disarm has no config either.** The disarm sink ([`internal/disarm`](../internal/disarm)),
 > which disarms an area on a valid grant at a `disarm_on_grant` portal, is **always
-> started** and needs no settings — the feature is purely data-driven: it is inert
-> unless a portal opts in (set `disarm_on_grant` + an `area` on the portal in the
-> UI). Like notify it is a `DeliverNew` durable on `ACC_EVENTS`.
+> started** and needs no settings — it is inert unless a portal opts in (set
+> `disarm_on_grant` + an `area` on the portal in the UI). Like notify it is a
+> `DeliverNew` durable on `ACC_EVENTS`.
 
 ## controller
 

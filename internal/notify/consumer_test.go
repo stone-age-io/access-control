@@ -8,13 +8,15 @@ import (
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
-// newNotifier builds a notifier whose SendFunc records the messages it receives.
+// newNotifier builds a notifier whose SendFunc records the messages it receives
+// (rendering each Event via Format, as accessd's real SendFunc does) and reports
+// every event as sent.
 func newNotifier(t *testing.T) (*Notifier, *[]Message) {
 	t.Helper()
 	var sent []Message
-	send := func(m Message) error {
-		sent = append(sent, m)
-		return nil
+	send := func(ev Event) (bool, error) {
+		sent = append(sent, Format(ev))
+		return true, nil
 	}
 	return New(nil, "ACC_EVENTS", subjects.Default(), send, logger.NewNopLogger(), nil), &sent
 }
@@ -97,12 +99,12 @@ func TestProcessDedupsRedelivery(t *testing.T) {
 // redelivery retries rather than dedups.
 func TestProcessSendFailureRetries(t *testing.T) {
 	var calls int
-	send := func(Message) error {
+	send := func(Event) (bool, error) {
 		calls++
 		if calls == 1 {
-			return errors.New("smtp down")
+			return false, errors.New("smtp down")
 		}
-		return nil
+		return true, nil
 	}
 	n := New(nil, "ACC_EVENTS", subjects.Default(), send, logger.NewNopLogger(), nil)
 	subj := "acc.hq.door.lobby-main.evt.alarm"
@@ -113,6 +115,32 @@ func TestProcessSendFailureRetries(t *testing.T) {
 	}
 	if status, err := n.process(subj, data); status != "ok" || err != nil {
 		t.Fatalf("redelivery = (%q,%v), want (ok,nil) — must retry, not dedup", status, err)
+	}
+	if calls != 2 {
+		t.Errorf("send calls = %d, want 2", calls)
+	}
+}
+
+// A send that reports sent=false (source or every operator opted out) is acked and
+// skipped — NOT marked sent — so a later opt-in is re-evaluated, not deduped away.
+func TestProcessNotOptedInSkips(t *testing.T) {
+	var calls, wantSent int
+	send := func(Event) (bool, error) {
+		calls++
+		return calls <= wantSent, nil // opt-in flips on once wantSent is bumped
+	}
+	n := New(nil, "ACC_EVENTS", subjects.Default(), send, logger.NewNopLogger(), nil)
+	subj := "acc.hq.door.lobby-main.evt.alarm"
+	data := []byte(`{"type":"forced","ts":"2026-01-05T14:00:00Z"}`)
+
+	if status, err := n.process(subj, data); status != "skip" || err != nil {
+		t.Fatalf("opted-out process = (%q,%v), want (skip,nil)", status, err)
+	}
+	// Same (subject, ts): because nothing was marked sent, the redelivery must
+	// re-evaluate (call send again) rather than dedup.
+	wantSent = 2
+	if status, err := n.process(subj, data); status != "ok" || err != nil {
+		t.Fatalf("opted-in redelivery = (%q,%v), want (ok,nil) — must re-evaluate, not dedup", status, err)
 	}
 	if calls != 2 {
 		t.Errorf("send calls = %d, want 2", calls)

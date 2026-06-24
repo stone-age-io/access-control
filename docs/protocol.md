@@ -445,7 +445,12 @@ the **alarm console** bounds this with a recency window, and a dedicated
 It is parallel to `acc-audit`, not coupled to it (the audit consumer is an
 at-least-once projection; coupling alerting there would double-send on redelivery).
 It diverges in one way: **`DeliverNew`, not `DeliverAll`** — alerting is not a
-backfillable projection, so a freshly enabled sink starts from "now" instead of
-emailing every historical alarm. Bounded redelivery (`MaxDeliver`) keeps a dead
-SMTP server from looping forever; the SMTP transport is PocketBase's own mail
-settings, configured in `/_`.
+backfillable projection, so the sink starts from "now" instead of emailing every
+historical alarm. Bounded redelivery (`MaxDeliver`) keeps a dead SMTP server from
+looping forever; the SMTP transport is PocketBase's own mail settings, configured
+in `/_`. It is **config-free and always started** (like the disarm sink) and stays
+inert unless two opt-ins line up: the alarm's source opts in
+(`portals`/`areas.notify_on_alarm`, `locations.notify_fire`) **and** at least one
+operator opts in (`users.notify`). The sink itself stays PocketBase-free — it parses
+the event and hands it to accessd, which resolves the source opt-in and recipients;
+`held_clear` (a held-open auto-clear) is never emailed.
