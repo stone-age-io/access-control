@@ -30,7 +30,7 @@ func TestCollectionsExist(t *testing.T) {
 	for _, name := range []string{
 		"locations", "schedules", "portals", "access_groups",
 		"roles", "cardholders", "credentials", "events", "holidays",
-		"audit_logs",
+		"audit_logs", "holiday_calendars",
 	} {
 		if _, err := app.FindCollectionByNameOrId(name); err != nil {
 			t.Errorf("collection %q not found: %v", name, err)
@@ -246,6 +246,10 @@ func TestFixtureExtras(t *testing.T) {
 	if !holiday.GetBool("recurring") {
 		t.Errorf("Christmas holiday recurring = false, want true")
 	}
+	// After 1750000018 the holiday is homed on a calendar, not a location.
+	if holiday.GetString("calendar") == "" {
+		t.Errorf("Christmas holiday calendar is empty, want it linked by the data migration")
+	}
 
 	pub, err := app.FindFirstRecordByData("portals", "code", "lobby-public")
 	if err != nil {
@@ -257,6 +261,58 @@ func TestFixtureExtras(t *testing.T) {
 	sched, err := app.FindRecordById("schedules", pub.GetString("auto_schedule"))
 	if err != nil || sched.GetString("code") != "business-hours" {
 		t.Errorf("lobby-public auto_schedule = %v, want business-hours", pub.GetString("auto_schedule"))
+	}
+}
+
+// TestHolidayCalendars verifies migration 1750000018: the holiday_calendars
+// collection + its policy write rule, the locations.holiday_calendars relation,
+// the holidays.calendar relation replacing .location, and the data migration that
+// homes each existing location's holidays onto a per-location calendar it observes.
+func TestHolidayCalendars(t *testing.T) {
+	app := newApp(t)
+
+	cals, err := app.FindCollectionByNameOrId("holiday_calendars")
+	if err != nil {
+		t.Fatalf("holiday_calendars collection: %v", err)
+	}
+	if cals.CreateRule == nil || !strings.Contains(*cals.CreateRule, `"policy"`) {
+		t.Errorf("holiday_calendars.CreateRule = %v, want it to require the policy capability", cals.CreateRule)
+	}
+
+	holidays, err := app.FindCollectionByNameOrId("holidays")
+	if err != nil {
+		t.Fatalf("holidays collection: %v", err)
+	}
+	if holidays.Fields.GetByName("location") != nil {
+		t.Error("holidays.location should be removed (replaced by calendar)")
+	}
+	if holidays.Fields.GetByName("calendar") == nil {
+		t.Error("holidays.calendar field missing")
+	}
+	locations, err := app.FindCollectionByNameOrId("locations")
+	if err != nil {
+		t.Fatalf("locations collection: %v", err)
+	}
+	if locations.Fields.GetByName("holiday_calendars") == nil {
+		t.Error("locations.holiday_calendars field missing")
+	}
+
+	// Data migration: hq observes a calendar, and the seeded Christmas holiday is
+	// homed on a calendar hq observes (so behavior is preserved end-to-end).
+	hq, err := app.FindFirstRecordByData("locations", "code", "hq")
+	if err != nil {
+		t.Fatalf("location hq not found: %v", err)
+	}
+	observed := hq.GetStringSlice("holiday_calendars")
+	if len(observed) == 0 {
+		t.Fatalf("hq.holiday_calendars is empty, want a calendar linked by the data migration")
+	}
+	xmas, err := app.FindFirstRecordByData("holidays", "name", "Christmas")
+	if err != nil {
+		t.Fatalf("holiday Christmas not found: %v", err)
+	}
+	if !slicesContains(observed, xmas.GetString("calendar")) {
+		t.Errorf("Christmas calendar %q not among hq's observed calendars %v", xmas.GetString("calendar"), observed)
 	}
 }
 

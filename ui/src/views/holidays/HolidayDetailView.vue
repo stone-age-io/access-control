@@ -28,7 +28,7 @@ const kvKey = computed(() => (record.value ? policyKey('holidays', record.value)
 async function load() {
   loading.value = true
   try {
-    record.value = await pb.collection('holidays').getOne<Holiday>(recordId, { expand: 'location' })
+    record.value = await pb.collection('holidays').getOne<Holiday>(recordId, { expand: 'calendar' })
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load holiday')
     router.push('/holidays')
@@ -83,9 +83,9 @@ onMounted(load)
         <DataField label="Date">
           <code class="text-sm">{{ formatDate(record.date, 'PP') }}</code>
         </DataField>
-        <DataField label="Location">
-          <router-link v-if="record.expand?.location" :to="`/locations/${record.expand.location.id}`" class="link link-primary">
-            {{ record.expand.location.code }}
+        <DataField label="Calendar">
+          <router-link v-if="record.expand?.calendar" :to="`/holiday-calendars/${record.expand.calendar.id}`" class="link link-primary">
+            {{ record.expand.calendar.code }}
           </router-link>
           <span v-else class="opacity-40">—</span>
         </DataField>

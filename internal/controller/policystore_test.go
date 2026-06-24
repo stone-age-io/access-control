@@ -150,30 +150,44 @@ func TestStoreCredentialBadValidityFailsClosed(t *testing.T) {
 	}
 }
 
-// TestStoreHolidays: a holiday on the schedule's day closes the grant, and
-// removing the holiday re-opens it. Exercises the per-location aggregation and
-// the ObserveHolidays flag round-trip from the wire.
+// TestStoreHolidays: a holiday on a calendar the location observes closes the
+// grant; removing it re-opens. Exercises the calendar->location join in
+// rebuildHolidays and the ObserveHolidays flag round-trip from the wire.
 func TestStoreHolidays(t *testing.T) {
 	s := seeded(t)
 	mon := ny(t, 2026, 1, 5, 9, 0) // Mon in business hours
 
+	// hq observes the "us" holiday calendar (re-apply the seeded location with the link).
+	s.apply("location.hq", []byte(`{"code":"hq","timezone":"America/New_York","faiSuppress":true,"holidayCalendars":["us"]}`))
 	// Make business-hours observe holidays (the seeded schedule omits the flag).
 	s.apply("sched.business-hours", []byte(`{"code":"business-hours","windows":[{"days":[1,2,3,4,5],"start":"08:00","end":"17:00"}],"observeHolidays":true}`))
 	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", mon); !d.Allow {
 		t.Fatalf("precondition: expected allow before holiday, got %+v", d)
 	}
 
-	// Declare that Monday a holiday at hq: the grant now denies (schedule closed).
-	s.apply("holiday.h1", []byte(`{"location":"hq","date":"2026-01-05","recurring":false}`))
+	// A holiday on that Monday in the "us" calendar: the grant now denies (closed).
+	s.apply("holiday.h1", []byte(`{"calendar":"us","date":"2026-01-05","recurring":false}`))
 	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", mon); d.Allow || d.Reason != policy.ReasonDenyScheduleClosed {
 		t.Errorf("on holiday: decision = %+v, want deny_schedule_closed", d)
 	}
 
-	// A holiday at a different location must not affect hq.
-	s.apply("holiday.h2", []byte(`{"location":"other","date":"2026-01-05","recurring":false}`))
+	// A holiday on a calendar hq does NOT observe must not affect it.
+	s.apply("holiday.h2", []byte(`{"calendar":"emea","date":"2026-01-05","recurring":false}`))
 	s.remove("holiday.h1")
 	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", mon); !d.Allow {
-		t.Errorf("after removing hq holiday: decision = %+v, want allow", d)
+		t.Errorf("after removing the observed holiday: decision = %+v, want allow", d)
+	}
+
+	// Re-add h1 to the "us" calendar, then drop hq's calendar link: the holiday
+	// still exists but is no longer observed here, so the day re-opens. Proves the
+	// join keys off the location's calendar membership, not the holiday alone.
+	s.apply("holiday.h1", []byte(`{"calendar":"us","date":"2026-01-05","recurring":false}`))
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", mon); d.Allow {
+		t.Fatalf("precondition: expected deny with us calendar observed, got %+v", d)
+	}
+	s.apply("location.hq", []byte(`{"code":"hq","timezone":"America/New_York","faiSuppress":true}`))
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", mon); !d.Allow {
+		t.Errorf("after unlinking the calendar: decision = %+v, want allow", d)
 	}
 }
 

@@ -57,12 +57,20 @@ const TOPICS: Record<string, HelpTopic> = {
       { heading: 'Holidays', body: 'By default a schedule observes holidays — its windows are treated as closed on an observed holiday. Turn on “ignore holidays” to make a schedule run straight through them (e.g. 24/7 access).' },
     ],
   },
+  holiday_calendars: {
+    title: 'Holiday Calendars',
+    icon: '🗓️',
+    sections: [
+      { body: 'A holiday calendar is a named, shareable set of dates. Locations observe one or more calendars, so a single “Christmas” serves every site instead of being duplicated per location.' },
+      { heading: 'Composing', body: 'A location can observe several calendars at once — e.g. a national calendar plus a site-specific shutdown calendar. The location’s closed days are the union of all the calendars it observes.' },
+    ],
+  },
   holidays: {
     title: 'Holidays',
     icon: '📅',
     sections: [
-      { body: 'A holiday is a date (or date range) on which holiday-observing schedules treat their windows as closed.' },
-      { heading: 'Scope', body: 'Holidays apply to every schedule that observes them. A schedule with “ignore holidays” set is unaffected.' },
+      { body: 'A holiday is a date on a holiday calendar. It closes holiday-observing schedules at every location that observes its calendar.' },
+      { heading: 'Scope', body: 'A holiday affects a location only if that location observes the holiday’s calendar. A schedule with “ignore holidays” set is unaffected either way.' },
     ],
   },
   portals: {

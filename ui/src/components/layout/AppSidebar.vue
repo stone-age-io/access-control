@@ -44,7 +44,8 @@ const sections: NavSection[] = [
       { label: 'Aux Inputs', icon: '🔌', path: '/aux-inputs' },
       { label: 'Aux Outputs', icon: '🔆', path: '/aux-outputs' },
       { label: 'Schedules', icon: '🗓️', path: '/schedules' },
-      { label: 'Holidays', icon: '📅', path: '/holidays' },
+      { label: 'Holiday Calendars', icon: '🗓️', path: '/holiday-calendars' },
+      { label: 'Holidays', icon: '📅', path: '/holidays', child: true },
     ],
   },
   {

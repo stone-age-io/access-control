@@ -197,11 +197,11 @@ sole writer; controllers are read-only watchers.
 
 | Key | Value shape |
 |---|---|
-| `location.{code}` | `{"code","name","timezone","faiSuppress"}` |
+| `location.{code}` | `{"code","name","timezone","faiSuppress","holidayCalendars":["<calendar code>"]?}` |
 | `sched.{code}` | `{"code","windows":[{"days":[1..7],"start":"HH:MM","end":"HH:MM"}],"observeHolidays"}` |
 | `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?,"readerAddress"?,`<br>`"dpsContact"?,"rexContact"?,"lockType"?,"rexUnlock"?}` |
 | `controller.{code}` | `{"code","name","location","model"}` |
-| `holiday.{pbid}` | `{"location":"<location code>","date":"YYYY-MM-DD","recurring"}` |
+| `holiday.{pbid}` | `{"calendar":"<calendar code>","date":"YYYY-MM-DD","recurring"}` |
 | `group.{code}` | `{"code","portals":["<portal code>"],"schedule":"<sched code>"}` |
 | `role.{code}` | `{"code","groups":["<group code>"]}` |
 | `user.{pbid}` | `{"id","status","roles":["<role code>"]}` |
@@ -225,8 +225,16 @@ a PocketBase id appears — the cardholder id is the credential→user join key.
 
 `observeHolidays` (default true; stored inverted as `schedules.ignore_holidays` so
 the safe default holds for any record) closes every window of that schedule on a
-holiday of the evaluated portal's location. A `holiday` is a local calendar
-`date`; `recurring` matches that month/day every year. `validFrom`/`validUntil` are
+holiday observed by the evaluated portal's location. Holidays are grouped into
+**calendars**: a `holiday` belongs to one calendar, and a location observes a set
+of them (`location.holidayCalendars`), so one shared "Christmas" serves many sites
+instead of being duplicated per location. The controller unions a location's
+observed calendars into its holiday set, so the same date can close schedules at
+every site that observes the calendar. The `holiday_calendars` collection is a pure
+grouping label and is **not** mirrored to KV — both holidays and locations carry
+the calendar `code`, so the edge never needs the calendar record itself. A
+`holiday` is a local calendar `date`; `recurring` matches that month/day every
+year. `validFrom`/`validUntil` are
 optional RFC 3339 credential bounds (the controller parses them once on apply; a
 present-but-unparseable bound drops the credential — fail closed). The credentials
 collection's `type` (`generic`/`wiegand`/`pin`/`mobile`) is a **control-plane label

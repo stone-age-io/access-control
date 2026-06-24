@@ -208,10 +208,11 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			return "", nil, err
 		}
 		payload = policykv.Location{
-			Code:        r.GetString("code"),
-			Name:        r.GetString("name"),
-			Timezone:    r.GetString("timezone"),
-			FAISuppress: r.GetBool("fai_suppress"),
+			Code:             r.GetString("code"),
+			Name:             r.GetString("name"),
+			Timezone:         r.GetString("timezone"),
+			FAISuppress:      r.GetBool("fai_suppress"),
+			HolidayCalendars: resolveCodes(app, "holiday_calendars", r.GetStringSlice("holiday_calendars")),
 		}
 	case "schedules":
 		payload = policykv.Schedule{
@@ -295,7 +296,7 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 		}
 	case "holidays":
 		payload = policykv.Holiday{
-			Location:  resolveCode(app, "locations", r.GetString("location")),
+			Calendar:  resolveCode(app, "holiday_calendars", r.GetString("calendar")),
 			Date:      dateOnly(r, "date"),
 			Recurring: r.GetBool("recurring"),
 		}

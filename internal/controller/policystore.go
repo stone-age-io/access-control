@@ -487,6 +487,7 @@ func (s *PolicyStore) apply(key string, value []byte) {
 			loc = time.UTC
 		}
 		s.locations[w.Code] = locationEntry{location: w, loc: loc}
+		s.rebuildHolidays() // the location->calendar mapping feeds the holiday sets
 
 	case strings.HasPrefix(key, policykv.PrefixSched):
 		var w policykv.Schedule
@@ -601,6 +602,7 @@ func (s *PolicyStore) remove(key string) {
 	switch {
 	case strings.HasPrefix(key, policykv.PrefixLocation):
 		delete(s.locations, strings.TrimPrefix(key, policykv.PrefixLocation))
+		s.rebuildHolidays() // a removed location drops its calendars' holiday sets
 	case strings.HasPrefix(key, policykv.PrefixSched):
 		delete(s.graph.Schedules, strings.TrimPrefix(key, policykv.PrefixSched))
 	case strings.HasPrefix(key, policykv.PrefixPortal):
@@ -649,17 +651,40 @@ func toSchedule(w policykv.Schedule) policy.Schedule {
 	return policy.Schedule{Windows: windows, ObserveHolidays: w.ObserveHolidays}
 }
 
-// rebuildHolidays regenerates the per-location HolidaySets in the graph from the
-// raw holiday records. Holidays are few (dozens per org), so a full rebuild on
-// each holiday change is cheaper than incremental set surgery. Must be called
-// holding the write lock.
+// mergeHolidaySet unions src into dst (lazily allocating dst's maps), so a
+// location can observe several calendars whose dates pool into one HolidaySet.
+func mergeHolidaySet(dst *policy.HolidaySet, src policy.HolidaySet) {
+	for d := range src.Dates {
+		if dst.Dates == nil {
+			dst.Dates = make(map[string]struct{})
+		}
+		dst.Dates[d] = struct{}{}
+	}
+	for r := range src.Recurring {
+		if dst.Recurring == nil {
+			dst.Recurring = make(map[string]struct{})
+		}
+		dst.Recurring[r] = struct{}{}
+	}
+}
+
+// rebuildHolidays regenerates the per-location HolidaySets in the graph by joining
+// holiday records (grouped by their calendar) against each location's observed
+// calendars: a location's set is the union of every calendar it references. Both
+// holidays and locations are few (dozens per org), so a full rebuild on each change
+// is cheaper than incremental set surgery. It depends on BOTH s.holidayRecords and
+// s.locations, so it must run on location changes as well as holiday changes. A full
+// rebuild also makes KV key arrival order irrelevant: whether a location or its
+// holidays sync first, the final state converges. Must be called holding the write
+// lock.
 func (s *PolicyStore) rebuildHolidays() {
-	out := make(map[string]policy.HolidaySet)
+	// 1. Group holidays by their calendar code.
+	byCalendar := make(map[string]policy.HolidaySet)
 	for _, h := range s.holidayRecords {
-		if h.Location == "" || len(h.Date) != 10 {
+		if h.Calendar == "" || len(h.Date) != 10 {
 			continue // dangling/malformed: fail-safe skip (a missing holiday just doesn't close)
 		}
-		set := out[h.Location]
+		set := byCalendar[h.Calendar]
 		if h.Recurring {
 			if set.Recurring == nil {
 				set.Recurring = make(map[string]struct{})
@@ -671,7 +696,19 @@ func (s *PolicyStore) rebuildHolidays() {
 			}
 			set.Dates[h.Date] = struct{}{}
 		}
-		out[h.Location] = set
+		byCalendar[h.Calendar] = set
+	}
+
+	// 2. Expand to per-location: union the calendars each location observes.
+	out := make(map[string]policy.HolidaySet)
+	for code, le := range s.locations {
+		var merged policy.HolidaySet
+		for _, cal := range le.location.HolidayCalendars {
+			mergeHolidaySet(&merged, byCalendar[cal])
+		}
+		if merged.Dates != nil || merged.Recurring != nil {
+			out[code] = merged
+		}
 	}
 	s.graph.Holidays = out
 }

@@ -25,12 +25,15 @@ const (
 )
 
 // Location carries the timezone (the controller resolves it once per evaluation)
-// and the fire-alarm-input alarm-suppression flag.
+// and the fire-alarm-input alarm-suppression flag. HolidayCalendars are the codes
+// of the holiday calendars this site observes; the controller unions their dates
+// into the location's HolidaySet (see PolicyStore.rebuildHolidays).
 type Location struct {
-	Code        string `json:"code"`
-	Name        string `json:"name"`
-	Timezone    string `json:"timezone"`
-	FAISuppress bool   `json:"faiSuppress"`
+	Code             string   `json:"code"`
+	Name             string   `json:"name"`
+	Timezone         string   `json:"timezone"`
+	FAISuppress      bool     `json:"faiSuppress"`
+	HolidayCalendars []string `json:"holidayCalendars,omitempty"`
 }
 
 // Window is one recurring time window. Days are ISO weekdays (1=Mon..7=Sun);
@@ -49,12 +52,13 @@ type Schedule struct {
 	ObserveHolidays bool     `json:"observeHolidays"`
 }
 
-// Holiday is one date on a location's calendar. Date is a local "YYYY-MM-DD"
-// (the wall-clock day the site is closed); Recurring matches that month/day every
-// year (for fixed-date holidays like Dec 25). One KV key per record, keyed by the
-// PocketBase id (holidays carry no natural code).
+// Holiday is one date on a holiday calendar (a location observes a set of these;
+// it is no longer location-scoped). Calendar is the code of the owning calendar;
+// Date is a local "YYYY-MM-DD" (the wall-clock day the site is closed); Recurring
+// matches that month/day every year (for fixed-date holidays like Dec 25). One KV
+// key per record, keyed by the PocketBase id (holidays carry no natural code).
 type Holiday struct {
-	Location  string `json:"location"`
+	Calendar  string `json:"calendar"`
 	Date      string `json:"date"`
 	Recurring bool   `json:"recurring"`
 }

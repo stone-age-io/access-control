@@ -50,7 +50,7 @@ async function load() {
   loading.value = true
   try {
     const [l, pts] = await Promise.all([
-      pb.collection('locations').getOne<Location>(recordId),
+      pb.collection('locations').getOne<Location>(recordId, { expand: 'holiday_calendars' }),
       pb.collection('portals').getFullList<Portal>({ filter: `location = "${recordId}"`, sort: 'code' }),
     ])
     record.value = l
@@ -122,6 +122,17 @@ onMounted(load)
             {{ record.coordinates.lat.toFixed(5) }}, {{ record.coordinates.lon.toFixed(5) }}
           </span>
           <span v-else class="text-base-content/50">—</span>
+        </DataField>
+        <DataField label="Holiday calendars">
+          <div v-if="record.expand?.holiday_calendars?.length" class="flex flex-wrap gap-1">
+            <router-link
+              v-for="c in record.expand.holiday_calendars"
+              :key="c.id"
+              :to="`/holiday-calendars/${c.id}`"
+              class="badge badge-outline gap-1"
+            ><code class="text-xs">{{ c.code }}</code></router-link>
+          </div>
+          <span v-else class="opacity-40">none</span>
         </DataField>
       </div>
       <div v-if="record.description" class="mt-4 pt-4 border-t border-base-200">
