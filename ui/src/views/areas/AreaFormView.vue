@@ -23,6 +23,7 @@ const form = ref({
   arm: 'disarmed' as 'disarmed' | 'armed',
   auto_arm: '' as '' | 'disarmed' | 'armed',
   auto_schedule: '',
+  notify_on_alarm: false,
 })
 
 const locations = ref<Location[]>([])
@@ -57,6 +58,7 @@ async function loadRecord() {
       arm: a.arm === 'armed' ? 'armed' : 'disarmed',
       auto_arm: a.auto_arm || '',
       auto_schedule: a.auto_schedule || '',
+      notify_on_alarm: !!a.notify_on_alarm,
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load area')
@@ -85,6 +87,7 @@ async function handleSubmit() {
       arm: form.value.arm,
       auto_arm: form.value.auto_arm,
       auto_schedule: form.value.auto_schedule,
+      notify_on_alarm: form.value.notify_on_alarm,
     }
     if (isEdit.value) {
       await pb.collection('areas').update(recordId!, data)
@@ -145,6 +148,11 @@ onMounted(async () => {
               </select>
             </FormField>
           </div>
+
+          <FormField inline label="Email on intrusion"
+                     hint="Email opted-in operators when this area raises an intrusion alarm. Recipients are set per operator (Operators → Notify).">
+            <input v-model="form.notify_on_alarm" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
         </div>
       </BaseCard>
 

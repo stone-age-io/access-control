@@ -166,6 +166,11 @@ onBeforeUnmount(() => {
         </DataField>
         <DataField label="Standing arm">{{ record.arm || 'disarmed' }}</DataField>
         <DataField label="Auto arm">{{ record.auto_arm || '—' }}</DataField>
+        <DataField label="Email on intrusion">
+          <span class="badge badge-sm" :class="record.notify_on_alarm ? 'badge-warning' : 'badge-ghost'">
+            {{ record.notify_on_alarm ? 'emails opted-in operators' : 'off' }}
+          </span>
+        </DataField>
         <DataField label="Auto schedule">
           <router-link v-if="record.expand?.auto_schedule" :to="`/schedules/${record.expand.auto_schedule.id}`" class="link link-primary">
             {{ record.expand.auto_schedule.code }}

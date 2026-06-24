@@ -54,6 +54,7 @@ const form = ref({
   auto_schedule: '',
   area: '',
   disarm_on_grant: false,
+  notify_on_alarm: false,
 })
 
 const locations = ref<Location[]>([])
@@ -117,6 +118,7 @@ async function loadRecord() {
       auto_schedule: p.auto_schedule || '',
       area: p.area || '',
       disarm_on_grant: !!p.disarm_on_grant,
+      notify_on_alarm: !!p.notify_on_alarm,
     }
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load portal')
@@ -184,6 +186,7 @@ async function handleSubmit() {
       auto_schedule: form.value.auto_schedule,
       area: form.value.area,
       disarm_on_grant: form.value.disarm_on_grant,
+      notify_on_alarm: form.value.notify_on_alarm,
     }
     if (isEdit.value) {
       await pb.collection('portals').update(recordId!, data)
@@ -377,6 +380,10 @@ onMounted(async () => {
             <FormField inline label="Disarm on grant"
                        hint="Entry door: a valid credential grant here durably disarms the area. Needs an area assigned. Operator remote-grants do not disarm.">
               <input v-model="form.disarm_on_grant" type="checkbox" class="toggle toggle-primary" :disabled="!form.area" />
+            </FormField>
+            <FormField inline label="Email on alarm"
+                       hint="Email opted-in operators when this door raises a forced/held-open alarm. Recipients are set per operator (Operators → Notify).">
+              <input v-model="form.notify_on_alarm" type="checkbox" class="toggle toggle-primary" />
             </FormField>
           </div>
         </div>
