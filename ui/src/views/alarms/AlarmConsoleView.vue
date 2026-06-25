@@ -4,14 +4,17 @@ import { pb } from '@/utils/pb'
 import { useAuthStore } from '@/stores/auth'
 import { useAlarmAck } from '@/composables/useAlarmAck'
 import { formatDate, formatConstant } from '@/utils/format'
+import { alarmType, alarmTypeBadge, eventThing } from '@/utils/events'
 import type { AccessEvent } from '@/types/pocketbase'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import EventDetailModal from '@/components/ui/EventDetailModal.vue'
 
 const auth = useAuthStore()
 const { acking, ack } = useAlarmAck()
 
 const alarms = ref<AccessEvent[]>([])
+const selected = ref<AccessEvent | null>(null)
 const loading = ref(true)
 const error = ref('')
 let unsub: (() => void) | null = null
@@ -63,24 +66,8 @@ async function subscribe() {
 async function acknowledge(e: AccessEvent) {
   if (await ack(e.id)) {
     alarms.value = alarms.value.filter((a) => a.id !== e.id)
+    if (selected.value?.id === e.id) selected.value = null
   }
-}
-
-function alarmType(e: AccessEvent): string {
-  return (e.payload?.type as string) || e.kind || 'alarm'
-}
-
-function typeBadge(e: AccessEvent): string {
-  const t = alarmType(e)
-  if (e.kind === 'fire' || t === 'tamper_24h') return 'badge-warning'
-  if (t === 'intrusion' || t === 'forced' || t === 'held') return 'badge-error'
-  return 'badge-ghost'
-}
-
-function thing(e: AccessEvent): string {
-  // Intrusion alarms name the tripped point in the payload; doors carry the portal.
-  const point = e.payload?.point as string | undefined
-  return point ? `${e.portal} · ${point}` : e.portal || e.location || '—'
 }
 
 onMounted(() => {
@@ -112,22 +99,32 @@ onBeforeUnmount(() => {
 
     <BaseCard :no-padding="true">
       <ul class="divide-y divide-base-200">
-        <li v-for="e in alarms" :key="e.id" class="flex items-center justify-between gap-3 p-4">
+        <li
+          v-for="e in alarms"
+          :key="e.id"
+          class="flex items-center justify-between gap-3 p-4 cursor-pointer transition-colors hover:bg-base-200/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/60"
+          role="button"
+          tabindex="0"
+          :aria-label="`View ${formatConstant(alarmType(e))} alarm detail`"
+          @click="selected = e"
+          @keydown.enter.prevent="selected = e"
+          @keydown.space.prevent="selected = e"
+        >
           <div class="flex items-center gap-3 min-w-0">
-            <span class="badge" :class="typeBadge(e)">{{ formatConstant(alarmType(e)) }}</span>
+            <span class="badge" :class="alarmTypeBadge(e)">{{ formatConstant(alarmType(e)) }}</span>
             <div class="min-w-0">
               <div class="font-medium truncate">
-                <code class="text-sm">{{ thing(e) }}</code>
+                <code class="text-sm">{{ eventThing(e) }}</code>
                 <span class="opacity-50 text-xs ml-2">{{ e.location }}</span>
               </div>
               <div class="text-xs opacity-50">{{ formatDate(e.ts || e.created, 'PP p') }}</div>
             </div>
           </div>
           <button
-            class="btn btn-sm btn-primary"
+            class="btn btn-sm btn-primary shrink-0"
             :disabled="acking || !canCommand"
             :title="canCommand ? 'Acknowledge' : 'Requires the command capability'"
-            @click="acknowledge(e)"
+            @click.stop="acknowledge(e)"
           >
             Ack
           </button>
@@ -135,4 +132,6 @@ onBeforeUnmount(() => {
       </ul>
     </BaseCard>
   </ListLayout>
+
+  <EventDetailModal :event="selected" @close="selected = null" />
 </template>

@@ -159,11 +159,12 @@ function handleKey(e: KeyboardEvent, item: T) {
         @click="handleClick(item)"
         @keydown="handleKey($event, item)"
       >
-        <div class="card-body p-3">
-          <!-- min-w-0 + truncate clips the title row (incl. slot-provided content
-               like long credential values/codes) with an ellipsis instead of
-               overflowing the card. -->
-          <div class="mb-1.5 min-w-0 flex items-center gap-2">
+        <div class="card-body p-3 gap-0">
+          <!-- Header: identity (left) + row actions (right). Folding actions up
+               here reclaims the otherwise mostly-empty action row this card used
+               to carry at the bottom. min-w-0 + truncate clips long slot content
+               (credential values/codes) with an ellipsis instead of overflowing. -->
+          <div class="min-w-0 flex items-center gap-2">
             <input
               v-if="selectable"
               type="checkbox"
@@ -180,9 +181,15 @@ function handleKey(e: KeyboardEvent, item: T) {
                 </div>
               </slot>
             </div>
+            <div v-if="$slots.actions" class="flex items-center gap-1 shrink-0" @click.stop>
+              <slot name="actions" :item="item" />
+            </div>
           </div>
 
-          <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-base-200/60 pt-2">
+          <div
+            v-if="columns.length > 1"
+            class="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-base-200/60 mt-2 pt-2"
+          >
             <div
               v-for="col in columns.slice(1)"
               :key="col.key"
@@ -200,10 +207,6 @@ function handleKey(e: KeyboardEvent, item: T) {
                 </slot>
               </div>
             </div>
-          </div>
-
-          <div v-if="$slots.actions" class="flex justify-end items-center gap-1 mt-2 pt-2 border-t border-base-200/60" @click.stop>
-            <slot name="actions" :item="item" />
           </div>
         </div>
       </div>

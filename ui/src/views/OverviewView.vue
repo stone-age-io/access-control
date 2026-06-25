@@ -2,8 +2,10 @@
 import { ref, onMounted } from 'vue'
 import { pb } from '@/utils/pb'
 import { formatRelativeTime, formatConstant } from '@/utils/format'
+import { eventKindBadge } from '@/utils/events'
 import type { AccessEvent } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import EventDetailModal from '@/components/ui/EventDetailModal.vue'
 
 interface StatusCard {
   label: string
@@ -20,10 +22,11 @@ interface StatusCard {
 // weren't actionable, so they're gone.)
 const status = ref<StatusCard[]>([
   { label: 'Alarms to acknowledge', icon: '🚨', path: '/alarms', count: null, okHint: 'All clear' },
-  { label: 'Controllers offline', icon: '⚙️', path: '/controllers', count: null, okHint: 'All online' },
+  { label: 'Controllers not online', icon: '⚙️', path: '/controllers', count: null, okHint: 'All online' },
 ])
 
 const recentEvents = ref<AccessEvent[]>([])
+const selected = ref<AccessEvent | null>(null)
 const loading = ref(true)
 
 // Match the Alarm Console's window so this count agrees with what's listed there.
@@ -38,8 +41,10 @@ async function loadStatus() {
     pb.collection('events').getList(1, 1, {
       filter: `(kind = "alarm" || kind = "fire") && acknowledged = false && created > "${cutoffISO()}"`,
     }),
-    // Boxes explicitly swept offline. Empty status = never-reported (new/undeployed), not counted.
-    pb.collection('controllers').getList(1, 1, { filter: 'status = "offline"' }),
+    // Anything not confirmed online — swept-offline *and* never-reported (empty
+    // status, e.g. a new/undeployed box). A box we've never heard from is exactly
+    // what an operator needs surfaced, so it counts here rather than hiding.
+    pb.collection('controllers').getList(1, 1, { filter: 'status != "online"' }),
   ])
   status.value[0].count = alarmRes.status === 'fulfilled' ? alarmRes.value.totalItems : 0
   status.value[1].count = ctrlRes.status === 'fulfilled' ? ctrlRes.value.totalItems : 0
@@ -52,12 +57,6 @@ async function loadRecentEvents() {
   } catch {
     recentEvents.value = []
   }
-}
-
-function eventBadge(e: AccessEvent): string {
-  if (e.kind === 'tap') return e.allow ? 'badge-success' : 'badge-error'
-  if (e.kind === 'fire' || e.kind === 'alarm') return 'badge-warning'
-  return 'badge-ghost'
 }
 
 onMounted(async () => {
@@ -118,8 +117,17 @@ onMounted(async () => {
       </div>
 
       <ul v-else class="divide-y divide-base-200">
-        <li v-for="e in recentEvents" :key="e.id" class="flex items-center gap-3 py-2.5">
-          <span class="badge badge-sm" :class="eventBadge(e)">{{ e.kind || 'event' }}</span>
+        <li
+          v-for="e in recentEvents"
+          :key="e.id"
+          class="flex items-center gap-3 py-2.5 -mx-2 px-2 rounded-lg cursor-pointer hover:bg-base-200/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/60"
+          role="button"
+          tabindex="0"
+          @click="selected = e"
+          @keydown.enter.prevent="selected = e"
+          @keydown.space.prevent="selected = e"
+        >
+          <span class="badge badge-sm" :class="eventKindBadge(e)">{{ e.kind || 'event' }}</span>
           <div class="flex-1 min-w-0">
             <div class="text-sm truncate">
               <span class="font-medium">{{ e.location || '—' }}</span>
@@ -135,5 +143,7 @@ onMounted(async () => {
         </li>
       </ul>
     </BaseCard>
+
+    <EventDetailModal :event="selected" @close="selected = null" />
   </div>
 </template>
