@@ -4,11 +4,13 @@ import L from 'leaflet'
 import { useRouter } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useFloorPlan } from '@/composables/useFloorPlan'
+import { useUIStore } from '@/stores/ui'
 import type { Location, Portal, PointStatus, AccessEvent } from '@/types/pocketbase'
 import PortalCommandDrawer from '@/components/map/PortalCommandDrawer.vue'
 
 const props = defineProps<{ locationId: string }>()
 const router = useRouter()
+const ui = useUIStore()
 
 const { initFloorPlan, renderMarkers, setSelected, invalidateSize, cleanup } = useFloorPlan()
 
@@ -24,6 +26,12 @@ const floorplanReady = ref(false)
 let unsubStatus: (() => void) | null = null
 let unsubEvents: (() => void) | null = null
 const flashTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+// Floor plan vs. door-list is a user choice (persisted), but a location with no
+// uploaded plan can only show the list — so the effective mode falls back to 'list'
+// there and the toggle is hidden.
+const hasFloorplan = computed(() => !!location.value?.floorplan)
+const viewMode = computed<'plan' | 'list'>(() => (hasFloorplan.value ? ui.monitorViewMode : 'list'))
 
 const placedPortals = computed(() => portals.value.filter(isPlaced))
 const selectedPortal = computed(() => portals.value.find((p) => p.id === selectedPortalId.value) || null)
@@ -60,6 +68,16 @@ function doorBadgeFor(p: Portal): { cls: string; text: string } {
     default:
       return { cls: 'badge-ghost', text: 'Unknown' }
   }
+}
+
+// The door list mirrors the plan's marker semantics: flash on a recent alarm and
+// flag a manual posture override, so the two views are peers rather than fallbacks.
+function isAlarming(p: Portal): boolean {
+  return alarmingIds.value.has(p.id)
+}
+
+function isOverridden(p: Portal): boolean {
+  return statusFor(p)?.posture_source === 'override'
 }
 
 // ---- marker styling (status-colored divIcon) ----
@@ -121,7 +139,9 @@ async function load() {
     loading.value = false
   }
   await nextTick()
-  loadMap()
+  // Init the plan only when it's the visible view — Leaflet must measure a shown
+  // (display:block) container, so we defer init until 'plan' mode is active.
+  if (viewMode.value === 'plan') loadMap()
 }
 
 function loadMap() {
@@ -225,6 +245,21 @@ onBeforeUnmount(() => {
   cleanup()
 })
 
+// Switching to the plan: init it the first time it's shown (deferred from load),
+// otherwise recompute Leaflet's layout — it was display:none while the list showed,
+// so its cached size is stale and tiles/markers would render mispositioned.
+watch(viewMode, (mode) => {
+  if (mode !== 'plan') return
+  nextTick(() => {
+    if (floorplanReady.value) {
+      invalidateSize()
+      renderAll()
+    } else {
+      loadMap()
+    }
+  })
+})
+
 // Switching buildings within the monitor: tear down and reload.
 watch(
   () => props.locationId,
@@ -243,6 +278,23 @@ watch(
       <div class="flex items-center gap-3 min-w-0">
         <router-link to="/monitor" class="btn btn-sm btn-ghost gap-1">← <span class="hidden sm:inline">All locations</span></router-link>
         <h2 v-if="location" class="font-bold text-lg truncate">{{ location.name || location.code }}</h2>
+        <!-- View toggle — only meaningful when there's a plan to switch to. -->
+        <div v-if="hasFloorplan" class="join shrink-0">
+          <button
+            class="join-item btn btn-sm"
+            :class="viewMode === 'plan' ? 'btn-active btn-primary' : ''"
+            @click="ui.setMonitorViewMode('plan')"
+          >
+            🗺️ <span class="hidden sm:inline">Floor plan</span>
+          </button>
+          <button
+            class="join-item btn btn-sm"
+            :class="viewMode === 'list' ? 'btn-active btn-primary' : ''"
+            @click="ui.setMonitorViewMode('list')"
+          >
+            ☰ <span class="hidden sm:inline">Doors</span>
+          </button>
+        </div>
       </div>
       <!-- Legend -->
       <div class="flex items-center gap-3 text-xs flex-wrap">
@@ -260,29 +312,31 @@ watch(
     </div>
 
     <div v-else-if="location" class="relative isolate flex-1 min-h-0 bg-base-300 rounded-xl overflow-hidden border border-base-300">
-      <!-- Floor plan -->
+      <!-- Floor plan — kept mounted (v-show) so flipping to the door list and back
+           doesn't tear down / re-init Leaflet; the viewMode watch re-measures it. -->
       <div
-        v-if="location.floorplan"
+        v-if="hasFloorplan"
+        v-show="viewMode === 'plan'"
         id="monitor-floorplan-container"
         class="absolute inset-0 z-0"
         @click="handleMapBgClick"
       ></div>
 
-      <!-- Fallback: no floor plan — a clickable live status list -->
-      <div v-else class="absolute inset-0 overflow-y-auto p-4">
-        <div class="text-center text-base-content/60 py-4">
-          <span class="text-3xl">🗺️</span>
-          <p class="text-sm mt-2">No floor plan for this location — showing a live door list.</p>
-        </div>
+      <!-- Door list — a peer view (always available, default when there's no plan):
+           a clickable grid of live door cards. -->
+      <div v-if="viewMode === 'list'" class="absolute inset-0 overflow-y-auto p-4">
         <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           <button
             v-for="p in portals"
             :key="p.id"
-            class="text-left p-3 rounded-lg bg-base-100 border border-base-300 hover:border-primary/40 transition-colors flex items-center justify-between gap-2 min-w-0"
+            class="text-left p-3 rounded-lg bg-base-100 border transition-colors flex items-center justify-between gap-2 min-w-0"
+            :class="isAlarming(p) ? 'border-error ring-2 ring-error animate-pulse' : 'border-base-300 hover:border-primary/40'"
             @click="openDrawer(p.id)"
           >
             <span class="min-w-0">
-              <span class="font-medium text-sm truncate block">{{ p.name || p.code }}</span>
+              <span class="font-medium text-sm truncate block">
+                <span v-if="isOverridden(p)" class="text-warning font-bold" title="Manual posture override">⚠ </span>{{ p.name || p.code }}
+              </span>
               <code class="text-xs text-primary">{{ p.code }}</code>
             </span>
             <span class="flex items-center gap-1 shrink-0">
