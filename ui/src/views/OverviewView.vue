@@ -5,39 +5,44 @@ import { formatRelativeTime, formatConstant } from '@/utils/format'
 import type { AccessEvent } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
 
-interface StatCard {
+interface StatusCard {
   label: string
   icon: string
   path: string
-  collection: string
   count: number | null
+  /** Copy shown when the count is zero — the "nothing to worry about" state. */
+  okHint: string
 }
 
-const stats = ref<StatCard[]>([
-  { label: 'Locations', icon: '🏢', path: '/locations', collection: 'locations', count: null },
-  { label: 'Schedules', icon: '🗓️', path: '/schedules', collection: 'schedules', count: null },
-  { label: 'Portals', icon: '🚪', path: '/portals', collection: 'portals', count: null },
-  { label: 'Access Groups', icon: '🗝️', path: '/access-groups', collection: 'access_groups', count: null },
-  { label: 'Roles', icon: '🛡️', path: '/roles', collection: 'roles', count: null },
-  { label: 'Cardholders', icon: '🪪', path: '/cardholders', collection: 'cardholders', count: null },
-  { label: 'Credentials', icon: '🎫', path: '/credentials', collection: 'credentials', count: null },
-  { label: 'Events', icon: '📋', path: '/events', collection: 'events', count: null },
+// Operational health, not inventory. The two questions an operator opens the app
+// to answer — "is anything alarming?" and "is any edge box down?" — each linking
+// to the page that resolves it. (Collection counts duplicated the sidebar and
+// weren't actionable, so they're gone.)
+const status = ref<StatusCard[]>([
+  { label: 'Alarms to acknowledge', icon: '🚨', path: '/alarms', count: null, okHint: 'All clear' },
+  { label: 'Controllers offline', icon: '⚙️', path: '/controllers', count: null, okHint: 'All online' },
 ])
 
 const recentEvents = ref<AccessEvent[]>([])
 const loading = ref(true)
 
-async function loadCounts() {
-  await Promise.all(
-    stats.value.map(async (s) => {
-      try {
-        const res = await pb.collection(s.collection).getList(1, 1)
-        s.count = res.totalItems
-      } catch {
-        s.count = 0
-      }
-    })
-  )
+// Match the Alarm Console's window so this count agrees with what's listed there.
+const WINDOW_DAYS = 7
+function cutoffISO(): string {
+  return new Date(Date.now() - WINDOW_DAYS * 86400000).toISOString()
+}
+
+async function loadStatus() {
+  const [alarmRes, ctrlRes] = await Promise.allSettled([
+    // Same filter as AlarmConsoleView, so the headline number matches the console.
+    pb.collection('events').getList(1, 1, {
+      filter: `(kind = "alarm" || kind = "fire") && acknowledged = false && created > "${cutoffISO()}"`,
+    }),
+    // Boxes explicitly swept offline. Empty status = never-reported (new/undeployed), not counted.
+    pb.collection('controllers').getList(1, 1, { filter: 'status = "offline"' }),
+  ])
+  status.value[0].count = alarmRes.status === 'fulfilled' ? alarmRes.value.totalItems : 0
+  status.value[1].count = ctrlRes.status === 'fulfilled' ? ctrlRes.value.totalItems : 0
 }
 
 async function loadRecentEvents() {
@@ -57,7 +62,7 @@ function eventBadge(e: AccessEvent): string {
 
 onMounted(async () => {
   loading.value = true
-  await Promise.all([loadCounts(), loadRecentEvents()])
+  await Promise.all([loadStatus(), loadRecentEvents()])
   loading.value = false
 })
 </script>
@@ -66,26 +71,33 @@ onMounted(async () => {
   <div class="space-y-6">
     <div>
       <h1 class="text-3xl font-bold">Overview</h1>
-      <p class="text-base-content/70 mt-1">Policy graph at a glance and recent access activity.</p>
+      <p class="text-base-content/70 mt-1">System health and recent access activity.</p>
     </div>
 
-    <!-- Stat grid -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <!-- Operational status — turns red when something needs attention. -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <router-link
-        v-for="s in stats"
-        :key="s.collection"
+        v-for="s in status"
+        :key="s.path"
         :to="s.path"
-        class="card bg-base-100 border border-base-300 shadow-sm hover:shadow-md hover:border-primary/40 transition-all"
+        class="card border shadow-sm transition-all hover:shadow-md"
+        :class="(s.count ?? 0) > 0
+          ? 'bg-error/5 border-error/40 hover:border-error/60'
+          : 'bg-base-100 border-base-300 hover:border-primary/40'"
       >
         <div class="card-body p-4">
           <div class="flex items-center justify-between">
             <span class="text-2xl">{{ s.icon }}</span>
-            <span class="text-3xl font-bold tabular-nums">
+            <span
+              class="text-3xl font-bold tabular-nums"
+              :class="(s.count ?? 0) > 0 ? 'text-error' : 'opacity-80'"
+            >
               <span v-if="s.count === null" class="loading loading-dots loading-sm opacity-40"></span>
               <template v-else>{{ s.count }}</template>
             </span>
           </div>
           <div class="text-sm font-medium opacity-70 mt-1">{{ s.label }}</div>
+          <div v-if="s.count === 0" class="text-xs text-success/80 mt-0.5">{{ s.okHint }}</div>
         </div>
       </router-link>
     </div>

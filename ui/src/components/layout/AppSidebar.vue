@@ -22,7 +22,14 @@ const sections: NavSection[] = [
   {
     items: [
       { label: 'Overview', icon: '📊', path: '/' },
+    ],
+  },
+  {
+    title: 'Monitoring',
+    items: [
       { label: 'Live Map', icon: '🗺️', path: '/monitor' },
+      { label: 'Alarm Console', icon: '🚨', path: '/alarms' },
+      { label: 'Events', icon: '📋', path: '/events' },
     ],
   },
   {
@@ -30,9 +37,8 @@ const sections: NavSection[] = [
     items: [
       { label: 'Cardholders', icon: '🪪', path: '/cardholders' },
       { label: 'Credentials', icon: '🎫', path: '/credentials', child: true },
-      { label: 'Roles', icon: '🛡️', path: '/roles' },
+      { label: 'Roles', icon: '🏷️', path: '/roles' },
       { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
-      { label: 'Import', icon: '📥', path: '/import', capability: 'enroll' },
     ],
   },
   {
@@ -45,20 +51,14 @@ const sections: NavSection[] = [
       { label: 'Aux Outputs', icon: '🔆', path: '/aux-outputs' },
       { label: 'Areas', icon: '🛡️', path: '/areas' },
       { label: 'Schedules', icon: '🗓️', path: '/schedules' },
-      { label: 'Holiday Calendars', icon: '🗓️', path: '/holiday-calendars' },
+      { label: 'Holiday Calendars', icon: '📆', path: '/holiday-calendars' },
       { label: 'Holidays', icon: '📅', path: '/holidays', child: true },
-    ],
-  },
-  {
-    title: 'Activity',
-    items: [
-      { label: 'Alarm Console', icon: '🚨', path: '/alarms' },
-      { label: 'Events', icon: '📋', path: '/events' },
     ],
   },
   {
     title: 'Administration',
     items: [
+      { label: 'Import', icon: '📥', path: '/import', capability: 'enroll' },
       { label: 'Operators', icon: '👥', path: '/operators', capability: 'operators' },
       { label: 'Audit Log', icon: '📜', path: '/audit-log', capability: 'operators' },
     ],
