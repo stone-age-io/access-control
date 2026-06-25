@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -21,9 +22,17 @@ import (
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/policykv"
+	"golang.org/x/sync/errgroup"
 )
 
 const opTimeout = 5 * time.Second
+
+// syncConcurrency bounds the parallel KV puts during SyncAll. Each put is one
+// network round trip, so a serial sync costs one RTT per record (minutes over a
+// high-latency link at scale); fanning out turns that into a handful of rounds.
+// The bound keeps in-flight writes well under the server's comfort — 32 is
+// conservative for a high-latency link.
+const syncConcurrency = 32
 
 // mirroredCollections are the policy collections whose changes are mirrored to
 // KV. The events collection is written by the audit consumer, not mirrored.
@@ -59,8 +68,16 @@ func Register(app core.App, kv jetstream.KeyValue, log *logger.Logger, m *metric
 // made while accessd was down — notably credential deletes, which must not
 // linger in KV. Idempotent: Put overwrites, and missing keys delete cleanly.
 func (p *Publisher) SyncAll(ctx context.Context, app core.App) error {
+	// Build every (key, value) pair serially from local SQLite first — that work is
+	// fast and keeps DB access single-threaded. expected is the set of keys we intend
+	// to hold, populated here (not after a successful put) so a transient put failure
+	// below never makes a live key look stale and get pruned.
+	type pair struct {
+		key string
+		val []byte
+	}
+	var pairs []pair
 	expected := make(map[string]struct{})
-	published := 0
 	for _, col := range mirroredCollections {
 		recs, err := app.FindAllRecords(col)
 		if err != nil {
@@ -72,15 +89,28 @@ func (p *Publisher) SyncAll(ctx context.Context, app core.App) error {
 				p.log.Error("mirror sync: build failed", "collection", col, "id", r.Id, "error", err)
 				continue
 			}
-			if _, err := p.kv.Put(ctx, key, val); err != nil {
-				p.log.Error("mirror sync: put failed", "key", key, "error", err)
-				continue
-			}
+			pairs = append(pairs, pair{key: key, val: val})
 			expected[key] = struct{}{}
-			p.m.IncKVApply("put")
-			published++
 		}
 	}
+
+	// Fan out only the network-bound puts, bounded by syncConcurrency. One bad key
+	// logs and is skipped (return nil), never aborting the whole sync.
+	var published atomic.Int64
+	var g errgroup.Group
+	g.SetLimit(syncConcurrency)
+	for _, pr := range pairs {
+		g.Go(func() error {
+			if _, err := p.kv.Put(ctx, pr.key, pr.val); err != nil {
+				p.log.Error("mirror sync: put failed", "key", pr.key, "error", err)
+				return nil
+			}
+			p.m.IncKVApply("put")
+			published.Add(1)
+			return nil
+		})
+	}
+	_ = g.Wait()
 
 	pruned := 0
 	keys, err := p.kv.Keys(ctx)
@@ -96,7 +126,7 @@ func (p *Publisher) SyncAll(ctx context.Context, app core.App) error {
 		}
 	}
 
-	p.log.Info("policy KV sync complete", "published", published, "pruned", pruned)
+	p.log.Info("policy KV sync complete", "published", published.Load(), "pruned", pruned)
 	return nil
 }
 
