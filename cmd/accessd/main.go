@@ -88,6 +88,12 @@ func main() {
 	// only fire once serving anyway.
 	changelog.Register(pb, cfg.Accessd.AuditRetentionDays, log)
 
+	// Events-projection retention: a daily prune of the rebuildable events read
+	// model (JetStream stays the system of record). Pure PocketBase cron, like the
+	// changelog prune, so it registers here rather than in OnServe. No-op unless
+	// eventRetentionDays > 0 — opt-in, so an upgrade never deletes event history.
+	audit.RegisterPrune(pb, cfg.Accessd.EventRetentionDays, log)
+
 	// Resources brought up only when actually serving (not for migrate/superuser).
 	var (
 		nc         *natsx.Conn

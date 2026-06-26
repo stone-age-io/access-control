@@ -148,6 +148,9 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   controller, writes `armOverride: disarmed` on a credential grant at a `disarm_on_grant` portal.
 - **Audit** (`internal/audit`) — JetStream is the system of record for events; the PocketBase `events`
   collection is a rebuildable projection. Durable consumer, at-least-once (a redelivery may dup a row in v1).
+  Because the projection is rebuildable, an optional daily 03:00 prune (`RegisterPrune`, gated on
+  `accessd.eventRetentionDays`, **off by default = keep forever**) trims `events` older than the retention
+  window — draining in bounded batches (it's high-volume, unlike the changelog's single-batch audit-log prune).
 - **Controller health** (`internal/health`, accessd-side) — a core-NATS subscriber to the heartbeat subject
   updates `controllers.last_seen`/`status` with a **direct record update, not an events row**, plus a staleness
   sweep that marks a silent box offline. Heartbeats are deliberately kept out of the audit stream.

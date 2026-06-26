@@ -159,6 +159,13 @@ type AccessdConfig struct {
 	// by internal/changelog) are kept before a daily prune deletes them. Unset (0)
 	// defaults to 365; set a negative value to disable pruning (keep forever).
 	AuditRetentionDays int `json:"auditRetentionDays" yaml:"auditRetentionDays" mapstructure:"auditRetentionDays"`
+	// EventRetentionDays is how long door-activity rows (events, the rebuildable
+	// projection of the ACC_EVENTS JetStream stream) are kept before a daily prune
+	// deletes them. Unlike AuditRetentionDays, it defaults to 0 = keep forever
+	// (opt-in), so an upgrade never silently deletes event history; set a positive
+	// value to trim the projection. JetStream stays the system of record, so a
+	// prune only shrinks the read model.
+	EventRetentionDays int `json:"eventRetentionDays" yaml:"eventRetentionDays" mapstructure:"eventRetentionDays"`
 }
 
 // ControllerConfig is the edge controller's configuration — just its identity.

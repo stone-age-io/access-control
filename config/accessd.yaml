@@ -105,3 +105,8 @@ accessd:
   # policy record, written by internal/changelog) before a daily 03:00 prune
   # deletes them. Unset (0) = 365 days; set negative to keep forever.
   auditRetentionDays: 365
+  # How long to keep door-activity rows (events — the rebuildable projection of
+  # the ACC_EVENTS JetStream stream) before a daily 03:00 prune deletes them.
+  # Defaults to 0 = keep forever (opt-in); JetStream stays the system of record,
+  # so a prune only shrinks the read model. Set a positive day count to trim it.
+  eventRetentionDays: 0
