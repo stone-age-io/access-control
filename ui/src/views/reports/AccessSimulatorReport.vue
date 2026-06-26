@@ -5,6 +5,7 @@ import { formatConstant, localInputToISO, isoToLocalInput } from '@/utils/format
 import { reasonExplanation } from '@/utils/events'
 import type { Credential, Portal, Posture } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import Combobox from '@/components/ui/Combobox.vue'
 
 // What-if tool: send (credential value, portal code, instant, optional posture
 // override) to POST /api/simulate, which runs the REAL policy.Decide over a live
@@ -53,11 +54,17 @@ async function loadOptions() {
   }
 }
 
-function credLabel(c: Credential): string {
+// Combobox accessors (typed here rather than inline so the generic component
+// infers cleanly). Credential is keyed by its value; portal by its code.
+const credValue = (c: Credential) => c.value
+const credPrimary = (c: Credential) => c.value
+function credSecondary(c: Credential): string {
   const who = c.expand?.user?.name || c.user || 'unknown'
-  const suffix = c.status && c.status !== 'active' ? ` · ${c.status}` : ''
-  return `${c.value} — ${who}${suffix}`
+  return c.status && c.status !== 'active' ? `${who} · ${c.status}` : who
 }
+const portalValue = (p: Portal) => p.code
+const portalPrimary = (p: Portal) => p.code
+const portalSecondary = (p: Portal) => p.name
 
 async function run() {
   if (!portal.value) {
@@ -101,21 +108,30 @@ onMounted(loadOptions)
 
     <BaseCard>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <label class="form-control">
-          <span class="label-text mb-1">Credential</span>
-          <select v-model="credential" class="select select-bordered">
-            <option value="">— none (test posture only) —</option>
-            <option v-for="c in credentials" :key="c.id" :value="c.value">{{ credLabel(c) }}</option>
-          </select>
-        </label>
+        <div class="form-control">
+          <span class="label-text mb-1">Credential <span class="opacity-50">(optional — leave empty to test posture only)</span></span>
+          <Combobox
+            v-model="credential"
+            :options="credentials"
+            :option-value="credValue"
+            :primary="credPrimary"
+            :secondary="credSecondary"
+            placeholder="Search credentials by value or cardholder…"
+          />
+        </div>
 
-        <label class="form-control">
+        <div class="form-control">
           <span class="label-text mb-1">Portal</span>
-          <select v-model="portal" class="select select-bordered">
-            <option value="">— pick a portal —</option>
-            <option v-for="p in portals" :key="p.id" :value="p.code">{{ p.code }} — {{ p.name }}</option>
-          </select>
-        </label>
+          <Combobox
+            v-model="portal"
+            :options="portals"
+            :option-value="portalValue"
+            :primary="portalPrimary"
+            :secondary="portalSecondary"
+            placeholder="Search portals by code or name…"
+            :clearable="false"
+          />
+        </div>
 
         <label class="form-control">
           <span class="label-text mb-1">At (local time)</span>

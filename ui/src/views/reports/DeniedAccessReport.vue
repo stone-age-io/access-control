@@ -4,8 +4,10 @@ import { pb } from '@/utils/pb'
 import { formatDate, formatConstant, localInputToISO, isoToLocalInput } from '@/utils/format'
 import { tsRangeClauses } from '@/utils/events'
 import { toCsv, downloadCsv, fileStamp, type CsvColumn } from '@/utils/csv'
+import { useClientPagination } from '@/composables/useClientPagination'
 import type { AccessEvent } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import ListPagination from '@/components/ui/ListPagination.vue'
 
 // Denied access = a credential presentation (tap) the policy rejected. The deny
 // reason codes are a stable contract, so a breakdown by reason answers "why are
@@ -13,7 +15,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 // or probing. We fetch the whole range once and derive every view client-side;
 // the date range (default: last 7 days) is the natural bound on size.
 const DEFAULT_DAYS = 7
-const DISPLAY_CAP = 500
+const PER_PAGE = 50
 
 const fromFilter = ref(isoToLocalInput(new Date(Date.now() - DEFAULT_DAYS * 86400000)))
 const toFilter = ref('')
@@ -65,8 +67,7 @@ const filtered = computed(() => {
   )
 })
 
-const display = computed(() => filtered.value.slice(0, DISPLAY_CAP))
-const truncated = computed(() => filtered.value.length > DISPLAY_CAP)
+const { page, totalPages, pageItems, next, prev } = useClientPagination(filtered, PER_PAGE)
 
 interface Tally { key: string; count: number }
 function tally(by: (e: AccessEvent) => string): Tally[] {
@@ -192,7 +193,7 @@ onMounted(load)
               </tr>
             </thead>
             <tbody>
-              <tr v-for="e in display" :key="e.id">
+              <tr v-for="e in pageItems" :key="e.id">
                 <td class="whitespace-nowrap">{{ formatDate(e.ts || e.created, 'PP p') }}</td>
                 <td><code class="text-xs">{{ e.location || '-' }}</code></td>
                 <td>{{ e.portal || '-' }}</td>
@@ -203,9 +204,9 @@ onMounted(load)
             </tbody>
           </table>
         </div>
-        <div v-if="truncated" class="p-3 text-xs opacity-60 border-t border-base-200">
-          Showing the first {{ DISPLAY_CAP }} of {{ filtered.length }} denials. Narrow the range, or use Export CSV for the full set.
-        </div>
+        <ListPagination v-if="filtered.length > 0" :page="page" :total-pages="totalPages" @prev="prev" @next="next">
+          {{ filtered.length }} denied presentation{{ filtered.length === 1 ? '' : 's' }}
+        </ListPagination>
       </BaseCard>
     </template>
   </div>
