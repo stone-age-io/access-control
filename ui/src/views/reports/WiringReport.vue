@@ -149,9 +149,9 @@ onMounted(load)
 
 <template>
   <div class="space-y-4">
-    <div class="flex justify-between items-center gap-3">
+    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
       <p class="text-sm opacity-60">Physical bindings per location — logical indices map to board lines via each controller's model profile.</p>
-      <button class="btn shrink-0" :disabled="loading || portals.length === 0" @click="exportCsv">Export portals CSV</button>
+      <button class="btn btn-outline w-full sm:w-auto shrink-0" :disabled="loading || portals.length === 0" @click="exportCsv">Export portals CSV</button>
     </div>
 
     <div v-if="error" class="alert alert-error">

@@ -118,7 +118,7 @@ onMounted(load)
 <template>
   <div class="space-y-4">
     <!-- Filters -->
-    <div class="flex flex-col sm:flex-row sm:flex-wrap gap-3">
+    <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
       <label class="input input-bordered flex items-center gap-2 min-h-[3rem]">
         <span class="text-xs opacity-60 shrink-0">From</span>
         <input v-model="fromFilter" type="datetime-local" class="grow bg-transparent" @change="load" />
@@ -127,12 +127,14 @@ onMounted(load)
         <span class="text-xs opacity-60 shrink-0">To</span>
         <input v-model="toFilter" type="datetime-local" class="grow bg-transparent" @change="load" />
       </label>
-      <button v-if="fromFilter || toFilter" class="btn btn-ghost" @click="clearRange">Clear dates</button>
       <label class="input input-bordered flex items-center gap-2 flex-1 min-h-[3rem]">
         <span class="text-xs opacity-60 shrink-0">🔎</span>
         <input v-model="search" type="text" class="grow" placeholder="Filter by location, portal, credential, cardholder, reason..." />
       </label>
-      <button class="btn" :disabled="loading || filtered.length === 0" @click="exportCsv">Export CSV</button>
+      <div class="flex gap-2">
+        <button v-if="fromFilter || toFilter" class="btn btn-ghost flex-1 sm:flex-none" @click="clearRange">Clear dates</button>
+        <button class="btn btn-outline flex-1 sm:flex-none" :disabled="loading || filtered.length === 0" @click="exportCsv">Export CSV</button>
+      </div>
     </div>
 
     <div v-if="error" class="alert alert-error">
