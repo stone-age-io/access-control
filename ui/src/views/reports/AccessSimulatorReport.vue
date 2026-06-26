@@ -106,7 +106,9 @@ onMounted(loadOptions)
       <button class="btn btn-ghost btn-xs" @click="loadOptions">Retry</button>
     </div>
 
-    <BaseCard>
+    <!-- overflow-visible so the combobox dropdowns aren't clipped by the card
+         (DaisyUI's .card clips to its rounded corners). -->
+    <BaseCard class="overflow-visible">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div class="form-control">
           <span class="label-text mb-1">Credential <span class="opacity-50">(optional — leave empty to test posture only)</span></span>

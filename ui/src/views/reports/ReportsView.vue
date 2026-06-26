@@ -40,16 +40,24 @@ function select(key: string) {
       <HelpButton />
     </div>
 
-    <div role="tablist" class="tabs tabs-boxed w-fit max-w-full overflow-x-auto">
+    <!-- Wrapping segmented control: full labels, no horizontal scroll. Plain
+         buttons rather than DaisyUI tabs-boxed, whose fixed-height tabs clipped
+         the labels (emoji-only) and double-scrolled once four wide tabs overflowed
+         a narrow viewport. -->
+    <div role="tablist" class="flex flex-wrap gap-2">
       <button
         v-for="t in TABS"
         :key="t.key"
+        type="button"
         role="tab"
-        class="tab gap-2 whitespace-nowrap"
-        :class="{ 'tab-active': active === t.key }"
+        :aria-selected="active === t.key"
+        class="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors"
+        :class="active === t.key
+          ? 'bg-primary text-primary-content shadow-sm'
+          : 'bg-base-200 text-base-content/70 hover:bg-base-300'"
         @click="select(t.key)"
       >
-        <span>{{ t.icon }}</span>
+        <span aria-hidden="true">{{ t.icon }}</span>
         <span>{{ t.label }}</span>
       </button>
     </div>

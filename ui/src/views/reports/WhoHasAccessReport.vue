@@ -214,7 +214,7 @@ onMounted(load)
         <span class="text-xs opacity-60 shrink-0">🔎</span>
         <input v-model="search" type="text" class="grow" placeholder="Filter by cardholder, portal, location, access group..." />
       </label>
-      <button class="btn" :disabled="loading || filtered.length === 0" @click="exportCsv">Export CSV</button>
+      <button class="btn btn-outline w-full sm:w-auto" :disabled="loading || filtered.length === 0" @click="exportCsv">Export CSV</button>
     </div>
 
     <div v-if="error" class="alert alert-error">
