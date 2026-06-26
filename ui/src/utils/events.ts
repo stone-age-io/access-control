@@ -13,6 +13,47 @@ export function eventKindBadge(e: AccessEvent): string {
   return 'badge-ghost'
 }
 
+/**
+ * PocketBase filter clauses for an event time range, comparing `ts` and falling
+ * back to `created` on rows with no `ts` (mirrors the ts||created display + sort).
+ * A bare `ts >= from` would drop empty-ts rows; a bare `ts <= to` would wrongly
+ * keep them (empty string sorts before any date). Args are UTC ISO strings;
+ * '' = no bound. Returns 0–2 clauses to AND into a filter.
+ */
+export function tsRangeClauses(fromISO: string, toISO: string): string[] {
+  const clauses: string[] = []
+  if (fromISO) clauses.push(`(ts >= "${fromISO}" || (ts = "" && created >= "${fromISO}"))`)
+  if (toISO) clauses.push(`(ts <= "${toISO}" || (ts = "" && created <= "${toISO}"))`)
+  return clauses
+}
+
+/**
+ * Plain-English gloss of a policy.Decide reason code (the stable contract in
+ * internal/policy/policy.go). Used by the access simulator and as a tooltip on
+ * event reasons. Returns '' for an unrecognized code so callers can fall back to
+ * the raw/title-cased value.
+ */
+const REASON_EXPLANATIONS: Record<string, string> = {
+  allow_grant: 'Granted — the cardholder holds a credential with access to this portal, and a granting schedule is open now.',
+  allow_posture_unlocked: 'Allowed — the portal posture is Unlocked (strike held open; the credential is not consulted).',
+  allow_posture_free_access: 'Allowed — the portal posture is Free Access (any tap opens; the credential is not consulted).',
+  allow_command_grant: 'Allowed — an operator-initiated grant (no credential).',
+  deny_unknown_credential: "Denied — this credential value isn't in the policy (not enrolled, or not yet synced to the edge).",
+  deny_revoked: 'Denied — the credential or its cardholder is revoked or suspended.',
+  deny_not_yet_valid: "Denied — the credential isn't valid yet (the time is before its valid-from date).",
+  deny_expired: 'Denied — the credential has expired (the time is after its valid-until date).',
+  deny_no_access: 'Denied — the cardholder has no access group that grants this portal.',
+  deny_schedule_closed: 'Denied — the cardholder can reach this portal, but no granting schedule is open at this time.',
+  deny_lockdown: 'Denied — the portal is in Lockdown, which overrides any valid credential.',
+  deny_point_disabled: 'Denied — the portal is Disabled (out of service).',
+  deny_unknown_point: 'Denied — no portal with this code exists in the policy.',
+}
+
+/** Plain-English explanation of a decision reason code, or '' if unrecognized. */
+export function reasonExplanation(code: string): string {
+  return REASON_EXPLANATIONS[code] || ''
+}
+
 /** The specific alarm sub-type (intrusion/forced/held/tamper) from the payload, else the kind. */
 export function alarmType(e: AccessEvent): string {
   return (e.payload?.type as string) || e.kind || 'alarm'

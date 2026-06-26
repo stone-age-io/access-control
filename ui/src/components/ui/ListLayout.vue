@@ -55,7 +55,7 @@ function onInput(e: Event) {
     </div>
 
     <!-- Toolbar + search -->
-    <div v-if="searchPlaceholder || $slots.toolbar" class="flex flex-col sm:flex-row gap-3">
+    <div v-if="searchPlaceholder || $slots.toolbar" class="flex flex-col sm:flex-row sm:flex-wrap gap-3">
       <slot name="toolbar" />
       <!-- min-h-[3rem] is load-bearing: on mobile the parent is flex-col, so flex-1
            sets the label's flex-basis on the *vertical* axis and would otherwise

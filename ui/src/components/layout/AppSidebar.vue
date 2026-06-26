@@ -30,6 +30,7 @@ const sections: NavSection[] = [
       { label: 'Live Map', icon: '🗺️', path: '/monitor' },
       { label: 'Alarm Console', icon: '🚨', path: '/alarms' },
       { label: 'Events', icon: '📋', path: '/events' },
+      { label: 'Reports', icon: '📈', path: '/reports' },
     ],
   },
   {

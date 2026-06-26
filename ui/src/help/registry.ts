@@ -50,6 +50,19 @@ const TOPICS: Record<string, HelpTopic> = {
       { heading: 'Coverage', body: 'A portal shows live state only while its controller is reporting. “Unknown” means the controller is offline or unassigned, or no door sensor is wired.' },
     ],
   },
+  reports: {
+    title: 'Reports',
+    icon: '📈',
+    sections: [
+      { body: 'Read-only views over the policy graph and the event stream. Each report exports to CSV for audits, compliance, and job handoff.' },
+      { items: [
+        { term: 'Denied Access', def: 'Credential presentations the policy rejected, over a date range — broken down by reason and by portal. Surfaces misconfigured access, expired badges, and after-hours or probing attempts.' },
+        { term: 'Who Has Access', def: 'The access matrix walked exactly as the controller decides it (cardholder → roles → access groups → portals + schedule). Pivot by cardholder or by portal. Shows the configured grant, not a live decision — it does not account for the current schedule window, holidays, posture, or credential validity dates.' },
+        { term: 'Wiring / As-Built', def: 'Per-location physical bindings for every portal (lock relay, DPS/REX inputs, contact sense, lock type, reader address) plus controllers and aux I/O. The commissioning/handoff reference.' },
+        { term: 'Access Simulator', def: 'A what-if tool: pick a credential, portal, and time and see whether it would grant — and why (the exact reason code). It runs the real decision function over the live policy, so the answer matches what the edge controller would do. Nothing is changed.' },
+      ] },
+    ],
+  },
   locations: {
     title: 'Locations',
     icon: '🏢',
