@@ -2,8 +2,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { pb } from '@/utils/pb'
 import { toCsv, downloadCsv, fileStamp, type CsvColumn } from '@/utils/csv'
+import { useClientPagination } from '@/composables/useClientPagination'
 import type { Cardholder, Role, AccessGroup, Portal, Schedule, Credential } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import ListPagination from '@/components/ui/ListPagination.vue'
 
 // The access matrix, walked over the policy graph exactly as policy.Decide reads
 // it: cardholder → roles → access groups → (portals + one schedule). Each grant
@@ -147,6 +149,10 @@ const grouped = computed<Group[]>(() => {
   return groups
 })
 
+// Paginate the grouped rows (cardholders or portals); the coverage-gap counts
+// above are still computed over the whole edge set, not the page.
+const { page, totalPages, pageItems, next, prev } = useClientPagination(grouped, 25)
+
 const rowHeads = computed(() =>
   pivot.value === 'cardholder'
     ? ['Portal', 'Location', 'Via (group · schedule)']
@@ -233,7 +239,7 @@ onMounted(load)
         <p class="text-sm mt-2">No access grants{{ search ? ' match this filter' : ' configured yet' }}.</p>
       </div>
 
-      <BaseCard v-for="g in grouped" :key="g.id" :no-padding="true">
+      <BaseCard v-for="g in pageItems" :key="g.id" :no-padding="true">
         <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-base-200">
           <div class="min-w-0">
             <div class="font-semibold truncate">{{ g.title }}</div>
@@ -257,6 +263,10 @@ onMounted(load)
           </table>
         </div>
       </BaseCard>
+
+      <ListPagination v-if="grouped.length > 0" :page="page" :total-pages="totalPages" @prev="prev" @next="next">
+        {{ grouped.length }} {{ pivot === 'cardholder' ? 'cardholders' : 'portals' }}
+      </ListPagination>
     </template>
   </div>
 </template>
