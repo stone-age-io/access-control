@@ -38,6 +38,28 @@ export function truncate(str: string, length: number): string {
 }
 
 /**
+ * Convert a datetime-local input value ("YYYY-MM-DDTHH:MM", local) to a UTC ISO
+ * string for PocketBase filters/fields. '' (or invalid) → ''.
+ */
+export function localInputToISO(local: string): string {
+  if (!local) return ''
+  const d = new Date(local)
+  return isNaN(d.getTime()) ? '' : d.toISOString()
+}
+
+/**
+ * Convert an ISO/date value to a datetime-local input value ("YYYY-MM-DDTHH:MM",
+ * local). '' (or invalid) → ''. Inverse of localInputToISO.
+ */
+export function isoToLocalInput(iso: string | Date): string {
+  if (!iso) return ''
+  const d = typeof iso === 'string' ? new Date(iso) : iso
+  if (isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/**
  * Title-case a snake_case constant. Example: 'allow_grant' -> 'Allow Grant'.
  */
 export function formatConstant(str: string): string {

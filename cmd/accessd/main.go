@@ -41,6 +41,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/modelsapi"
 	"github.com/stone-age-io/access-control/internal/natsx"
 	"github.com/stone-age-io/access-control/internal/notify"
+	"github.com/stone-age-io/access-control/internal/simulateapi"
 	"github.com/stone-age-io/access-control/internal/status"
 	"github.com/stone-age-io/access-control/internal/subjects"
 	"github.com/stone-age-io/access-control/internal/webui"
@@ -226,6 +227,11 @@ func main() {
 		// Hardware-model catalogue: read-only GET /api/models the UI reads to render
 		// the controller I/O map and bound the relay/input index pickers.
 		modelsapi.Register(e)
+
+		// Access simulator: read-only POST /api/simulate runs the real policy.Decide
+		// over a live snapshot of the policy KV — a what-if/commissioning tool. Any
+		// authenticated operator; it reveals only what policy already grants.
+		simulateapi.Register(e, kv, log)
 
 		// Status projector: ACC_STATUS device shadow → point_status projection (UI
 		// live state). Watches on a background context so it outlives this setup

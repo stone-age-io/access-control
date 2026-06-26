@@ -124,6 +124,10 @@ const routes: RouteRecordRaw[] = [
 
       // Audit log (control-plane change history — operators capability)
       { path: 'audit-log', name: 'AuditLog', component: () => import('@/views/audit/AuditLogListView.vue'), meta: { title: 'Audit Log', capability: OPERATORS } },
+
+      // Reports (read-only analysis over the policy graph + event stream; tabbed)
+      { path: 'reports', redirect: '/reports/denied-access' },
+      { path: 'reports/:tab', name: 'Reports', component: () => import('@/views/reports/ReportsView.vue'), meta: { title: 'Reports' } },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
