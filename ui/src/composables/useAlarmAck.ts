@@ -25,5 +25,28 @@ export function useAlarmAck() {
     }
   }
 
-  return { acking, ack }
+  /**
+   * Acknowledge many events at once (the console's "Ack all on page"). Fires the
+   * per-event bridge calls concurrently and emits a single summary toast rather
+   * than one per row. Returns the number actually acknowledged.
+   */
+  async function ackMany(eventIds: string[]): Promise<number> {
+    if (eventIds.length === 0) return 0
+    acking.value = true
+    try {
+      const results = await Promise.allSettled(
+        eventIds.map((id) => pb.send(`/api/events/${id}/ack`, { method: 'POST', body: {} })),
+      )
+      const ok = results.filter((r) => r.status === 'fulfilled').length
+      const failed = eventIds.length - ok
+      if (failed === 0) toast.success(`Acknowledged ${ok} alarm${ok === 1 ? '' : 's'}`)
+      else if (ok === 0) toast.error('Failed to acknowledge')
+      else toast.success(`Acknowledged ${ok} of ${eventIds.length}; ${failed} failed`)
+      return ok
+    } finally {
+      acking.value = false
+    }
+  }
+
+  return { acking, ack, ackMany }
 }

@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { pb } from '@/utils/pb'
 import { formatRelativeTime, formatConstant } from '@/utils/format'
-import { eventKindBadge } from '@/utils/events'
+import { eventKindBadge, unackedAlarmFilter } from '@/utils/events'
 import type { AccessEvent } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import EventDetailModal from '@/components/ui/EventDetailModal.vue'
@@ -29,18 +29,10 @@ const recentEvents = ref<AccessEvent[]>([])
 const selected = ref<AccessEvent | null>(null)
 const loading = ref(true)
 
-// Match the Alarm Console's window so this count agrees with what's listed there.
-const WINDOW_DAYS = 7
-function cutoffISO(): string {
-  return new Date(Date.now() - WINDOW_DAYS * 86400000).toISOString()
-}
-
 async function loadStatus() {
   const [alarmRes, ctrlRes] = await Promise.allSettled([
-    // Same filter as AlarmConsoleView, so the headline number matches the console.
-    pb.collection('events').getList(1, 1, {
-      filter: `(kind = "alarm" || kind = "fire") && acknowledged = false && created > "${cutoffISO()}"`,
-    }),
+    // Shared filter (utils/events) so this headline number matches the console.
+    pb.collection('events').getList(1, 1, { filter: unackedAlarmFilter() }),
     // Anything not confirmed online — swept-offline *and* never-reported (empty
     // status, e.g. a new/undeployed box). A box we've never heard from is exactly
     // what an operator needs surfaced, so it counts here rather than hiding.

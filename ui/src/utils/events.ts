@@ -59,6 +59,45 @@ export function alarmType(e: AccessEvent): string {
   return (e.payload?.type as string) || e.kind || 'alarm'
 }
 
+/**
+ * The window the Alarm Console and the Overview headline bound the unacked-alarm
+ * query to, so a long-unacked row — or a stream replay that resurrects old rows
+ * (the v1 ack-on-projection wart) — can't make the console unusable. A dedicated
+ * active_alarms projection is the deferred fix.
+ */
+export const ALARM_WINDOW_DAYS = 7
+
+/** ISO cutoff for the alarm window: now minus ALARM_WINDOW_DAYS. */
+export function alarmWindowCutoffISO(): string {
+  return new Date(Date.now() - ALARM_WINDOW_DAYS * 86400000).toISOString()
+}
+
+/**
+ * PocketBase filter for the unacknowledged alarm/fire set inside the recent
+ * window — the single source of truth shared by the Alarm Console and the
+ * Overview headline count, so the two can't drift. `extra` clauses (e.g. a type
+ * or location narrowing) are AND-ed on.
+ */
+export function unackedAlarmFilter(extra: string[] = []): string {
+  return [
+    '(kind = "alarm" || kind = "fire")',
+    'acknowledged = false',
+    `created > "${alarmWindowCutoffISO()}"`,
+    ...extra,
+  ].join(' && ')
+}
+
+/**
+ * Filter clause narrowing the console to a single alarm sub-type. `fire` is its
+ * own event kind; the rest live in the alarm payload (`payload.type`), so they
+ * narrow within the kind="alarm" half of the set. '' = no narrowing.
+ */
+export function alarmTypeClause(type: string): string[] {
+  if (!type) return []
+  if (type === 'fire') return ['kind = "fire"']
+  return [`payload.type = "${type}"`]
+}
+
 /** Badge class for an alarm row keyed on its specific type (fire/tamper warn, trips error). */
 export function alarmTypeBadge(e: AccessEvent): string {
   const t = alarmType(e)
