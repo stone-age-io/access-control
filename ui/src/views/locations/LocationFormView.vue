@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { Location, HolidayCalendar } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -33,11 +34,19 @@ const form = ref({
 const calendars = ref<HolidayCalendar[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
 
 // Floor-plan image: existing filename, a newly chosen file, and a remove flag.
 const existingFloorplan = ref('')
 const selectedFile = ref<File | null>(null)
 const removeFloorplan = ref(false)
+
+// Editable state spans the form plus the floor-plan refs (a File isn't JSON-stable, so snapshot its name).
+const { markClean } = useUnsavedChanges(() => ({
+  form: form.value,
+  selectedFile: selectedFile.value?.name || '',
+  removeFloorplan: removeFloorplan.value,
+}))
 
 function onFileChange(e: Event) {
   selectedFile.value = (e.target as HTMLInputElement).files?.[0] ?? null
@@ -84,6 +93,7 @@ async function loadRecord() {
       holiday_calendars: [...(location.holiday_calendars || [])],
     }
     existingFloorplan.value = location.floorplan || ''
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load location')
     router.push('/locations')
@@ -92,9 +102,18 @@ async function loadRecord() {
   }
 }
 
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.code.trim()) e.code = 'Code is required'
+  if (!form.value.timezone.trim()) e.timezone = 'Timezone is required'
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
 async function handleSubmit() {
-  if (!form.value.code.trim()) { toast.error('Code is required'); return }
-  if (!form.value.timezone.trim()) { toast.error('Timezone is required'); return }
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -129,6 +148,7 @@ async function handleSubmit() {
     }
 
     toast.success(isEdit.value ? 'Location updated' : 'Location created')
+    markClean()
     router.push(`/locations/${id}`)
   } catch (err: any) {
     toast.error(err?.message || 'Failed to save location')
@@ -165,7 +185,7 @@ onMounted(async () => {
     >
       <BaseCard title="Location">
         <div class="space-y-4">
-          <FormField label="Code" required hint="Stable slug used in NATS subjects and as the KV key. Avoid spaces.">
+          <FormField label="Code" required :error="errors.code" hint="Stable slug used in NATS subjects and as the KV key. Avoid spaces.">
             <input v-model="form.code" type="text" placeholder="hq" class="input input-bordered font-mono" required />
           </FormField>
 
@@ -173,7 +193,7 @@ onMounted(async () => {
             <input v-model="form.name" type="text" placeholder="Headquarters" class="input input-bordered" />
           </FormField>
 
-          <FormField label="Timezone" required hint="IANA timezone name. Used to evaluate schedule windows in local time (handles DST).">
+          <FormField label="Timezone" required :error="errors.timezone" hint="IANA timezone name. Used to evaluate schedule windows in local time (handles DST).">
             <input v-model="form.timezone" list="tz-list" type="text" placeholder="America/New_York" class="input input-bordered font-mono" required />
             <datalist id="tz-list">
               <option v-for="tz in commonTimezones" :key="tz" :value="tz" />

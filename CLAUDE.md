@@ -147,7 +147,9 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   and lives **centrally** (durable arm-state, area spans boxes): accessd's `internal/disarm` sink, not the
   controller, writes `armOverride: disarmed` on a credential grant at a `disarm_on_grant` portal.
 - **Audit** (`internal/audit`) — JetStream is the system of record for events; the PocketBase `events`
-  collection is a rebuildable projection. Durable consumer, at-least-once (a redelivery may dup a row in v1).
+  collection is a rebuildable projection. Durable consumer, at-least-once made idempotent: each row carries
+  its message's JetStream stream sequence (`stream_seq`, unique-indexed), so a redelivery whose row already
+  landed is acked and skipped, never duplicated.
   Because the projection is rebuildable, an optional daily 03:00 prune (`RegisterPrune`, gated on
   `accessd.eventRetentionDays`, **off by default = keep forever**) trims `events` older than the retention
   window — draining in bounded batches (it's high-volume, unlike the changelog's single-batch audit-log prune).

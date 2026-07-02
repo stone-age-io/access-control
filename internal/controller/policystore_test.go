@@ -191,6 +191,49 @@ func TestStoreHolidays(t *testing.T) {
 	}
 }
 
+// TestStoreApplyFailSafe pins apply/remove's fail-safe contract: a malformed
+// value keeps the previous state (never a crash, never a partial write), an
+// unknown key prefix is ignored, and a bad timezone falls back to UTC.
+func TestStoreApplyFailSafe(t *testing.T) {
+	s := seeded(t)
+	at := ny(t, 2026, 1, 5, 9, 0) // Mon in-hours; the seeded graph grants
+
+	// Malformed JSON on every existing key: each apply is a no-op, so the
+	// decision still grants afterwards.
+	for _, key := range []string{
+		"location.hq", "sched.business-hours", "controller.ctrl-hq-1",
+		"portal.lobby-main", "group.lobby-group", "role.staff",
+		"user.alice", "cred.CARD-001",
+	} {
+		s.apply(key, []byte(`{not json`))
+	}
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", at); !d.Allow || d.Reason != policy.ReasonAllowGrant {
+		t.Errorf("after malformed re-applies: decision = %+v, want allow_grant (previous values kept)", d)
+	}
+
+	// Malformed JSON on a NEW key adds nothing.
+	s.apply("cred.CARD-999", []byte(`{not json`))
+	if d := s.Decide(policy.PostureSecure, "CARD-999", "lobby-main", at); d.Allow || d.Reason != policy.ReasonDenyUnknownCredential {
+		t.Errorf("malformed new credential: decision = %+v, want deny_unknown_credential", d)
+	}
+
+	// Unknown prefixes are ignored on both apply and remove.
+	s.apply("mystery.thing", []byte(`{"code":"thing"}`))
+	s.remove("mystery.thing")
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", at); !d.Allow {
+		t.Errorf("after unknown-prefix apply/remove: decision = %+v, want allow (unaffected)", d)
+	}
+
+	// A bad timezone falls back to UTC rather than dropping the location:
+	// 09:00 UTC Monday is 04:00 in New York (out of hours), so a grant at that
+	// instant proves the schedule now evaluates in UTC.
+	s.apply("location.hq", []byte(`{"code":"hq","timezone":"Nope/Nowhere","faiSuppress":true}`))
+	utc9 := time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
+	if d := s.Decide(policy.PostureSecure, "CARD-001", "lobby-main", utc9); !d.Allow || d.Reason != policy.ReasonAllowGrant {
+		t.Errorf("bad timezone: decision = %+v, want allow_grant (UTC fallback)", d)
+	}
+}
+
 func TestStorePortalLookup(t *testing.T) {
 	s := seeded(t)
 	ap, ok := s.Portal("lobby-main")

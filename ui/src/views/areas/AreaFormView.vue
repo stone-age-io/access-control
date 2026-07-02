@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { Area, Location, Schedule } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -30,6 +31,8 @@ const locations = ref<Location[]>([])
 const schedules = ref<Schedule[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 const kvKey = computed(() => policyKey('areas', { code: form.value.code }))
 
@@ -60,6 +63,7 @@ async function loadRecord() {
       auto_schedule: a.auto_schedule || '',
       notify_on_alarm: !!a.notify_on_alarm,
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load area')
     router.push('/areas')
@@ -68,15 +72,24 @@ async function loadRecord() {
   }
 }
 
-async function handleSubmit() {
-  if (!form.value.code.trim()) { toast.error('Code is required'); return }
-  if (!form.value.location) { toast.error('Location is required'); return }
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.code.trim()) e.code = 'Code is required'
+  if (!form.value.location) e.location = 'Location is required'
   // Both-or-neither: a scheduled arm needs a schedule, and vice versa. The mirror
   // drops a half-configured pair anyway; reject early for a clear message.
   if (!!form.value.auto_arm !== !!form.value.auto_schedule) {
-    toast.error('Scheduled arm needs both an auto-arm state and a schedule (or neither)')
-    return
+    e.auto_arm = 'Scheduled arm needs both an auto-arm state and a schedule (or neither)'
+    e.auto_schedule = 'Scheduled arm needs both an auto-arm state and a schedule (or neither)'
   }
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
+async function handleSubmit() {
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -92,10 +105,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('areas').update(recordId!, data)
       toast.success('Area updated')
+      markClean()
       router.push(`/areas/${recordId}`)
     } else {
       const created = await pb.collection('areas').create<Area>(data)
       toast.success('Area created')
+      markClean()
       router.push(`/areas/${created.id}`)
     }
   } catch (err: any) {
@@ -126,7 +141,7 @@ onMounted(async () => {
       <BaseCard title="Area">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Code" required>
+            <FormField label="Code" required :error="errors.code">
               <input v-model="form.code" type="text" placeholder="warehouse" class="input input-bordered" required />
             </FormField>
             <FormField label="Name">
@@ -135,7 +150,7 @@ onMounted(async () => {
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Location" required hint="An area is single-location; member inputs should be on controllers at this location.">
+            <FormField label="Location" required :error="errors.location" hint="An area is single-location; member inputs should be on controllers at this location.">
               <select v-model="form.location" class="select select-bordered" required>
                 <option value="">Select a location...</option>
                 <option v-for="l in locations" :key="l.id" :value="l.id">{{ l.code }} — {{ l.name || l.code }}</option>
@@ -161,14 +176,14 @@ onMounted(async () => {
           Optional: arm/disarm automatically while a schedule's window is open. An operator override always wins.
         </p>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField label="Auto arm-state" hint="Applied while the schedule below is open.">
+          <FormField label="Auto arm-state" :error="errors.auto_arm" hint="Applied while the schedule below is open.">
             <select v-model="form.auto_arm" class="select select-bordered">
               <option value="">No automation</option>
               <option value="armed">Armed</option>
               <option value="disarmed">Disarmed</option>
             </select>
           </FormField>
-          <FormField label="Auto schedule" hint="Gates the auto arm-state (both-or-neither).">
+          <FormField label="Auto schedule" :error="errors.auto_schedule" hint="Gates the auto arm-state (both-or-neither).">
             <select v-model="form.auto_schedule" class="select select-bordered">
               <option value="">None</option>
               <option v-for="s in schedules" :key="s.id" :value="s.id">{{ s.code }} — {{ s.name || s.code }}</option>

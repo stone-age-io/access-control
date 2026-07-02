@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { Portal, Location, Controller, Schedule, Posture, PortalType, Area } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -63,6 +64,8 @@ const schedules = ref<Schedule[]>([])
 const areas = ref<Area[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 const kvKey = computed(() => policyKey('portals', { code: form.value.code.trim() }))
 
@@ -120,6 +123,7 @@ async function loadRecord() {
       disarm_on_grant: !!p.disarm_on_grant,
       notify_on_alarm: !!p.notify_on_alarm,
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load portal')
     router.push('/portals')
@@ -128,27 +132,29 @@ async function loadRecord() {
   }
 }
 
-async function handleSubmit() {
-  if (!form.value.code.trim()) { toast.error('Code is required'); return }
-  if (!form.value.type) { toast.error('Type is required'); return }
-  if (!form.value.location) { toast.error('Location is required'); return }
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.code.trim()) e.code = 'Code is required'
+  if (!form.value.type) e.type = 'Type is required'
+  if (!form.value.location) e.location = 'Location is required'
   // Scheduled posture is both-or-neither: one set requires the other.
   if (form.value.auto_posture && !form.value.auto_schedule) {
-    toast.error('Scheduled posture: pick a schedule, or clear the posture'); return
+    e.auto_schedule = 'Scheduled posture: pick a schedule, or clear the posture'
   }
   if (form.value.auto_schedule && !form.value.auto_posture) {
-    toast.error('Scheduled posture: pick a posture, or clear the schedule'); return
+    e.auto_posture = 'Scheduled posture: pick a posture, or clear the schedule'
   }
   // An OSDP reader needs a valid PD address (0..126); off means NATS-only.
   if (form.value.osdpEnabled) {
     const a = Number(form.value.reader_address)
     if (!Number.isInteger(a) || a < 0 || a > 126) {
-      toast.error('OSDP reader address must be a whole number 0–126'); return
+      e.reader_address = 'OSDP reader address must be a whole number 0–126'
     }
   }
   // DPS and REX are distinct functions; they can't share one input line.
   if (form.value.dps_input && form.value.dps_input === form.value.rex_input) {
-    toast.error('DPS and REX cannot use the same input index'); return
+    e.dps_input = 'DPS and REX cannot use the same input index'
+    e.rex_input = 'DPS and REX cannot use the same input index'
   }
   // Reject indices already claimed by another portal/aux point on the same box.
   const conflicts: string[] = []
@@ -159,8 +165,19 @@ async function handleSubmit() {
   const rex = conflictsAt(io.value.inputs, form.value.rex_input, recordId)
   if (rex.length) conflicts.push(`REX input ${form.value.rex_input} (${rex.map((o) => o.label).join(', ')})`)
   if (conflicts.length) {
-    toast.error(`Hardware conflict on this controller: ${conflicts.join('; ')}`); return
+    const msg = `Hardware conflict on this controller: ${conflicts.join('; ')}`
+    if (lr.length) e.lock_relay = msg
+    if (dps.length && !e.dps_input) e.dps_input = msg
+    if (rex.length && !e.rex_input) e.rex_input = msg
   }
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
+async function handleSubmit() {
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -191,10 +208,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('portals').update(recordId!, data)
       toast.success('Portal updated')
+      markClean()
       router.push(`/portals/${recordId}`)
     } else {
       const created = await pb.collection('portals').create<Portal>(data)
       toast.success('Portal created')
+      markClean()
       router.push(`/portals/${created.id}`)
     }
   } catch (err: any) {
@@ -225,7 +244,7 @@ onMounted(async () => {
       <BaseCard title="Portal">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Code" required>
+            <FormField label="Code" required :error="errors.code">
               <input v-model="form.code" type="text" placeholder="lobby-main" class="input input-bordered font-mono" required />
             </FormField>
             <FormField label="Name">
@@ -234,12 +253,12 @@ onMounted(async () => {
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Type" required>
+            <FormField label="Type" required :error="errors.type">
               <select v-model="form.type" class="select select-bordered" required>
                 <option v-for="t in TYPES" :key="t" :value="t">{{ t }}</option>
               </select>
             </FormField>
-            <FormField label="Location" required>
+            <FormField label="Location" required :error="errors.location">
               <select v-model="form.location" class="select select-bordered" required>
                 <option value="">Select a location...</option>
                 <option v-for="l in locations" :key="l.id" :value="l.id">{{ l.code }} — {{ l.name || l.code }}</option>
@@ -280,13 +299,13 @@ onMounted(async () => {
               </p>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label="Posture">
+              <FormField label="Posture" :error="errors.auto_posture">
                 <select v-model="form.auto_posture" class="select select-bordered">
                   <option value="">— None —</option>
                   <option v-for="p in POSTURES" :key="p.value" :value="p.value">{{ p.label }}</option>
                 </select>
               </FormField>
-              <FormField label="Schedule">
+              <FormField label="Schedule" :error="errors.auto_schedule">
                 <select v-model="form.auto_schedule" class="select select-bordered">
                   <option value="">— None —</option>
                   <option v-for="s in schedules" :key="s.id" :value="s.id">{{ s.code }} — {{ s.name || s.code }}</option>
@@ -308,13 +327,13 @@ onMounted(async () => {
           </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <FormField label="Lock relay">
+            <FormField label="Lock relay" :error="errors.lock_relay">
               <IndexPicker v-model="form.lock_relay" :lines="relayLines" :usage="io.relays" :self-id="recordId" none-label="— no lock —" />
             </FormField>
-            <FormField label="DPS input">
+            <FormField label="DPS input" :error="errors.dps_input">
               <IndexPicker v-model="form.dps_input" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
             </FormField>
-            <FormField label="REX input">
+            <FormField label="REX input" :error="errors.rex_input">
               <IndexPicker v-model="form.rex_input" :lines="inputLines" :usage="io.inputs" :self-id="recordId" />
             </FormField>
           </div>
@@ -350,7 +369,7 @@ onMounted(async () => {
                        hint="On = a physical OSDP reader on the controller's RS485 bus. Off = NATS-only (taps published over NATS). The controller polls this reader only when its reader mode is “osdp” or “both”.">
               <input v-model="form.osdpEnabled" type="checkbox" class="toggle toggle-primary" />
             </FormField>
-            <FormField v-if="form.osdpEnabled" label="Reader address (OSDP PD)" hint="PD address on the controller's RS485 bus, 0–126; a single-reader bus uses 0.">
+            <FormField v-if="form.osdpEnabled" label="Reader address (OSDP PD)" hint="PD address on the controller's RS485 bus, 0–126; a single-reader bus uses 0." :error="errors.reader_address">
               <input v-model.number="form.reader_address" type="number" min="0" max="126" class="input input-bordered md:w-48" />
             </FormField>
           </div>

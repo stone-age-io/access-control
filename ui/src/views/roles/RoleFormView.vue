@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { Role, AccessGroup } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -26,6 +27,8 @@ const form = ref({
 const groups = ref<AccessGroup[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 const kvKey = computed(() => policyKey('roles', { code: form.value.code.trim() }))
 
@@ -47,6 +50,7 @@ async function loadRecord() {
       name: r.name || '',
       access_groups: [...(r.access_groups || [])],
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load role')
     router.push('/roles')
@@ -55,8 +59,17 @@ async function loadRecord() {
   }
 }
 
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.code.trim()) e.code = 'Code is required'
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
 async function handleSubmit() {
-  if (!form.value.code.trim()) { toast.error('Code is required'); return }
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -68,10 +81,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('roles').update(recordId!, data)
       toast.success('Role updated')
+      markClean()
       router.push(`/roles/${recordId}`)
     } else {
       const created = await pb.collection('roles').create<Role>(data)
       toast.success('Role created')
+      markClean()
       router.push(`/roles/${created.id}`)
     }
   } catch (err: any) {
@@ -101,7 +116,7 @@ onMounted(async () => {
     >
       <BaseCard title="Role">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField label="Code" required>
+          <FormField label="Code" required :error="errors.code">
             <input v-model="form.code" type="text" placeholder="staff" class="input input-bordered font-mono" required />
           </FormField>
           <FormField label="Name">

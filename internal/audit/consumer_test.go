@@ -68,6 +68,45 @@ func TestRecordFromFire(t *testing.T) {
 	}
 }
 
+// The stream_seq idempotency contract: a projected sequence is detected
+// (alreadyProjected), a racing double-write trips the unique index, and legacy
+// rows (stream_seq 0, from before the field existed) stay exempt from it.
+func TestStreamSeqDedupe(t *testing.T) {
+	c, app := newConsumer(t)
+	data := []byte(`{"cred":"CARD-002","allow":false,"reason":"deny_no_access"}`)
+
+	rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+	if err != nil || !ok {
+		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
+	}
+	rec.Set("stream_seq", 42)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save first row: %v", err)
+	}
+
+	if !c.alreadyProjected(42) {
+		t.Errorf("alreadyProjected(42) = false, want true")
+	}
+	if c.alreadyProjected(43) {
+		t.Errorf("alreadyProjected(43) = true, want false")
+	}
+
+	// Unique-index backstop: a second row with the same sequence must not save.
+	dup, _, _ := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+	dup.Set("stream_seq", 42)
+	if err := app.Save(dup); err == nil {
+		t.Errorf("saving duplicate stream_seq succeeded, want unique-index error")
+	}
+
+	// Legacy rows: any number of stream_seq-less rows coexist.
+	for i := 0; i < 2; i++ {
+		legacy, _, _ := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+		if err := app.Save(legacy); err != nil {
+			t.Fatalf("save legacy row %d: %v", i, err)
+		}
+	}
+}
+
 func TestRecordFromUnrecognizedSubject(t *testing.T) {
 	c, _ := newConsumer(t)
 	if _, ok, err := c.recordFrom("acc.hq.evt", []byte(`{}`)); ok || err != nil {

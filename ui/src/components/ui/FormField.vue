@@ -18,17 +18,22 @@
  * Use the #hint slot for rich/conditional helper text (e.g. a warning); it falls
  * back to the `hint` prop. Conditional inline warnings can also just live in the
  * default slot after the control.
+ *
+ * Pass `error` (a message, usually from the view's validate()) to flag the field:
+ * the control gets a red border and the message renders below it. Errors are set
+ * on submit and cleared by the next validate pass.
  */
 defineProps<{
   label?: string
   required?: boolean
   hint?: string
   inline?: boolean
+  error?: string
 }>()
 </script>
 
 <template>
-  <div class="flex flex-col gap-1.5">
+  <div class="flex flex-col gap-1.5" :class="{ 'field-invalid': error }">
     <!-- Inline (toggle / checkbox): control then label on one row -->
     <label v-if="inline" class="flex items-center gap-3 cursor-pointer">
       <slot />
@@ -47,9 +52,21 @@ defineProps<{
       <slot />
     </template>
 
+    <!-- Validation error (from the view's submit-time validate) -->
+    <p v-if="error" class="text-xs leading-relaxed text-error" role="alert">{{ error }}</p>
+
     <!-- Helper text -->
     <p v-if="hint || $slots.hint" class="text-xs leading-relaxed text-base-content/60">
       <slot name="hint">{{ hint }}</slot>
     </p>
   </div>
 </template>
+
+<style scoped>
+/* The control lives in the slot, so the red border rides a class on the wrapper. */
+.field-invalid :deep(.input),
+.field-invalid :deep(.select),
+.field-invalid :deep(.textarea) {
+  @apply border-error focus:border-error;
+}
+</style>

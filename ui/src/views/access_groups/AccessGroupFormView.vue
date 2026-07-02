@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { AccessGroup, Portal, Schedule } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -28,6 +29,8 @@ const portals = ref<Portal[]>([])
 const schedules = ref<Schedule[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 const kvKey = computed(() => policyKey('access_groups', { code: form.value.code.trim() }))
 
@@ -58,6 +61,7 @@ async function loadRecord() {
       schedule: g.schedule || '',
       portals: [...(g.portals || [])],
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load access group')
     router.push('/access-groups')
@@ -66,9 +70,18 @@ async function loadRecord() {
   }
 }
 
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.code.trim()) e.code = 'Code is required'
+  if (!form.value.schedule) e.schedule = 'Schedule is required'
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
 async function handleSubmit() {
-  if (!form.value.code.trim()) { toast.error('Code is required'); return }
-  if (!form.value.schedule) { toast.error('Schedule is required'); return }
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -81,10 +94,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('access_groups').update(recordId!, data)
       toast.success('Access group updated')
+      markClean()
       router.push(`/access-groups/${recordId}`)
     } else {
       const created = await pb.collection('access_groups').create<AccessGroup>(data)
       toast.success('Access group created')
+      markClean()
       router.push(`/access-groups/${created.id}`)
     }
   } catch (err: any) {
@@ -115,7 +130,7 @@ onMounted(async () => {
       <BaseCard title="Access Group">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Code" required>
+            <FormField label="Code" required :error="errors.code">
               <input v-model="form.code" type="text" placeholder="lobby-group" class="input input-bordered font-mono" required />
             </FormField>
             <FormField label="Name">
@@ -123,7 +138,7 @@ onMounted(async () => {
             </FormField>
           </div>
 
-          <FormField label="Schedule" required>
+          <FormField label="Schedule" required :error="errors.schedule">
             <select v-model="form.schedule" class="select select-bordered" required>
               <option value="">Select a schedule...</option>
               <option v-for="s in schedules" :key="s.id" :value="s.id">{{ s.code }} — {{ s.name || s.code }}</option>

@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import type { User, Capability, Location } from '@/types/pocketbase'
 import { CAPABILITIES, PRESETS, presetLabel } from '@/utils/capabilities'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -31,6 +32,8 @@ const form = ref({
 const locations = ref<Location[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 // The preset whose capability set matches the current selection (else "Custom").
 const currentPreset = computed(() => presetLabel(form.value.permissions))
@@ -53,6 +56,7 @@ async function loadRecord() {
       password: '',
       passwordConfirm: '',
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load operator')
     router.push('/operators')
@@ -61,12 +65,21 @@ async function loadRecord() {
   }
 }
 
-async function handleSubmit() {
-  if (!form.value.email.trim()) { toast.error('Email is required'); return }
-  if (!isEdit.value && !form.value.password) { toast.error('Password is required for a new operator'); return }
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.email.trim()) e.email = 'Email is required'
+  if (!isEdit.value && !form.value.password) e.password = 'Password is required for a new operator'
   if (form.value.password && form.value.password !== form.value.passwordConfirm) {
-    toast.error('Passwords do not match'); return
+    e.passwordConfirm = 'Passwords do not match'
   }
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
+async function handleSubmit() {
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -92,6 +105,7 @@ async function handleSubmit() {
       await pb.collection('users').create<User>(data)
       toast.success('Operator created')
     }
+    markClean()
     router.push('/operators')
   } catch (err: any) {
     toast.error(err?.message || 'Failed to save operator')
@@ -127,7 +141,7 @@ onMounted(async () => {
       <BaseCard title="Operator">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Email" required>
+            <FormField label="Email" required :error="errors.email">
               <input v-model="form.email" type="email" placeholder="jane@example.com" class="input input-bordered" required />
             </FormField>
             <FormField label="Name">
@@ -165,10 +179,10 @@ onMounted(async () => {
           </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Password" :hint="isEdit ? 'Leave blank to keep the current password.' : 'Required.'">
+            <FormField label="Password" :hint="isEdit ? 'Leave blank to keep the current password.' : 'Required.'" :error="errors.password">
               <input v-model="form.password" type="password" placeholder="••••••••" class="input input-bordered" :required="!isEdit" autocomplete="new-password" />
             </FormField>
-            <FormField label="Confirm password">
+            <FormField label="Confirm password" :error="errors.passwordConfirm">
               <input v-model="form.passwordConfirm" type="password" placeholder="••••••••" class="input input-bordered" autocomplete="new-password" />
             </FormField>
           </div>

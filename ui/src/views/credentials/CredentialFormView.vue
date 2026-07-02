@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { Credential, CredentialType, CredentialStatus, Cardholder } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -77,6 +78,8 @@ function generateValue() {
 const cardholders = ref<Cardholder[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 const kvKey = computed(() => policyKey('credentials', { value: form.value.value.trim() }))
 
@@ -102,6 +105,7 @@ async function loadRecord() {
       valid_from: toLocalInput(c.valid_from || ''),
       valid_until: toLocalInput(c.valid_until || ''),
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load credential')
     router.push('/credentials')
@@ -110,9 +114,18 @@ async function loadRecord() {
   }
 }
 
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.value.trim()) e.value = 'Value is required'
+  if (!form.value.user) e.user = 'Cardholder is required'
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
 async function handleSubmit() {
-  if (!form.value.value.trim()) { toast.error('Value is required'); return }
-  if (!form.value.user) { toast.error('Cardholder is required'); return }
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -128,10 +141,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('credentials').update(recordId!, data)
       toast.success('Credential updated')
+      markClean()
       router.push(`/credentials/${recordId}`)
     } else {
       const created = await pb.collection('credentials').create<Credential>(data)
       toast.success('Credential created')
+      markClean()
       // Return to the holder when we came from one; otherwise the new credential.
       router.push(form.value.user ? `/cardholders/${form.value.user}` : `/credentials/${created.id}`)
     }
@@ -162,7 +177,7 @@ onMounted(async () => {
     >
       <BaseCard title="Credential">
         <div class="space-y-4">
-          <FormField label="Value" required hint="The exact string presented at the reader. Used as the KV key — avoid spaces. Generate only for system-assigned credentials (mobile/virtual); a physical card's value is fixed by the reader.">
+          <FormField label="Value" required :error="errors.value" hint="The exact string presented at the reader. Used as the KV key — avoid spaces. Generate only for system-assigned credentials (mobile/virtual); a physical card's value is fixed by the reader.">
             <div class="join w-full">
               <input v-model="form.value" type="text" placeholder="CARD-001" class="input input-bordered font-mono join-item flex-1" required />
               <button type="button" class="btn btn-outline join-item" @click="generateValue" title="Generate a UUIDv7 value">Generate</button>
@@ -182,7 +197,7 @@ onMounted(async () => {
             </FormField>
           </div>
 
-          <FormField label="Cardholder" required>
+          <FormField label="Cardholder" required :error="errors.user">
             <select v-model="form.user" class="select select-bordered" required>
               <option value="">Select a cardholder...</option>
               <option v-for="c in cardholders" :key="c.id" :value="c.id">{{ c.name || c.email || c.id }}</option>

@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { Schedule, ScheduleWindow } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -35,6 +36,13 @@ const observeHolidays = ref(true)
 
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => ({
+  code: code.value,
+  name: name.value,
+  windows: windows.value,
+  observeHolidays: observeHolidays.value,
+}))
 
 const kvKey = computed(() => policyKey('schedules', { code: code.value.trim() }))
 
@@ -68,6 +76,7 @@ async function loadRecord() {
     windows.value = Array.isArray(sched.windows) && sched.windows.length
       ? sched.windows.map(w => ({ days: [...(w.days || [])], start: w.start || '', end: w.end || '' }))
       : [{ days: [1, 2, 3, 4, 5], start: '08:00', end: '17:00' }]
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load schedule')
     router.push('/schedules')
@@ -77,12 +86,16 @@ async function loadRecord() {
 }
 
 function validate(): boolean {
-  if (!code.value.trim()) { toast.error('Code is required'); return false }
+  const e: Record<string, string> = {}
+  if (!code.value.trim()) e.code = 'Code is required'
   for (const [i, w] of windows.value.entries()) {
-    if (!w.days.length) { toast.error(`Window ${i + 1}: pick at least one day`); return false }
-    if (!w.start || !w.end) { toast.error(`Window ${i + 1}: set start and end times`); return false }
+    if (!w.days.length) e[`window_${i}_days`] = `Window ${i + 1}: pick at least one day`
+    if (!w.start || !w.end) e[`window_${i}_times`] = `Window ${i + 1}: set start and end times`
   }
-  return true
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
 }
 
 async function handleSubmit() {
@@ -98,10 +111,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('schedules').update(recordId!, data)
       toast.success('Schedule updated')
+      markClean()
       router.push(`/schedules/${recordId}`)
     } else {
       const created = await pb.collection('schedules').create<Schedule>(data)
       toast.success('Schedule created')
+      markClean()
       router.push(`/schedules/${created.id}`)
     }
   } catch (err: any) {
@@ -131,7 +146,7 @@ onMounted(() => {
       <BaseCard title="Schedule">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Code" required>
+            <FormField label="Code" required :error="errors.code">
               <input v-model="code" type="text" placeholder="business-hours" class="input input-bordered font-mono" required />
             </FormField>
             <FormField label="Name">

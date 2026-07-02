@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import type { HolidayCalendar } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
@@ -18,6 +19,8 @@ const isEdit = computed(() => !!recordId)
 const form = ref({ code: '', name: '' })
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 async function loadRecord() {
   if (!recordId) return
@@ -25,6 +28,7 @@ async function loadRecord() {
   try {
     const c = await pb.collection('holiday_calendars').getOne<HolidayCalendar>(recordId)
     form.value = { code: c.code || '', name: c.name || '' }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load calendar')
     router.push('/holiday-calendars')
@@ -33,8 +37,17 @@ async function loadRecord() {
   }
 }
 
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.code.trim()) e.code = 'Code is required'
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
 async function handleSubmit() {
-  if (!form.value.code.trim()) { toast.error('Code is required'); return }
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -42,10 +55,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('holiday_calendars').update(recordId!, data)
       toast.success('Calendar updated')
+      markClean()
       router.push(`/holiday-calendars/${recordId}`)
     } else {
       const created = await pb.collection('holiday_calendars').create<HolidayCalendar>(data)
       toast.success('Calendar created')
+      markClean()
       router.push(`/holiday-calendars/${created.id}`)
     }
   } catch (err: any) {
@@ -72,7 +87,7 @@ onMounted(() => {
     >
       <BaseCard title="Holiday Calendar">
         <div class="space-y-4">
-          <FormField label="Code" required hint="Stable slug referenced by holidays and by the locations that observe this calendar.">
+          <FormField label="Code" required :error="errors.code" hint="Stable slug referenced by holidays and by the locations that observe this calendar.">
             <input v-model="form.code" type="text" placeholder="us-holidays" class="input input-bordered font-mono" required />
           </FormField>
           <FormField label="Name">

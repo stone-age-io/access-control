@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
@@ -36,9 +37,10 @@ func New(app core.App, js jetstream.JetStream, stream string, subj subjects.Subj
 
 // Start creates (or updates) the durable consumer and begins consuming. It
 // delivers from the start of the stream so the events table reflects the full
-// history; the durable tracks position across restarts. At-least-once: a
-// redelivery after a failed write may produce a duplicate row (acceptable for
-// v1 audit).
+// history; the durable tracks position across restarts. At-least-once, made
+// idempotent: each row carries the message's JetStream stream sequence
+// (stream_seq, unique-indexed), and a redelivery whose row already landed is
+// acked and skipped instead of duplicating it.
 func (c *Consumer) Start(ctx context.Context) error {
 	cons, err := c.js.CreateOrUpdateConsumer(ctx, c.stream, jetstream.ConsumerConfig{
 		Durable:        durableName,
@@ -84,7 +86,24 @@ func (c *Consumer) handle(msg jetstream.Msg) error {
 		c.log.Warn("audit: unrecognized subject, acking", "subject", msg.Subject())
 		return nil // ack and skip; not retryable
 	}
+	if meta, err := msg.Metadata(); err == nil {
+		if c.alreadyProjected(meta.Sequence.Stream) {
+			c.log.Debug("audit: already projected, acking", "subject", msg.Subject(), "seq", meta.Sequence.Stream)
+			return nil
+		}
+		rec.Set("stream_seq", meta.Sequence.Stream)
+	}
 	return c.app.Save(rec)
+}
+
+// alreadyProjected reports whether an events row for this stream sequence
+// already exists — a redelivery of a message whose write landed but whose ack
+// didn't. A lookup failure reads as "not projected": the subsequent Save either
+// succeeds or trips the unique index and redelivers, so the check erring on the
+// side of writing never loses an event.
+func (c *Consumer) alreadyProjected(seq uint64) bool {
+	_, err := c.app.FindFirstRecordByFilter("events", "stream_seq = {:seq}", dbx.Params{"seq": seq})
+	return err == nil
 }
 
 // recordFrom builds (but does not save) an events record from an event subject

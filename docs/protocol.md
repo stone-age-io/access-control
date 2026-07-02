@@ -421,8 +421,9 @@ is now called a portal.)
 `ACC_EVENTS` is the system of record for events; the PocketBase `events`
 collection is a rebuildable projection behind the UI timeline. The durable
 consumer (`acc-audit`) delivers from the start of the stream and is
-**at-least-once** — a redelivery after a failed write may produce a duplicate row
-(acceptable for v1). Each event subject maps to a row:
+**at-least-once, made idempotent**: each row carries the message's JetStream
+stream sequence (`stream_seq`, unique-indexed), and a redelivery whose row
+already landed is acked and skipped. Each event subject maps to a row:
 
 | Column | Source |
 |---|---|
@@ -430,15 +431,16 @@ consumer (`acc-audit`) delivers from the start of the stream and is
 | `credential`, `user`, `allow`, `reason`, `ts` | corresponding body fields |
 | `source` | tap body field (`nats`/`osdp`) — which reader produced a tap; empty for non-tap and legacy rows |
 | `acknowledged`, `ack_by`, `ack_at` | operator acknowledgement (set via `POST /api/events/{id}/ack`, the `command` capability) |
+| `stream_seq` | the message's JetStream stream sequence (idempotency key; 0 on rows projected before it existed) |
 | `payload` | the full event body (JSON) |
 
 For `acc.{location}.evt.fire`, `portal` and `type` are empty and `kind` is `fire`.
 For an area intrusion alarm, `type` is `area`, `portal` is the area code, `kind` is
 `alarm`, and `payload.type` is `intrusion` (with `payload.point` naming the tripped
-input). The ack fields live on the projection row; because the audit consumer is
-at-least-once a stream replay can resurrect an unacked duplicate (the v1 wart) —
-the **alarm console** bounds this with a recency window, and a dedicated
-`active_alarms` upsert-projection is the deferred clean fix.
+input). The ack fields live on the projection row; the `stream_seq` dedupe means
+a redelivery or stream replay no longer resurrects an already-acknowledged row
+(rows from before the field existed read `stream_seq` 0 and stay exempt from the
+unique index).
 
 **Notification sink.** A *second, independent* durable consumer (`acc-notify`,
 [`internal/notify`](../internal/notify)) on `ACC_EVENTS` emails on `alarm`/`fire`.

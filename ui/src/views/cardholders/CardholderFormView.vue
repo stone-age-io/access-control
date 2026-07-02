@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import type { Cardholder, CardholderStatus, Role } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
@@ -29,6 +30,8 @@ const form = ref({
 const roles = ref<Role[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 const kvKey = computed(() => (recordId ? `user.${recordId}` : ''))
 
@@ -52,6 +55,7 @@ async function loadRecord() {
       status: (c.status || 'active') as CardholderStatus,
       roles: [...(c.roles || [])],
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load cardholder')
     router.push('/cardholders')
@@ -60,8 +64,20 @@ async function loadRecord() {
   }
 }
 
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.name.trim() && !form.value.email.trim()) {
+    e.name = 'Name or email is required'
+    e.email = 'Name or email is required'
+  }
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
 async function handleSubmit() {
-  if (!form.value.name.trim() && !form.value.email.trim()) { toast.error('Name or email is required'); return }
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -75,10 +91,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('cardholders').update(recordId!, data)
       toast.success('Cardholder updated')
+      markClean()
       router.push(`/cardholders/${recordId}`)
     } else {
       const created = await pb.collection('cardholders').create<Cardholder>(data)
       toast.success('Cardholder created')
+      markClean()
       router.push(`/cardholders/${created.id}`)
     }
   } catch (err: any) {
@@ -109,10 +127,10 @@ onMounted(async () => {
       <BaseCard title="Cardholder">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Name">
+            <FormField label="Name" :error="errors.name">
               <input v-model="form.name" type="text" placeholder="Alice Smith" class="input input-bordered" />
             </FormField>
-            <FormField label="Email">
+            <FormField label="Email" :error="errors.email">
               <input v-model="form.email" type="email" placeholder="alice@example.com" class="input input-bordered" />
             </FormField>
           </div>

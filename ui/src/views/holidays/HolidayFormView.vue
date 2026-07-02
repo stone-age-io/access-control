@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { Holiday, HolidayCalendar } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -27,6 +28,8 @@ const form = ref({
 const calendars = ref<HolidayCalendar[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 // Holidays are keyed in KV by record id, which only exists once saved.
 const kvKey = computed(() => (recordId ? policyKey('holidays', { id: recordId }) : ''))
@@ -51,6 +54,7 @@ async function loadRecord() {
       name: h.name || '',
       recurring: !!h.recurring,
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load holiday')
     router.push('/holidays')
@@ -59,9 +63,18 @@ async function loadRecord() {
   }
 }
 
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.calendar) e.calendar = 'Calendar is required'
+  if (!form.value.date) e.date = 'Date is required'
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
 async function handleSubmit() {
-  if (!form.value.calendar) { toast.error('Calendar is required'); return }
-  if (!form.value.date) { toast.error('Date is required'); return }
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -74,10 +87,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('holidays').update(recordId!, data)
       toast.success('Holiday updated')
+      markClean()
       router.push(`/holidays/${recordId}`)
     } else {
       const created = await pb.collection('holidays').create<Holiday>(data)
       toast.success('Holiday created')
+      markClean()
       router.push(`/holidays/${created.id}`)
     }
   } catch (err: any) {
@@ -107,7 +122,7 @@ onMounted(async () => {
     >
       <BaseCard title="Holiday">
         <div class="space-y-4">
-          <FormField label="Calendar" required hint="Which holiday calendar this date belongs to. Locations observe calendars, so one date can serve many sites.">
+          <FormField label="Calendar" required :error="errors.calendar" hint="Which holiday calendar this date belongs to. Locations observe calendars, so one date can serve many sites.">
             <select v-model="form.calendar" class="select select-bordered" required>
               <option value="">Select a calendar...</option>
               <option v-for="c in calendars" :key="c.id" :value="c.id">{{ c.code }} — {{ c.name || c.code }}</option>
@@ -116,7 +131,7 @@ onMounted(async () => {
           </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Date" required>
+            <FormField label="Date" required :error="errors.date">
               <input v-model="form.date" type="date" class="input input-bordered" required />
             </FormField>
             <FormField label="Name">

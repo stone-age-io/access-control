@@ -1,7 +1,12 @@
 // TypeScript interfaces for the stone-access PocketBase collections.
-// Mirrors pbmigrations/1750000000_collections.go. Relations are stored as the
-// related record's PocketBase id; `expand` holds the resolved record(s) when a
-// query requests them.
+//
+// HAND-MAINTAINED — the Go migrations in pbmigrations/ are the source of truth
+// (1750000000_collections.go plus every later additive migration). Nothing
+// checks these against the schema at compile time, so when a migration adds or
+// renames a field, update the matching interface here in the same change.
+//
+// Relations are stored as the related record's PocketBase id; `expand` holds
+// the resolved record(s) when a query requests them.
 
 export interface BaseRecord {
   id: string
@@ -328,4 +333,6 @@ export interface AccessEvent extends BaseRecord {
   acknowledged: boolean
   ack_by: string
   ack_at: string
+  /** JetStream stream sequence (idempotency key); 0 on rows projected before it existed. */
+  stream_seq: number
 }

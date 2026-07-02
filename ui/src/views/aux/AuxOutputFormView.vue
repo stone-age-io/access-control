@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { policyKey } from '@/utils/policyKey'
 import type { AuxOutput, Location, Controller } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
@@ -32,6 +33,8 @@ const locations = ref<Location[]>([])
 const controllers = ref<Controller[]>([])
 const loading = ref(false)
 const loadingRecord = ref(false)
+const errors = ref<Record<string, string>>({})
+const { markClean } = useUnsavedChanges(() => form.value)
 
 const kvKey = computed(() => policyKey('aux_output', { code: form.value.code }))
 
@@ -66,6 +69,7 @@ async function loadRecord() {
       relay_index: a.relay_index || 0,
       pulse_seconds: a.pulse_seconds || 0,
     }
+    markClean()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load aux output')
     router.push('/aux-outputs')
@@ -74,13 +78,22 @@ async function loadRecord() {
   }
 }
 
-async function handleSubmit() {
-  if (!form.value.code.trim()) { toast.error('Code is required'); return }
-  if (!form.value.location) { toast.error('Location is required'); return }
+function validate(): boolean {
+  const e: Record<string, string> = {}
+  if (!form.value.code.trim()) e.code = 'Code is required'
+  if (!form.value.location) e.location = 'Location is required'
   const taken = conflictsAt(io.value.relays, form.value.relay_index, recordId)
   if (taken.length) {
-    toast.error(`Relay ${form.value.relay_index} already used by ${taken.map((o) => o.label).join(', ')} on this controller`); return
+    e.relay_index = `Relay ${form.value.relay_index} already used by ${taken.map((o) => o.label).join(', ')} on this controller`
   }
+  errors.value = e
+  const first = Object.values(e)[0]
+  if (first) toast.error(first)
+  return !first
+}
+
+async function handleSubmit() {
+  if (!validate()) return
 
   loading.value = true
   try {
@@ -95,10 +108,12 @@ async function handleSubmit() {
     if (isEdit.value) {
       await pb.collection('aux_output').update(recordId!, data)
       toast.success('Aux output updated')
+      markClean()
       router.push(`/aux-outputs/${recordId}`)
     } else {
       const created = await pb.collection('aux_output').create<AuxOutput>(data)
       toast.success('Aux output created')
+      markClean()
       router.push(`/aux-outputs/${created.id}`)
     }
   } catch (err: any) {
@@ -129,7 +144,7 @@ onMounted(async () => {
       <BaseCard title="Aux output">
         <div class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Code" required>
+            <FormField label="Code" required :error="errors.code">
               <input v-model="form.code" type="text" placeholder="gate-strike" class="input input-bordered" required />
             </FormField>
             <FormField label="Name">
@@ -138,7 +153,7 @@ onMounted(async () => {
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Location" required>
+            <FormField label="Location" required :error="errors.location">
               <select v-model="form.location" class="select select-bordered" required>
                 <option value="">Select a location...</option>
                 <option v-for="l in locations" :key="l.id" :value="l.id">{{ l.code }} — {{ l.name || l.code }}</option>
@@ -153,7 +168,7 @@ onMounted(async () => {
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Relay index" hint="The box's relay line to drive; the picker lists the model's lines and flags any already in use.">
+            <FormField label="Relay index" :error="errors.relay_index" hint="The box's relay line to drive; the picker lists the model's lines and flags any already in use.">
               <IndexPicker v-model="form.relay_index" :lines="relayLines" :usage="io.relays" :self-id="recordId" />
             </FormField>
             <FormField label="Pulse seconds" hint="Default duration for a momentary pulse.">
