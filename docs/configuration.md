@@ -17,7 +17,7 @@ those first, then use the tables here to look up a default or env var:
 - [NATS connection](#nats-connection) · [auth](#nats-auth-set-at-most-one) · [TLS](#nats-tls)
 - [Logging](#logging) · [Metrics](#metrics) · [Diagnostics](#diagnostics-controller-only)
 - [Resource names](#resource-names-shared) — buckets, stream, app token (must match across the fleet)
-- [accessd](#accessd) · [controller](#controller)
+- [accessd](#accessd) · [Branding](#branding-accessd-only) · [controller](#controller)
 - [What gets rejected](#what-gets-rejected) — every way `Load` fails
 - [Which binary reads what](#which-binary-reads-what)
 
@@ -173,6 +173,33 @@ never emailed — only the raise. There is no `notify.*` config block and no
 > `disarm_on_grant` + an `area` on the portal in the UI). Like notify it is a
 > `DeliverNew` durable on `ACC_EVENTS`.
 
+## Branding (accessd-only)
+
+Point `branding.dir` at a host directory to override the embedded app name, logo,
+and DaisyUI theme **without rebuilding the binary**. accessd serves that
+directory's files under `/branding/*`; the UI's `index.html` `<link>`s
+`/branding/theme.css` and the app fetches `/branding/branding.json` at boot.
+
+| Key | Default | Env var | Notes |
+|---|---|---|---|
+| `branding.dir` | `""` (embedded defaults) | `SA_BRANDING_DIR` | host directory holding any of `theme.css`, `logo.svg`, `branding.json`. Empty = no overlay; the route still serves a silent empty `theme.css`/`{}` `branding.json`, so a stock install never 404s. Path traversal (`..`) is rejected. |
+
+Overlay files (all optional):
+
+| File | Shape | Effect |
+|---|---|---|
+| `branding.json` | `{ "appName": "...", "logo": "logo.svg" }` | sets the sidebar/login app name + browser tab title, and names the logo file (served at `/branding/<logo>`). |
+| `theme.css` | DaisyUI `[data-theme=light\|dark]` OKLCH var overrides | recolors the whole UI. Loaded after the bundled CSS, so it wins by cascade order — override only what you need. |
+| the logo (e.g. `logo.svg`) | an image | replaces the built-in mark; `.brand-logo-img` is a CSS hook for per-theme logo swaps. |
+
+Copy [`branding.example/`](../branding.example) to the host (e.g.
+`/etc/stone-access/branding/`), add your `logo.svg`, and set `branding.dir`:
+
+```yaml
+branding:
+  dir: "/etc/stone-access/branding"
+```
+
 ## controller
 
 A controller's config is just its identity and hardware selection — **which
@@ -208,7 +235,7 @@ everything else falls back to a default:
 
 - **Both** read `nats`, `logging`, `metrics`, `policy`, `status`, `subjects`
   (the controller writes the status bucket; accessd watches it).
-- **accessd** also reads `events` and `accessd`.
+- **accessd** also reads `events`, `accessd`, and `branding`.
 - **access-controller** also reads `controller` and `diagnostics`.
 
 Unused sections are simply ignored, so the two binaries can share one file if you

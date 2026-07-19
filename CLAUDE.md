@@ -256,6 +256,14 @@ controller-only, localhost by default) serves a self-contained local `/status` p
 live state for field install/troubleshooting — `internal/diag`, strictly read-only (control stays on the command
 plane); see `docs/configuration.md`.
 
+An optional operator **branding overlay** (`branding.dir`, accessd-only, env `SA_BRANDING_DIR`, empty by default)
+lets an install override the UI's app name, logo, and DaisyUI theme **without rebuilding**: accessd serves that host
+directory's `theme.css`/`logo.svg`/`branding.json` under `/branding/*` (the route is always registered and returns a
+silent empty `theme.css`/`{}` `branding.json` when unconfigured, so a stock install never 404s). The UI's `index.html`
+`<link>`s `/branding/theme.css` and `stores/branding.ts` fetches `branding.json` pre-mount; `BrandLogo.vue` prefers the
+overlay logo, else the built-in inline mark. `branding.example/` is the committed template. Mirrors the sibling
+`platform`/`helpdesk` apps' branding system.
+
 ## Conventions
 
 - Module path `github.com/stone-age-io/access-control`, Go 1.26. Structured logging via `zap` wrapper

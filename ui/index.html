@@ -7,6 +7,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Stone Access</title>
     <meta name="theme-color" content="#0a0a0a">
+    <!-- Optional operator branding overlay; served with a silent empty fallback,
+         so it's harmless when no overlay is configured. Loaded after the bundled
+         DaisyUI CSS so its [data-theme] var overrides win by cascade order. -->
+    <link rel="stylesheet" href="/branding/theme.css">
     <style>
       /* Inline critical CSS for the initial loading state (shown until Vue mounts). */
       body {

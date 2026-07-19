@@ -16,6 +16,9 @@ export default defineConfig({
       // Proxy API + admin/auth requests to the embedded PocketBase (accessd).
       '/api': { target: 'http://127.0.0.1:8090', changeOrigin: true },
       '/_': { target: 'http://127.0.0.1:8090', changeOrigin: true },
+      // Operator branding overlay (theme.css / branding.json / logo) is served
+      // by accessd, so proxy it in dev too.
+      '/branding': { target: 'http://127.0.0.1:8090', changeOrigin: true },
     },
   },
   build: {

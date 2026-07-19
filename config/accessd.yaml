@@ -110,3 +110,14 @@ accessd:
   # Defaults to 0 = keep forever (opt-in); JetStream stays the system of record,
   # so a prune only shrinks the read model. Set a positive day count to trim it.
   eventRetentionDays: 0
+
+# ----------------------------------------------------------------------------
+# Branding — optional operator overlay. Point `dir` at a host directory holding
+# any of theme.css, logo.svg, and branding.json; accessd serves them under
+# /branding/* so an operator can override the app name, logo, and DaisyUI theme
+# without rebuilding the binary. branding.json shape: { "appName": "...",
+# "logo": "logo.svg" }. Empty / unset = embedded defaults. Override via
+# SA_BRANDING_DIR. See branding.example/ for a starting template.
+# ----------------------------------------------------------------------------
+branding:
+  dir: ""
