@@ -71,8 +71,11 @@ async function handleLogout() {
 </script>
 
 <template>
+  <!-- h-full (= the .drawer-side's 100dvh, not min-h-full) caps the sidebar at the
+       viewport so it never scrolls the whole column; the nav below is the only
+       scroller (flex-1 min-h-0), keeping the brand header and account footer pinned. -->
   <aside
-    class="bg-base-100 min-h-full flex flex-col border-r border-base-300 transition-all duration-300 ease-in-out z-20 pad-safe-top"
+    class="bg-base-100 h-full flex flex-col border-r border-base-300 transition-all duration-300 ease-in-out z-20 pad-safe-top"
     :class="effectiveCompact ? 'w-20 min-w-[5rem]' : 'w-72 min-w-[18rem]'"
   >
     <!-- TOP: brand + collapse toggle -->
@@ -104,8 +107,8 @@ async function handleLogout() {
       <div class="divider my-0"></div>
     </div>
 
-    <!-- NAVIGATION -->
-    <nav class="flex-1 overflow-y-auto overflow-x-hidden px-3 pb-2">
+    <!-- NAVIGATION (the only scroller; min-h-0 lets this flex child shrink and scroll) -->
+    <nav class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 pb-2">
       <ul class="menu p-0 gap-1 w-full">
         <template v-for="(section, si) in visibleSections" :key="si">
           <li v-if="section.title && !effectiveCompact" class="menu-title px-2 pt-3 pb-1 text-[10px] uppercase tracking-widest opacity-50">
