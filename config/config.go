@@ -70,6 +70,7 @@ type Config struct {
 	Subjects    SubjectsConfig    `json:"subjects" yaml:"subjects" mapstructure:"subjects"`
 	Accessd     AccessdConfig     `json:"accessd" yaml:"accessd" mapstructure:"accessd"`
 	Controller  ControllerConfig  `json:"controller" yaml:"controller" mapstructure:"controller"`
+	Branding    BrandingConfig    `json:"branding" yaml:"branding" mapstructure:"branding"`
 }
 
 // NATSConfig contains NATS connection settings. Exactly one auth method (or
@@ -168,6 +169,16 @@ type AccessdConfig struct {
 	EventRetentionDays int `json:"eventRetentionDays" yaml:"eventRetentionDays" mapstructure:"eventRetentionDays"`
 }
 
+// BrandingConfig points accessd at an optional operator branding overlay: a host
+// directory whose files (theme.css, logo.svg, branding.json) accessd serves under
+// /branding/*, letting an operator override the embedded app name, logo, and
+// DaisyUI theme without rebuilding the binary. Empty (the default) = embedded
+// defaults only; the route still serves silent empty fallbacks so a stock install
+// never 404s. accessd-only — the controller ignores this section.
+type BrandingConfig struct {
+	Dir string `json:"dir" yaml:"dir" mapstructure:"dir"`
+}
+
 // ControllerConfig is the edge controller's configuration — just its identity.
 // A controller holds the whole-org policy but only drives the portals assigned to
 // it (the `controller` relation on portal records), so which doors it drives and
@@ -245,6 +256,7 @@ func Load(path string) (*Config, error) {
 		"diagnostics.enabled", "diagnostics.address",
 		"policy.bucket", "events.stream", "status.bucket", "subjects.app",
 		"accessd.dataDir", "accessd.controllerOfflineAfter",
+		"branding.dir",
 		"controller.code", "controller.location", "controller.heartbeatInterval",
 		"controller.driver", "controller.model", "controller.reader",
 	} {

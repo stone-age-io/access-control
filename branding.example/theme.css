@@ -1,0 +1,131 @@
+/*
+ * Operator branding overlay — theme override.
+ *
+ * Copy this directory somewhere on the host (e.g. /etc/stone-access/branding/),
+ * add your own logo.svg, then point `branding.dir` in config/accessd.yaml at it
+ * (or set SA_BRANDING_DIR). accessd serves these files under /branding/*.
+ *
+ * The UI uses DaisyUI v4, which exposes its palette as OKLCH triplets
+ * (lightness% chroma hue) on the [data-theme=...] selector. Tailwind utilities
+ * resolve these via `oklch(var(--p))`, etc.
+ *
+ * Light theme is active when document.documentElement[data-theme] = "light".
+ * Dark theme is active when document.documentElement[data-theme] = "dark".
+ *
+ * Tip: keep both blocks in sync — operators can toggle themes at runtime.
+ *
+ * The full default values are documented in DaisyUI's source:
+ * https://github.com/saadeghi/daisyui/tree/v4.4.0/src/theming/themes.js
+ *
+ * Tip 2: only override what you need. Anything you delete falls back to the
+ * DaisyUI default for that theme. The values below reproduce the stock look, so
+ * you can start from a working baseline and change one line at a time.
+ *
+ * Per-theme logo swap (optional): drop multiple SVGs in this directory and
+ * select between them via the .brand-logo-img class hook the UI exposes.
+ * `content: url(...)` replaces the <img>'s source while preserving its sizing —
+ * works in modern Chromium / WebKit / Firefox.
+ *
+ *     [data-theme="light"] .brand-logo-img {
+ *       content: url('/branding/logo-light.svg');
+ *     }
+ *     [data-theme="dark"] .brand-logo-img {
+ *       content: url('/branding/logo-dark.svg');
+ *     }
+ */
+
+/* =============================================================================
+ * LIGHT THEME
+ * ============================================================================= */
+[data-theme="light"] {
+  /* --- Brand colors --- */
+  --p: 49.12% 0.3096 275.75;        /* primary             */
+  --pc: 89.824% 0.06192 275.75;     /* primary-content (text on primary) */
+
+  --s: 69.71% 0.329 342.55;         /* secondary           */
+  --sc: 98.71% 0.0106 342.55;       /* secondary-content   */
+
+  --a: 76.76% 0.184 183.61;         /* accent              */
+  --ac: 15.352% 0.0368 183.61;      /* accent-content      */
+
+  --n: 32.1785% 0.02476 255.701624; /* neutral             */
+  --nc: 89.4994% 0.011585 252.096176;/* neutral-content    */
+
+  /* --- Surface / background --- */
+  --b1: 100% 0 0;                   /* base-100 (page bg)  */
+  --b2: 96.1151% 0 0;               /* base-200            */
+  --b3: 92.4169% 0.00108 197.137559;/* base-300            */
+  --bc: 27.8078% 0.029596 256.847952;/* base-content (text)*/
+
+  /* --- Status colors --- */
+  --in: 72.06% 0.191 231.6;         /* info                */
+  --inc: 0% 0 0;                    /* info-content        */
+
+  --su: 64.8% 0.150 160;            /* success             */
+  --suc: 0% 0 0;                    /* success-content     */
+
+  --wa: 84.71% 0.199 83.87;         /* warning             */
+  --wac: 0% 0 0;                    /* warning-content     */
+
+  --er: 71.76% 0.221 22.18;         /* error               */
+  --erc: 0% 0 0;                    /* error-content       */
+
+  /* --- Component shape (rem values, no oklch wrapper) --- */
+  --rounded-box: 1rem;        /* cards, modals, alerts    */
+  --rounded-btn: 0.5rem;      /* buttons                  */
+  --rounded-badge: 1.9rem;    /* badges                   */
+  --tab-radius: 0.5rem;       /* tabs                     */
+  --border-btn: 1px;          /* button border width      */
+  --tab-border: 1px;          /* tab border width         */
+  --animation-btn: 0.25s;
+  --animation-input: 0.2s;
+  --btn-focus-scale: 0.95;
+}
+
+/* =============================================================================
+ * DARK THEME
+ * ============================================================================= */
+[data-theme="dark"] {
+  /* --- Brand colors --- */
+  --p: 65.69% 0.196 275.75;
+  --pc: 89.842% 0.0632 275.75;
+
+  --s: 74.8% 0.26 342.55;
+  --sc: 14.96% 0.052 342.55;
+
+  --a: 74.51% 0.167 183.61;
+  --ac: 14.902% 0.0334 183.61;
+
+  --n: 31.3815% 0.021108 254.139175;
+  --nc: 74.6477% 0.0216 264.434799;
+
+  /* --- Surface / background --- */
+  --b1: 25.3267% 0.015896 252.417568;
+  --b2: 23.2607% 0.013807 253.100675;
+  --b3: 21.1502% 0.012086 254.090397;
+  --bc: 74.6477% 0.0216 264.434799;
+
+  /* --- Status colors --- */
+  --in: 72.06% 0.191 231.6;
+  --inc: 0% 0 0;
+
+  --su: 64.8% 0.150 160;
+  --suc: 0% 0 0;
+
+  --wa: 84.71% 0.199 83.87;
+  --wac: 0% 0 0;
+
+  --er: 71.76% 0.221 22.18;
+  --erc: 0% 0 0;
+
+  /* --- Component shape --- */
+  --rounded-box: 1rem;
+  --rounded-btn: 0.5rem;
+  --rounded-badge: 1.9rem;
+  --tab-radius: 0.5rem;
+  --border-btn: 1px;
+  --tab-border: 1px;
+  --animation-btn: 0.25s;
+  --animation-input: 0.2s;
+  --btn-focus-scale: 0.95;
+}

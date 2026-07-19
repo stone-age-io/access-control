@@ -116,6 +116,43 @@ func main() {
 		if err != nil {
 			return err
 		}
+
+		// Operator branding overlay: serve files (theme.css, logo.svg, branding.json)
+		// from a host directory under /branding/*, registered before the SPA
+		// catch-all. index.html unconditionally <link>s theme.css and the SPA fetches
+		// branding.json, so when no overlay is configured we serve silent empty
+		// fallbacks for those two — otherwise a stock deployment fills the browser
+		// console with 404s.
+		var brandingFS fs.FS
+		if dir := cfg.Branding.Dir; dir != "" {
+			if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
+				log.Warn("branding.dir is set but not a usable directory", "dir", dir)
+			} else {
+				brandingFS = os.DirFS(dir)
+				log.Info("branding overlay serving", "dir", dir)
+			}
+		}
+		e.Router.GET("/branding/{path...}", func(re *core.RequestEvent) error {
+			p := re.Request.PathValue("path")
+			if p == "" || strings.Contains(p, "..") {
+				return re.NotFoundError("Not found", nil)
+			}
+			if brandingFS != nil {
+				if f, openErr := brandingFS.Open(p); openErr == nil {
+					_ = f.Close()
+					return re.FileFS(brandingFS, p)
+				}
+			}
+			// Silent fallbacks for the two files the shell always requests.
+			switch p {
+			case "theme.css":
+				return re.Blob(200, "text/css; charset=utf-8", nil)
+			case "branding.json":
+				return re.Blob(200, "application/json", []byte("{}"))
+			}
+			return re.NotFoundError("Not found", nil)
+		})
+
 		e.Router.GET("/{path...}", func(re *core.RequestEvent) error {
 			p := re.Request.PathValue("path")
 			if p == "" || p == "/" {

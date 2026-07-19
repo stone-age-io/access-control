@@ -1,92 +1,69 @@
 <script setup lang="ts">
+// Primary navigation sidebar. Drawer-side content: an overlay drawer below lg,
+// a permanent column (with an icons-only compact rail) on lg+ — see MainLayout.
+// Nav content arrives as `sections` from the layout so this stays a pure,
+// app-agnostic renderer; the brand/logo come from the operator branding overlay.
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMediaQuery } from '@vueuse/core'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
+import { useBrandingStore } from '@/stores/branding'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import { presetLabel } from '@/utils/capabilities'
+
+export interface NavItem { label: string; icon: string; path: string; child?: boolean }
+export interface NavSection { title?: string; items: NavItem[] }
+
+const props = withDefaults(
+  defineProps<{ sections: NavSection[]; brand?: string; home?: string }>(),
+  { home: '/' },
+)
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const uiStore = useUIStore()
+const brandingStore = useBrandingStore()
 
 const isLargeScreen = useMediaQuery('(min-width: 1024px)')
 const effectiveCompact = computed(() => uiStore.sidebarCompact && isLargeScreen.value)
 
-interface NavItem { label: string; icon: string; path: string; child?: boolean; capability?: string }
-interface NavSection { title?: string; items: NavItem[] }
+// Brand text: an explicit prop wins, else the operator branding overlay's app name.
+const brandText = computed(() => props.brand ?? brandingStore.appName)
 
-const sections: NavSection[] = [
-  {
-    items: [
-      { label: 'Overview', icon: '📊', path: '/' },
-    ],
-  },
-  {
-    title: 'Monitoring',
-    items: [
-      { label: 'Live Map', icon: '🗺️', path: '/monitor' },
-      { label: 'Alarm Console', icon: '🚨', path: '/alarms' },
-      { label: 'Events', icon: '📋', path: '/events' },
-      { label: 'Reports', icon: '📈', path: '/reports' },
-    ],
-  },
-  {
-    title: 'People & Access',
-    items: [
-      { label: 'Cardholders', icon: '🪪', path: '/cardholders' },
-      { label: 'Credentials', icon: '🎫', path: '/credentials', child: true },
-      { label: 'Roles', icon: '🏷️', path: '/roles' },
-      { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
-    ],
-  },
-  {
-    title: 'Facility',
-    items: [
-      { label: 'Locations', icon: '🏢', path: '/locations' },
-      { label: 'Controllers', icon: '⚙️', path: '/controllers' },
-      { label: 'Portals', icon: '🚪', path: '/portals' },
-      { label: 'Aux Inputs', icon: '🔌', path: '/aux-inputs' },
-      { label: 'Aux Outputs', icon: '🔆', path: '/aux-outputs' },
-      { label: 'Areas', icon: '🛡️', path: '/areas' },
-      { label: 'Schedules', icon: '🗓️', path: '/schedules' },
-      { label: 'Holiday Calendars', icon: '📆', path: '/holiday-calendars' },
-      { label: 'Holidays', icon: '📅', path: '/holidays', child: true },
-    ],
-  },
-  {
-    title: 'Administration',
-    items: [
-      { label: 'Import', icon: '📥', path: '/import', capability: 'enroll' },
-      { label: 'Operators', icon: '👥', path: '/operators', capability: 'operators' },
-      { label: 'Audit Log', icon: '📜', path: '/audit-log', capability: 'operators' },
-    ],
-  },
-]
-
-// Hide items the operator lacks the capability for; drop sections left empty.
+// Drop any sections left empty (the layout filters items by capability).
 const visibleSections = computed<NavSection[]>(() =>
-  sections
-    .map((s) => ({ ...s, items: s.items.filter((i) => !i.capability || authStore.can(i.capability)) }))
-    .filter((s) => s.items.length > 0),
+  props.sections.filter((s) => s.items.length > 0),
 )
 
 // Profile label: the matching preset name (e.g. "Door Ops"), else "Custom".
 const roleLabel = computed(() => presetLabel(authStore.permissions))
 
-function isActive(path: string): boolean {
-  if (path === '/') return route.path === '/'
-  return route.path === path || route.path.startsWith(path + '/')
-}
+// Longest matching prefix wins, so /cardholders/new highlights "Cardholders"
+// and not also a shorter sibling. '/' only matches exactly.
+const activePath = computed(() => {
+  let best = ''
+  for (const s of visibleSections.value)
+    for (const i of s.items) {
+      const match = i.path === '/' ? route.path === '/' : route.path === i.path || route.path.startsWith(i.path + '/')
+      if (match && i.path.length > best.length) best = i.path
+    }
+  return best
+})
 
 function closeDrawer() {
   const drawer = document.getElementById('sidebar-drawer') as HTMLInputElement | null
   if (drawer) drawer.checked = false
 }
 
+// daisyUI dropdowns close on blur; a menu click keeps focus, so drop it.
+function closeDropdown() {
+  ;(document.activeElement as HTMLElement | null)?.blur()
+}
+
 async function handleLogout() {
+  closeDropdown()
   await authStore.logout()
   closeDrawer()
   router.push('/login')
@@ -95,7 +72,7 @@ async function handleLogout() {
 
 <template>
   <aside
-    class="bg-base-100 h-dvh flex flex-col border-r border-base-300 transition-all duration-300 ease-in-out z-20 pad-safe-top"
+    class="bg-base-100 min-h-full flex flex-col border-r border-base-300 transition-all duration-300 ease-in-out z-20 pad-safe-top"
     :class="effectiveCompact ? 'w-20 min-w-[5rem]' : 'w-72 min-w-[18rem]'"
   >
     <!-- TOP: brand + collapse toggle -->
@@ -104,12 +81,12 @@ async function handleLogout() {
         class="flex transition-all duration-300"
         :class="effectiveCompact ? 'flex-col items-center gap-3 py-2' : 'flex-row items-center justify-between px-2 py-2'"
       >
-        <router-link to="/" class="flex items-center gap-3 hover:opacity-80 transition-opacity overflow-hidden" @click="closeDrawer">
+        <router-link :to="home" class="flex items-center gap-3 hover:opacity-80 transition-opacity overflow-hidden" @click="closeDrawer">
           <div class="w-10 h-10 flex items-center justify-center flex-shrink-0 text-primary">
             <BrandLogo :size="36" />
           </div>
           <span v-show="!effectiveCompact" class="font-bold text-lg tracking-tight whitespace-nowrap overflow-hidden">
-            Access Control
+            {{ brandText }}
           </span>
         </router-link>
 
@@ -141,7 +118,7 @@ async function handleLogout() {
           <li v-for="item in section.items" :key="item.path" :class="{ 'ml-4': item.child && !effectiveCompact }">
             <router-link
               :to="item.path"
-              :class="{ active: isActive(item.path) }"
+              :class="{ active: item.path === activePath }"
               class="group relative"
               @click="closeDrawer"
             >
@@ -161,8 +138,8 @@ async function handleLogout() {
       </ul>
     </nav>
 
-    <!-- BOTTOM: theme + user + logout -->
-    <div class="flex-none p-3 pt-0 flex flex-col gap-1">
+    <!-- BOTTOM: theme toggle + account -->
+    <div class="flex-none p-3 pt-0 flex flex-col gap-1 pad-safe-bottom">
       <div class="divider my-0"></div>
 
       <button
@@ -175,39 +152,47 @@ async function handleLogout() {
         <span v-show="!effectiveCompact" class="font-medium">{{ uiStore.theme === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
       </button>
 
-      <div
-        class="flex items-center gap-3 w-full p-2 rounded-lg bg-base-200/50 border border-transparent"
-        :class="{ 'justify-center': effectiveCompact }"
-      >
-        <div class="avatar placeholder">
-          <div class="bg-neutral text-neutral-content rounded-full w-8">
-            <span class="text-xs font-bold">{{ authStore.initial }}</span>
+      <!-- Expanded: account dropdown (opens upward over the nav). -->
+      <div v-if="!effectiveCompact" class="dropdown dropdown-top w-full">
+        <div
+          tabindex="0"
+          role="button"
+          class="flex items-center gap-3 w-full p-2 rounded-lg bg-base-200/50 hover:bg-base-200 cursor-pointer transition-colors"
+        >
+          <div class="avatar placeholder">
+            <div class="bg-neutral text-neutral-content rounded-full w-8">
+              <span class="text-xs font-bold">{{ authStore.initial }}</span>
+            </div>
+          </div>
+          <div class="flex flex-col truncate flex-1 text-left min-w-0">
+            <span class="font-semibold text-sm truncate leading-tight">{{ roleLabel }}</span>
+            <span class="text-xs text-base-content/60 truncate leading-tight">{{ authStore.email }}</span>
+          </div>
+          <span class="text-base-content/40 text-lg leading-none pr-1">⋮</span>
+        </div>
+        <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box shadow-lg border border-base-300 w-56 p-1 mb-1 z-50">
+          <li><a class="text-error" @click="handleLogout">🚪 Sign out</a></li>
+        </ul>
+      </div>
+
+      <!-- Compact: avatar + direct logout (the w-56 menu would overflow the rail). -->
+      <template v-else>
+        <div class="flex items-center justify-center w-full p-2 rounded-lg bg-base-200/50">
+          <div class="avatar placeholder">
+            <div class="bg-neutral text-neutral-content rounded-full w-8">
+              <span class="text-xs font-bold">{{ authStore.initial }}</span>
+            </div>
           </div>
         </div>
-        <div v-show="!effectiveCompact" class="flex flex-col truncate flex-1 text-left min-w-0">
-          <span class="font-semibold text-sm truncate leading-tight">{{ roleLabel }}</span>
-          <span class="text-xs text-base-content/60 truncate leading-tight">{{ authStore.email }}</span>
-        </div>
         <button
-          v-show="!effectiveCompact"
           @click="handleLogout"
-          class="btn btn-ghost btn-xs text-error"
-          title="Log out"
-          aria-label="Log out"
+          class="flex items-center justify-center w-full p-2 rounded-lg hover:bg-error/10 text-error transition-all"
+          title="Sign out"
+          aria-label="Sign out"
         >
           🚪
         </button>
-      </div>
-
-      <button
-        v-if="effectiveCompact"
-        @click="handleLogout"
-        class="flex items-center justify-center w-full p-2 rounded-lg hover:bg-error/10 text-error transition-all"
-        title="Log out"
-        aria-label="Log out"
-      >
-        🚪
-      </button>
+      </template>
     </div>
   </aside>
 </template>

@@ -71,6 +71,12 @@ see [`docs/operators.md`](docs/operators.md). A PocketBase **superuser**
 (`accessd superuser upsert <email> <pass>`) is the break-glass account and also
 signs into the admin UI at `/_`.
 
+The console is **rebrandable at runtime without a rebuild**: point `branding.dir`
+(env `SA_BRANDING_DIR`) at a host directory of `theme.css` / `logo.svg` /
+`branding.json` to override the app name, logo, and DaisyUI theme. See
+[`docs/configuration.md`](docs/configuration.md#branding-accessd-only) and the
+[`branding.example/`](branding.example) template.
+
 ### Build order (the embed happens at Go compile time)
 
 ```

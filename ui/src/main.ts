@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import router from './router'
 import App from './App.vue'
 import { useAuthStore } from './stores/auth'
+import { useBrandingStore } from './stores/branding'
 import { useUIStore } from './stores/ui'
 import './assets/main.css'
 
@@ -14,20 +15,24 @@ app.use(router)
 const uiStore = useUIStore()
 uiStore.initializeTheme()
 
-// Auth hydration must complete pre-mount: the router guard reads
-// authStore.isAuthenticated on the first navigation, so a valid token sitting
-// in localStorage (new tab/window) must be restored before the app renders.
+// Pre-mount async chain: auth hydration must complete before the first
+// navigation (the router guard reads authStore.isAuthenticated, so a valid token
+// in localStorage must be restored first), and the operator branding overlay is
+// loaded alongside it so the app name/logo are correct on first paint. Each is
+// defensively caught so one failure can't block mount.
 const authStore = useAuthStore()
-authStore
-  .initializeFromAuth()
-  .catch(err => console.error('Auth init failed:', err))
-  .finally(() => {
-    app.mount('#app')
-    const appLoader = document.getElementById('app-loader')
-    if (appLoader) {
-      requestAnimationFrame(() => {
-        appLoader.classList.add('fade-out')
-        setTimeout(() => appLoader.remove(), 300)
-      })
-    }
-  })
+const brandingStore = useBrandingStore()
+Promise.all([
+  authStore.initializeFromAuth().catch(err => console.error('Auth init failed:', err)),
+  brandingStore.load().catch(err => console.error('Branding load failed:', err)),
+]).finally(() => {
+  document.title = brandingStore.appName
+  app.mount('#app')
+  const appLoader = document.getElementById('app-loader')
+  if (appLoader) {
+    requestAnimationFrame(() => {
+      appLoader.classList.add('fade-out')
+      setTimeout(() => appLoader.remove(), 300)
+    })
+  }
+})
