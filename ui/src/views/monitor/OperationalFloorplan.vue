@@ -30,6 +30,7 @@ const floorplanReady = ref(false)
 
 let unsubStatus: (() => void) | null = null
 let unsubEvents: (() => void) | null = null
+let unsubAreas: (() => void) | null = null
 const flashTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 // Floor plan vs. door-list is a user choice (persisted), but a location with no
@@ -292,6 +293,17 @@ async function subscribe() {
       areaShadowsByCode.value = m
     }
   })
+  // Area records carry the durable arm_override the drawer's Clear button gates on —
+  // a shadow only carries live state, not the override field. Watch the collection so
+  // an arm/disarm/clear (or entry-disarm / release sweep) keeps the drawer live.
+  unsubAreas = await pb.collection('areas').subscribe<Area>('*', (e) => {
+    if (e.action !== 'update') return
+    const idx = areas.value.findIndex((a) => a.id === e.record.id)
+    if (idx === -1) return
+    const next = areas.value.slice()
+    next[idx] = e.record
+    areas.value = next
+  })
   // Forced/held alarms are events, not sticky state — flash the marker transiently.
   unsubEvents = await pb.collection('events').subscribe<AccessEvent>('*', (e) => {
     if (e.action !== 'create') return
@@ -316,6 +328,7 @@ onBeforeUnmount(() => {
   flashTimers.forEach((t) => clearTimeout(t))
   if (unsubStatus) unsubStatus()
   if (unsubEvents) unsubEvents()
+  if (unsubAreas) unsubAreas()
   cleanup()
 })
 

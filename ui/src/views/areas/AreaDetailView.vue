@@ -29,6 +29,7 @@ const shadows = ref<PointStatus[]>([]) // per-controller arm shadows for this ar
 const loading = ref(true)
 const deleting = ref(false)
 let unsubStatus: (() => void) | null = null
+let unsubArea: (() => void) | null = null
 
 const canCommand = computed(() => auth.can('command'))
 const title = computed(() => record.value?.name || record.value?.code || 'Area')
@@ -51,6 +52,7 @@ async function load() {
     })
     await loadShadows()
     await subscribeStatus()
+    await subscribeArea()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load area')
     router.push('/areas')
@@ -78,6 +80,19 @@ async function subscribeStatus() {
     if (e.action !== 'delete') m.push(e.record)
     shadows.value = m
   })
+}
+
+// The arm badge tracks the live shadow, but the override/standing line reads the AREA
+// record — a durable arm_override write (arm/disarm/clear, entry-disarm, or the one-shot
+// release sweep) updates the record, not a shadow. Watch this record so it stays live.
+async function subscribeArea() {
+  unsubArea = await pb.collection('areas').subscribe<Area>(
+    recordId,
+    (e) => {
+      if (e.action === 'update') record.value = { ...e.record, expand: e.record.expand ?? record.value?.expand }
+    },
+    { expand: 'location,auto_schedule' },
+  )
 }
 
 async function handleDelete() {
@@ -111,6 +126,7 @@ function pointTypeBadge(t: string): string {
 onMounted(load)
 onBeforeUnmount(() => {
   if (unsubStatus) unsubStatus()
+  if (unsubArea) unsubArea()
 })
 </script>
 

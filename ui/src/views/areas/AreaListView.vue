@@ -41,6 +41,7 @@ const selectedIds = ref<string[]>([])
 // kept live; independent of search/pagination.
 const shadowsByCode = ref<Map<string, PointStatus[]>>(new Map())
 let unsubStatus: (() => void) | null = null
+let unsubAreas: (() => void) | null = null
 
 function armFor(a: Area) {
   return aggregateArm(shadowsByCode.value.get(a.code) ?? [])
@@ -87,6 +88,26 @@ async function subscribeShadows() {
     else m.delete(e.record.code)
     shadowsByCode.value = m
   })
+}
+
+// State comes live from the point_status shadow above, but Standing/Override are
+// fields on the AREA record — a durable arm_override write (arm/disarm/clear, entry-
+// disarm, or the one-shot release sweep) changes the record, not a shadow. Watch the
+// collection so those columns stay live; patch the loaded row in place (keep expand so
+// the Location column survives events that don't carry it).
+async function subscribeAreas() {
+  unsubAreas = await pb.collection('areas').subscribe<Area>(
+    '*',
+    (e) => {
+      if (e.action !== 'update') return
+      const idx = items.value.findIndex((a) => a.id === e.record.id)
+      if (idx === -1) return
+      const next = items.value.slice()
+      next[idx] = { ...e.record, expand: e.record.expand ?? items.value[idx].expand }
+      items.value = next
+    },
+    { expand: 'location' },
+  )
 }
 
 const columns: Column<Area>[] = [
@@ -172,9 +193,11 @@ onMounted(() => {
   reload()
   loadShadows()
   subscribeShadows()
+  subscribeAreas()
 })
 onBeforeUnmount(() => {
   if (unsubStatus) unsubStatus()
+  if (unsubAreas) unsubAreas()
 })
 </script>
 
