@@ -57,5 +57,32 @@ export function useAreaCommands() {
     }
   }
 
-  return { commanding, arm, disarm, armClear }
+  /**
+   * Same command on many areas at once (the list-view command bar). Commands are
+   * per-area and fire-and-forget, so there is no atomic bulk — we fan out
+   * independent requests and report a summary. The caller owns the batch-level
+   * confirm (it knows the count); this only issues + toasts the outcome.
+   */
+  async function sendBulk(areaIds: string[], action: string, verb: string): Promise<{ ok: number; failed: number }> {
+    commanding.value = true
+    try {
+      const results = await Promise.allSettled(
+        areaIds.map((id) => pb.send(`/api/areas/${id}/${action}`, { method: 'POST', body: {} })),
+      )
+      const failed = results.filter((r) => r.status === 'rejected').length
+      const ok = results.length - failed
+      if (failed === 0) toast.success(`${verb} ${ok} area(s)`)
+      else if (ok === 0) toast.error(`Failed on all ${failed} area(s)`)
+      else toast.warning(`${verb} ${ok} area(s); ${failed} failed`)
+      return { ok, failed }
+    } finally {
+      commanding.value = false
+    }
+  }
+
+  const armBulk = (ids: string[]) => sendBulk(ids, 'arm', 'Armed')
+  const disarmBulk = (ids: string[]) => sendBulk(ids, 'disarm', 'Disarmed')
+  const clearBulk = (ids: string[]) => sendBulk(ids, 'arm-clear', 'Cleared override on')
+
+  return { commanding, arm, disarm, armClear, armBulk, disarmBulk, clearBulk }
 }

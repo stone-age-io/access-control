@@ -5,19 +5,14 @@ import { useRouter } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useFloorPlan } from '@/composables/useFloorPlan'
 import { useUIStore } from '@/stores/ui'
-import { useAuthStore } from '@/stores/auth'
-import { useAreaCommands } from '@/composables/useAreaCommands'
-import { aggregateArm, armBadge, armLabel } from '@/utils/arming'
+import { aggregateArm, armBadge, type ArmState } from '@/utils/arming'
 import type { Location, Portal, Area, PointStatus, AccessEvent } from '@/types/pocketbase'
 import PortalCommandDrawer from '@/components/map/PortalCommandDrawer.vue'
+import AreaCommandDrawer from '@/components/map/AreaCommandDrawer.vue'
 
 const props = defineProps<{ locationId: string }>()
 const router = useRouter()
 const ui = useUIStore()
-const auth = useAuthStore()
-
-const canCommand = computed(() => auth.can('command'))
-const { commanding, arm, disarm, armClear } = useAreaCommands()
 
 const { initFloorPlan, renderMarkers, setSelected, invalidateSize, cleanup } = useFloorPlan()
 
@@ -26,7 +21,7 @@ const portals = ref<Portal[]>([])
 const statusByCode = ref<Map<string, PointStatus>>(new Map()) // keyed by portal code
 const areas = ref<Area[]>([]) // this location's intrusion areas
 const areaShadowsByCode = ref<Map<string, PointStatus[]>>(new Map()) // one row per controller
-const armPanelOpen = ref(true)
+const areaDrawerOpen = ref(false)
 const alarmingIds = ref<Set<string>>(new Set()) // portal ids flashing from a recent alarm
 const selectedPortalId = ref<string | null>(null)
 const loading = ref(true)
@@ -72,6 +67,36 @@ function statusFor(p: Portal): PointStatus | undefined {
 // Live aggregated arm-state for an area, from its per-controller shadows.
 function armFor(a: Area) {
   return aggregateArm(areaShadowsByCode.value.get(a.code) ?? [])
+}
+
+// Roll every area up to one glanceable state for the context-bar chip: all-armed,
+// all-disarmed, none-reporting, or a mixed/converging middle ground.
+const areaSummary = computed<{ state: ArmState; label: string }>(() => {
+  const states = areas.value.map((a) => armFor(a).state)
+  if (!states.length) return { state: 'unknown', label: '' }
+  const armed = states.filter((s) => s === 'armed').length
+  const disarmed = states.filter((s) => s === 'disarmed').length
+  let state: ArmState
+  if (states.some((s) => s === 'partial')) state = 'partial'
+  else if (armed === states.length) state = 'armed'
+  else if (disarmed === states.length) state = 'disarmed'
+  else if (armed === 0 && disarmed === 0) state = 'unknown'
+  else state = 'partial' // a mix of armed + disarmed areas
+  const label =
+    state === 'armed'
+      ? 'Armed'
+      : state === 'disarmed'
+        ? 'Disarmed'
+        : state === 'unknown'
+          ? 'Unknown'
+          : `${armed}/${states.length} armed`
+  return { state, label }
+})
+
+function toggleAreaDrawer() {
+  areaDrawerOpen.value = !areaDrawerOpen.value
+  // The area drawer and the portal drawer share the right edge — only one at a time.
+  if (areaDrawerOpen.value) selectedPortalId.value = null
 }
 
 function doorBadgeFor(p: Portal): { cls: string; text: string } {
@@ -159,6 +184,7 @@ async function loadAreaShadows() {
 async function load() {
   loading.value = true
   selectedPortalId.value = null
+  areaDrawerOpen.value = false
   floorplanReady.value = false
   try {
     const [loc, pts] = await Promise.all([
@@ -208,6 +234,7 @@ function renderAll() {
 
 function openDrawer(id: string) {
   selectedPortalId.value = id
+  areaDrawerOpen.value = false // share the right edge — close the area drawer
   if (floorplanReady.value) {
     setSelected(id)
     if (!isMobile.value) nextTick(invalidateSize)
@@ -342,6 +369,19 @@ watch(
             ☰ <span class="hidden sm:inline">Doors</span>
           </button>
         </div>
+        <!-- Areas chip — always-visible rolled-up arm-state; opens the area command
+             drawer. Areas have no coordinates, so they live in the chrome, not on
+             the canvas (identical over plan and list). -->
+        <button
+          v-if="areas.length"
+          class="btn btn-sm gap-1.5 shrink-0"
+          :class="areaDrawerOpen ? 'btn-active btn-primary' : ''"
+          :title="`${areas.length} area(s)`"
+          @click="toggleAreaDrawer"
+        >
+          🛡️ <span class="hidden sm:inline">Areas</span>
+          <span class="badge badge-sm" :class="armBadge(areaSummary.state)">{{ areaSummary.label }}</span>
+        </button>
       </div>
       <!-- Legend -->
       <div class="flex items-center gap-3 text-xs flex-wrap">
@@ -397,34 +437,6 @@ watch(
         </div>
       </div>
 
-      <!-- Area arm panel — a left-anchored overlay listing this location's areas with
-           live arm-state and arm/disarm (independent of plan/list view). Areas have no
-           coordinates, so they're a panel, not markers. Collapsible to stay out of the way. -->
-      <div v-if="areas.length" class="monitor-arm-panel absolute top-2 left-2 z-[500] w-60 max-w-[calc(100%-1rem)]">
-        <div class="rounded-xl border border-base-300 bg-base-100/95 shadow-xl backdrop-blur">
-          <button
-            class="flex items-center justify-between w-full px-3 py-2 text-sm font-bold"
-            @click="armPanelOpen = !armPanelOpen"
-          >
-            <span class="flex items-center gap-1">🛡️ Areas <span class="opacity-50 font-normal">({{ areas.length }})</span></span>
-            <span class="opacity-60">{{ armPanelOpen ? '▾' : '▸' }}</span>
-          </button>
-          <div v-if="armPanelOpen" class="max-h-80 overflow-y-auto border-t border-base-200 divide-y divide-base-200">
-            <div v-for="a in areas" :key="a.id" class="p-2.5 space-y-1.5">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-sm font-medium truncate">{{ a.name || a.code }}</span>
-                <span class="badge badge-xs shrink-0" :class="armBadge(armFor(a).state)">{{ armLabel(armFor(a)) }}</span>
-              </div>
-              <div v-if="canCommand" class="flex gap-1">
-                <button class="btn btn-xs btn-warning flex-1" :disabled="commanding" @click="arm(a.id, a.code)">Arm</button>
-                <button class="btn btn-xs flex-1" :disabled="commanding" @click="disarm(a.id, a.code)">Disarm</button>
-                <button class="btn btn-xs btn-ghost" :disabled="commanding || !a.arm_override" title="Clear override" @click="armClear(a.id)">✕</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <PortalCommandDrawer
         v-if="selectedPortal"
         :portal="selectedPortal"
@@ -432,6 +444,17 @@ watch(
         :is-mobile="isMobile"
         class="monitor-drawer"
         @close="closeDrawer"
+      />
+
+      <!-- Area command drawer — opened from the context-bar chip, right-anchored like
+           the portal drawer (full-width on mobile). One of the two is open at a time. -->
+      <AreaCommandDrawer
+        v-if="areaDrawerOpen"
+        :areas="areas"
+        :shadows="areaShadowsByCode"
+        :is-mobile="isMobile"
+        class="monitor-drawer"
+        @close="areaDrawerOpen = false"
       />
     </div>
   </div>

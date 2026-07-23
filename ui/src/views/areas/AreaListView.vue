@@ -26,8 +26,14 @@ const { items, page, totalPages, totalItems, loading, error, load, nextPage, pre
 const searchQuery = ref('')
 const deleting = ref(false)
 
+// Only operators with the `command` capability get selection + the command bar;
+// the API enforces it too, so there is no point letting others select.
 const canCommand = computed(() => auth.can('command'))
-const { commanding, arm, disarm, armClear } = useAreaCommands()
+const { commanding, armBulk, disarmBulk, clearBulk } = useAreaCommands()
+
+// Bulk selection — ids can span pages, but we clear it whenever the page/query
+// changes so the command bar never acts on areas the operator can't see.
+const selectedIds = ref<string[]>([])
 
 // Live arm-state per area from the point_status shadow. An area spans one shadow row
 // PER participating controller (same code, distinct controller), so we key by code to a
@@ -47,8 +53,17 @@ function queryOpts() {
 }
 
 function reload() {
+  selectedIds.value = []
   page.value = 1
   load(queryOpts())
+}
+function goNext() {
+  selectedIds.value = []
+  nextPage(queryOpts())
+}
+function goPrev() {
+  selectedIds.value = []
+  prevPage(queryOpts())
 }
 
 async function loadShadows() {
@@ -82,6 +97,54 @@ const columns: Column<Area>[] = [
   { key: 'arm', label: 'Standing' },
   { key: 'arm_override', label: 'Override' },
 ]
+
+async function bulkArm() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const n = ids.length
+  const confirmed = await confirm({
+    title: 'Arm areas',
+    message: `Arm ${n} area${n > 1 ? 's' : ''}?`,
+    details: 'Armed intrusion points raise alarms until disarmed. This persists across controller reboots.',
+    confirmText: `Arm ${n} area${n > 1 ? 's' : ''}`,
+    variant: 'warning',
+  })
+  if (!confirmed) return
+  await armBulk(ids)
+  selectedIds.value = []
+}
+
+async function bulkDisarm() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const n = ids.length
+  const confirmed = await confirm({
+    title: 'Disarm areas',
+    message: `Disarm ${n} area${n > 1 ? 's' : ''}?`,
+    details: 'Intrusion points on each selected area will stop raising alarms.',
+    confirmText: `Disarm ${n} area${n > 1 ? 's' : ''}`,
+    variant: 'warning',
+  })
+  if (!confirmed) return
+  await disarmBulk(ids)
+  selectedIds.value = []
+}
+
+async function bulkClear() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const n = ids.length
+  const confirmed = await confirm({
+    title: 'Clear overrides',
+    message: `Clear the arm override on ${n} area${n > 1 ? 's' : ''}?`,
+    details: 'Reverts each selected area to its scheduled or standing arm-state.',
+    confirmText: 'Clear overrides',
+    variant: 'info',
+  })
+  if (!confirmed) return
+  await clearBulk(ids)
+  selectedIds.value = []
+}
 
 async function handleDelete(a: Area) {
   const confirmed = await confirm({
@@ -140,8 +203,29 @@ onBeforeUnmount(() => {
       <router-link to="/areas/new" class="btn btn-primary">Create Area</router-link>
     </template>
 
+    <!-- Bulk command bar — appears when areas are selected (command capability only).
+         Arm/disarm are live commands, deliberately kept out of the per-row actions
+         (which stay for record management: Edit / Delete). -->
+    <div
+      v-if="canCommand && selectedIds.length"
+      class="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-base-100/95 p-3 shadow-md backdrop-blur"
+    >
+      <span class="text-sm font-bold mr-1">{{ selectedIds.length }} selected</span>
+      <button class="btn btn-xs btn-warning" :disabled="commanding" @click="bulkArm">Arm</button>
+      <button class="btn btn-xs" :disabled="commanding" @click="bulkDisarm">Disarm</button>
+      <button class="btn btn-xs btn-ghost" :disabled="commanding" @click="bulkClear">Clear override</button>
+      <button class="btn btn-xs btn-ghost ml-auto" :disabled="commanding" @click="selectedIds = []">Cancel</button>
+    </div>
+
     <BaseCard :no-padding="true">
-      <ResponsiveList :items="items" :columns="columns" :loading="loading" @row-click="(a) => router.push(`/areas/${a.id}`)">
+      <ResponsiveList
+        :items="items"
+        :columns="columns"
+        :loading="loading"
+        :selectable="canCommand"
+        v-model:selected="selectedIds"
+        @row-click="(a) => router.push(`/areas/${a.id}`)"
+      >
         <template #cell-code="{ item }"><code class="text-sm font-bold">{{ item.code }}</code></template>
         <template #card-code="{ item }"><code class="text-sm font-bold">{{ item.code }}</code></template>
 
@@ -176,17 +260,12 @@ onBeforeUnmount(() => {
         </template>
 
         <template #actions="{ item }">
-          <template v-if="canCommand">
-            <button class="btn btn-xs btn-warning" :disabled="commanding" @click="arm(item.id, item.code)">Arm</button>
-            <button class="btn btn-xs" :disabled="commanding" @click="disarm(item.id, item.code)">Disarm</button>
-            <button class="btn btn-xs btn-ghost" :disabled="commanding || !item.arm_override" @click="armClear(item.id)">Clear</button>
-          </template>
           <router-link :to="`/areas/${item.id}/edit`" class="btn btn-xs">Edit</router-link>
           <button @click="handleDelete(item)" class="btn btn-xs text-error" :disabled="deleting">Delete</button>
         </template>
       </ResponsiveList>
 
-      <ListPagination :page="page" :total-pages="totalPages" :loading="loading" @prev="prevPage(queryOpts())" @next="nextPage(queryOpts())">
+      <ListPagination :page="page" :total-pages="totalPages" :loading="loading" @prev="goPrev" @next="goNext">
         {{ items.length }} of {{ totalItems }} area(s)
       </ListPagination>
     </BaseCard>
