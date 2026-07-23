@@ -11,6 +11,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -90,9 +91,9 @@ onMounted(load)
           <span v-else class="opacity-40">—</span>
         </DataField>
         <DataField label="Recurring">
-          <span class="badge badge-sm" :class="record.recurring ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="record.recurring ? 'success' : 'neutral'" dot>
             {{ record.recurring ? 'yearly (month/day)' : 'once' }}
-          </span>
+          </SoftBadge>
         </DataField>
       </div>
     </BaseCard>

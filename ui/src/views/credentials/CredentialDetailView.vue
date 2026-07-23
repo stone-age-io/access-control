@@ -11,6 +11,8 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
+import type { SoftTone } from '@/utils/badges'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,10 +28,10 @@ const holder = computed<Cardholder | undefined>(() => record.value?.expand?.user
 const title = computed(() => record.value?.value || 'Credential')
 const kvKey = computed(() => (record.value ? policyKey('credentials', record.value) : ''))
 
-function statusBadge(status: string): string {
-  if (status === 'active') return 'badge-success'
-  if (status === 'revoked') return 'badge-error'
-  return 'badge-warning'
+function statusTone(status: string): SoftTone {
+  if (status === 'active') return 'success'
+  if (status === 'revoked') return 'error'
+  return 'warning'
 }
 
 async function load() {
@@ -90,10 +92,10 @@ onMounted(load)
           <code class="text-sm">{{ record.value }}</code>
         </DataField>
         <DataField label="Type">
-          <span class="badge badge-ghost badge-sm">{{ record.type || '—' }}</span>
+          <SoftBadge>{{ record.type || '—' }}</SoftBadge>
         </DataField>
         <DataField label="Status">
-          <span class="badge badge-sm" :class="statusBadge(record.status || '')">{{ record.status || 'active' }}</span>
+          <SoftBadge :tone="statusTone(record.status || '')" dot>{{ record.status || 'active' }}</SoftBadge>
         </DataField>
         <DataField label="Label">{{ record.label || '—' }}</DataField>
         <DataField v-if="record.valid_from" label="Valid from">{{ formatDate(record.valid_from) }}</DataField>

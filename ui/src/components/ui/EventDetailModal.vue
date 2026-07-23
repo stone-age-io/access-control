@@ -5,8 +5,9 @@
  * caller owns the selected event and clears it on `close`.
  */
 import { formatDate, formatConstant } from '@/utils/format'
-import { eventKindBadge } from '@/utils/events'
+import { eventKindTone } from '@/utils/events'
 import type { AccessEvent } from '@/types/pocketbase'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 defineProps<{ event: AccessEvent | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -18,7 +19,7 @@ const emit = defineEmits<{ close: [] }>()
       <div class="modal-box max-w-2xl" v-if="event">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-bold text-lg flex items-center gap-2">
-            <span class="badge" :class="eventKindBadge(event)">{{ event.kind }}</span>
+            <SoftBadge :tone="eventKindTone(event)" dot>{{ event.kind }}</SoftBadge>
             Event Detail
           </h3>
           <button @click="emit('close')" class="btn btn-sm btn-circle btn-ghost">✕</button>
@@ -29,13 +30,13 @@ const emit = defineEmits<{ close: [] }>()
           <div><span class="opacity-50 text-xs uppercase block">Location</span><code>{{ event.location || '-' }}</code></div>
           <div><span class="opacity-50 text-xs uppercase block">Portal</span><code>{{ event.portal || '-' }}</code></div>
           <div><span class="opacity-50 text-xs uppercase block">Allow</span>
-            <span v-if="event.kind === 'tap'" class="badge badge-sm" :class="event.allow ? 'badge-success' : 'badge-error'">{{ event.allow ? 'allow' : 'deny' }}</span>
+            <SoftBadge v-if="event.kind === 'tap'" :tone="event.allow ? 'success' : 'error'" dot>{{ event.allow ? 'allow' : 'deny' }}</SoftBadge>
             <span v-else class="opacity-40">n/a</span>
           </div>
           <div><span class="opacity-50 text-xs uppercase block">Credential</span><code>{{ event.credential || '-' }}</code></div>
           <div><span class="opacity-50 text-xs uppercase block">User</span><code>{{ event.user || '-' }}</code></div>
           <div><span class="opacity-50 text-xs uppercase block">Source</span>
-            <span v-if="event.source" class="badge badge-sm badge-ghost">{{ event.source }}</span>
+            <SoftBadge v-if="event.source">{{ event.source }}</SoftBadge>
             <span v-else class="opacity-40">n/a</span>
           </div>
           <div class="col-span-2"><span class="opacity-50 text-xs uppercase block">Reason</span>{{ event.reason ? formatConstant(event.reason) : '-' }}</div>

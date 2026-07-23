@@ -8,6 +8,7 @@ import { useClientPagination } from '@/composables/useClientPagination'
 import type { AccessEvent } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 // Denied access = a credential presentation (tap) the policy rejected. The deny
 // reason codes are a stable contract, so a breakdown by reason answers "why are
@@ -159,7 +160,7 @@ onMounted(load)
           <ul v-if="byReason.length" class="space-y-1">
             <li v-for="r in byReason.slice(0, 6)" :key="r.key" class="flex items-center justify-between gap-2 text-sm">
               <span class="truncate">{{ formatConstant(r.key) }}</span>
-              <span class="badge badge-sm badge-error tabular-nums">{{ r.count }}</span>
+              <SoftBadge tone="error" class="tabular-nums">{{ r.count }}</SoftBadge>
             </li>
           </ul>
           <div v-else class="text-sm opacity-50">No denials in range.</div>
@@ -169,7 +170,7 @@ onMounted(load)
           <ul v-if="byPortal.length" class="space-y-1">
             <li v-for="p in byPortal.slice(0, 6)" :key="p.key" class="flex items-center justify-between gap-2 text-sm">
               <span class="truncate font-mono text-xs">{{ p.key }}</span>
-              <span class="badge badge-sm tabular-nums">{{ p.count }}</span>
+              <SoftBadge class="tabular-nums">{{ p.count }}</SoftBadge>
             </li>
           </ul>
           <div v-else class="text-sm opacity-50">No denials in range.</div>
@@ -201,7 +202,7 @@ onMounted(load)
                 <td>{{ e.portal || '-' }}</td>
                 <td class="font-mono text-xs">{{ e.credential || '-' }}</td>
                 <td>{{ e.user || '-' }}</td>
-                <td><span class="badge badge-sm badge-error">{{ formatConstant(e.reason) || '-' }}</span></td>
+                <td><SoftBadge tone="error">{{ formatConstant(e.reason) || '-' }}</SoftBadge></td>
               </tr>
             </tbody>
           </table>

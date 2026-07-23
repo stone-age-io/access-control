@@ -1,4 +1,5 @@
 import type { PointStatus } from '@/types/pocketbase'
+import type { SoftTone } from './badges'
 
 /**
  * Aggregate an area's arm-state from its per-controller arm shadows.
@@ -48,17 +49,15 @@ export function aggregateArm(rows: PointStatus[]): ArmAggregate {
   return { state: 'partial', armed, total }
 }
 
-/** A daisyUI badge class for an aggregated arm-state. */
-export function armBadge(state: ArmState): string {
+/** Soft-badge tone for an aggregated arm-state (armed = error, converging = warning). */
+export function armTone(state: ArmState): SoftTone {
   switch (state) {
     case 'armed':
-      return 'badge-error'
-    case 'disarmed':
-      return 'badge-ghost'
+      return 'error'
     case 'partial':
-      return 'badge-warning'
+      return 'warning'
     default:
-      return 'badge-ghost'
+      return 'neutral' // disarmed, unknown
   }
 }
 

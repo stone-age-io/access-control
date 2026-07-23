@@ -11,6 +11,9 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
+import Avatar from '@/components/ui/Avatar.vue'
+import type { SoftTone } from '@/utils/badges'
 
 const router = useRouter()
 const route = useRoute()
@@ -93,10 +96,10 @@ async function handleDelete() {
   }
 }
 
-function credBadge(status: string): string {
-  if (status === 'active') return 'badge-success'
-  if (status === 'revoked') return 'badge-error'
-  return 'badge-warning'
+function credTone(status: string): SoftTone {
+  if (status === 'active') return 'success'
+  if (status === 'revoked') return 'error'
+  return 'warning'
 }
 
 onMounted(load)
@@ -119,6 +122,13 @@ onMounted(load)
 
     <!-- Summary -->
     <BaseCard>
+      <div class="flex items-center gap-3 mb-5">
+        <Avatar :name="record.name || record.email" :seed="record.id" size="md" />
+        <div class="min-w-0">
+          <div class="font-bold truncate">{{ record.name || 'Unnamed' }}</div>
+          <div class="text-sm text-base-content/60 truncate">{{ record.email || '—' }}</div>
+        </div>
+      </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
         <DataField label="Name">{{ record.name || '—' }}</DataField>
         <DataField label="Email">{{ record.email || '—' }}</DataField>
@@ -127,9 +137,9 @@ onMounted(load)
           <span v-else class="opacity-40">—</span>
         </DataField>
         <DataField label="Status">
-          <span class="badge badge-sm" :class="record.status === 'suspended' ? 'badge-warning' : 'badge-success'">
+          <SoftBadge :tone="record.status === 'suspended' ? 'warning' : 'success'" dot>
             {{ record.status || 'active' }}
-          </span>
+          </SoftBadge>
         </DataField>
       </div>
     </BaseCard>
@@ -148,9 +158,9 @@ onMounted(load)
       </template>
       <template #item="{ item: cred }">
         <code class="text-sm font-medium text-primary truncate">{{ cred.value }}</code>
-        <span class="badge badge-ghost badge-sm">{{ cred.type || '—' }}</span>
+        <SoftBadge>{{ cred.type || '—' }}</SoftBadge>
         <span v-if="cred.label" class="text-sm opacity-60 truncate flex-1">{{ cred.label }}</span>
-        <span class="badge badge-sm ml-auto" :class="credBadge(cred.status || '')">{{ cred.status || 'active' }}</span>
+        <SoftBadge class="ml-auto" :tone="credTone(cred.status || '')" dot>{{ cred.status || 'active' }}</SoftBadge>
       </template>
     </RelationList>
 
@@ -168,7 +178,7 @@ onMounted(load)
         <code class="text-sm font-medium text-primary">{{ ea.portal.code }}</code>
         <span class="text-sm opacity-60 truncate flex-1">{{ ea.portal.name }}</span>
         <span class="text-[10px] uppercase opacity-40 tracking-wide">via</span>
-        <span v-for="g in ea.groups" :key="g" class="badge badge-ghost badge-sm">{{ g }}</span>
+        <SoftBadge v-for="g in ea.groups" :key="g">{{ g }}</SoftBadge>
       </template>
     </RelationList>
 

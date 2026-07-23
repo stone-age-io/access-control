@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { usePagination } from '@/composables/usePagination'
 import { pb } from '@/utils/pb'
 import { formatDate, formatConstant, localInputToISO } from '@/utils/format'
-import { eventKindBadge, tsRangeClauses } from '@/utils/events'
+import { eventKindTone, tsRangeClauses } from '@/utils/events'
 import { toCsv, downloadCsv, fileStamp, type CsvColumn } from '@/utils/csv'
 import type { AccessEvent, EventKind, EventSource } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
@@ -12,6 +12,7 @@ import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
 import EventDetailModal from '@/components/ui/EventDetailModal.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const { items: events, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
   usePagination<AccessEvent>('events', 25)
@@ -180,10 +181,10 @@ onMounted(loadEvents)
 
     <BaseCard :no-padding="true">
       <ResponsiveList :items="filtered" :columns="columns" :loading="loading" @row-click="(e) => selected = e">
-        <template #cell-kind="{ item }"><span class="badge badge-sm" :class="eventKindBadge(item)">{{ item.kind || '—' }}</span></template>
-        <template #card-kind="{ item }"><span class="badge badge-sm" :class="eventKindBadge(item)">{{ item.kind || '—' }}</span></template>
-        <template #cell-source="{ item }"><span v-if="item.source" class="badge badge-sm badge-ghost">{{ item.source }}</span><span v-else class="opacity-40">—</span></template>
-        <template #card-source="{ item }"><span v-if="item.source" class="badge badge-sm badge-ghost">{{ item.source }}</span><span v-else class="opacity-40">—</span></template>
+        <template #cell-kind="{ item }"><SoftBadge :tone="eventKindTone(item)" dot>{{ item.kind || '—' }}</SoftBadge></template>
+        <template #card-kind="{ item }"><SoftBadge :tone="eventKindTone(item)" dot>{{ item.kind || '—' }}</SoftBadge></template>
+        <template #cell-source="{ item }"><SoftBadge v-if="item.source">{{ item.source }}</SoftBadge><span v-else class="opacity-40">—</span></template>
+        <template #card-source="{ item }"><SoftBadge v-if="item.source">{{ item.source }}</SoftBadge><span v-else class="opacity-40">—</span></template>
         <template #cell-location="{ item }"><code class="text-xs">{{ item.location || '-' }}</code></template>
 
         <template #actions="{ item }">

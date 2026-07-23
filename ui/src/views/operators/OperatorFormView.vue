@@ -10,6 +10,7 @@ import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
 import RelationPicker from '@/components/ui/RelationPicker.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -196,7 +197,7 @@ onMounted(async () => {
           <div>
             <div class="flex items-center justify-between mb-2">
               <span class="text-sm font-medium opacity-70">Presets</span>
-              <span class="badge badge-ghost badge-sm">{{ currentPreset }}</span>
+              <SoftBadge>{{ currentPreset }}</SoftBadge>
             </div>
             <div class="flex flex-wrap gap-2">
               <button

@@ -10,11 +10,13 @@ import { usePortalCommands, POSTURES } from '@/composables/usePortalCommands'
 import { pb } from '@/utils/pb'
 import type { Portal, PointStatus } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
+import type { SoftTone } from '@/utils/badges'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
 import PostureBadge from '@/components/ui/PostureBadge.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -45,14 +47,14 @@ function statusFor(p: Portal): PointStatus | undefined {
   return statusByCode.value.get(p.code)
 }
 
-function doorBadge(p: Portal): { cls: string; text: string } {
+function doorTone(p: Portal): { tone: SoftTone; text: string } {
   switch (statusFor(p)?.state) {
     case 'open':
-      return { cls: 'badge-error', text: 'Open' }
+      return { tone: 'error', text: 'Open' }
     case 'closed':
-      return { cls: 'badge-success', text: 'Closed' }
+      return { tone: 'success', text: 'Closed' }
     default:
-      return { cls: 'badge-ghost', text: 'Unknown' }
+      return { tone: 'neutral', text: 'Unknown' }
   }
 }
 
@@ -234,10 +236,10 @@ onBeforeUnmount(() => {
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>
 
         <template #cell-type="{ item }">
-          <span class="badge badge-ghost badge-sm">{{ item.type || '-' }}</span>
+          <SoftBadge>{{ item.type || '-' }}</SoftBadge>
         </template>
         <template #card-type="{ item }">
-          <span class="badge badge-ghost badge-sm">{{ item.type || '-' }}</span>
+          <SoftBadge>{{ item.type || '-' }}</SoftBadge>
         </template>
 
         <template #cell-expand.location.code="{ item }">
@@ -256,14 +258,14 @@ onBeforeUnmount(() => {
         <!-- Live door state from the point_status shadow (Unknown = not reporting). -->
         <template #cell-door="{ item }">
           <span class="inline-flex items-center gap-1">
-            <span class="badge badge-sm" :class="doorBadge(item).cls">{{ doorBadge(item).text }}</span>
-            <span v-if="statusFor(item)?.held" class="badge badge-xs badge-warning">Held</span>
+            <SoftBadge :tone="doorTone(item).tone" dot>{{ doorTone(item).text }}</SoftBadge>
+            <SoftBadge v-if="statusFor(item)?.held" tone="warning" dot>Held</SoftBadge>
           </span>
         </template>
         <template #card-door="{ item }">
           <span class="inline-flex items-center gap-1">
-            <span class="badge badge-sm" :class="doorBadge(item).cls">{{ doorBadge(item).text }}</span>
-            <span v-if="statusFor(item)?.held" class="badge badge-xs badge-warning">Held</span>
+            <SoftBadge :tone="doorTone(item).tone" dot>{{ doorTone(item).text }}</SoftBadge>
+            <SoftBadge v-if="statusFor(item)?.held" tone="warning" dot>Held</SoftBadge>
           </span>
         </template>
 
@@ -271,21 +273,21 @@ onBeforeUnmount(() => {
              configured standing posture, dimmed, so the column never looks live when it isn't. -->
         <template #cell-posture="{ item }">
           <PostureBadge v-if="statusFor(item)" :posture="statusFor(item)!.posture" :source="statusFor(item)!.posture_source" />
-          <span v-else class="badge badge-ghost badge-sm opacity-60" title="No live status — showing configured standing posture">
+          <SoftBadge v-else class="opacity-60" title="No live status — showing configured standing posture">
             {{ item.posture || 'secure' }}
-          </span>
+          </SoftBadge>
         </template>
         <template #card-posture="{ item }">
           <PostureBadge v-if="statusFor(item)" :posture="statusFor(item)!.posture" :source="statusFor(item)!.posture_source" />
-          <span v-else class="badge badge-ghost badge-sm opacity-60" title="No live status — showing configured standing posture">
+          <SoftBadge v-else class="opacity-60" title="No live status — showing configured standing posture">
             {{ item.posture || 'secure' }}
-          </span>
+          </SoftBadge>
         </template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 

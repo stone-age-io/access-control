@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { pb } from '@/utils/pb'
 import type { Location, Portal } from '@/types/pocketbase'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const props = defineProps<{ location: Location; isMobile: boolean }>()
 defineEmits<{ close: [] }>()
@@ -56,7 +57,7 @@ watch(() => props.location.id, (id) => loadPortals(id), { immediate: true })
       <div class="p-3">
         <div class="text-[10px] uppercase tracking-wider text-base-content/50 font-semibold mb-2">
           Portals
-          <span v-if="portals.length" class="badge badge-xs ml-1">{{ portals.length }}</span>
+          <SoftBadge v-if="portals.length" class="ml-1">{{ portals.length }}</SoftBadge>
         </div>
         <div v-if="loading" class="flex justify-center p-4">
           <span class="loading loading-spinner loading-sm opacity-50"></span>
@@ -74,7 +75,7 @@ watch(() => props.location.id, (id) => loadPortals(id), { immediate: true })
             <span class="font-medium text-sm truncate block">{{ p.name || p.code }}</span>
             <code class="text-xs text-primary">{{ p.code }}</code>
           </span>
-          <span v-if="p.type" class="badge badge-ghost badge-xs shrink-0">{{ p.type }}</span>
+          <SoftBadge v-if="p.type" class="shrink-0">{{ p.type }}</SoftBadge>
         </router-link>
       </div>
     </div>

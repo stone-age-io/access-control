@@ -12,11 +12,13 @@ import type {
   CredentialStatus,
   CredentialType,
 } from '@/types/pocketbase'
+import type { SoftTone } from '@/utils/badges'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import RailCard from '@/components/ui/RailCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -462,13 +464,13 @@ const columns: Column<PreviewRow>[] = [
   { key: 'messages', label: 'Notes' },
 ]
 
-const ACTION_BADGE: Record<string, string> = {
-  create: 'badge-success',
-  update: 'badge-info',
-  skip: 'badge-ghost',
-  error: 'badge-error',
-  reuse: 'badge-ghost',
-  none: '',
+const ACTION_TONE: Record<string, SoftTone> = {
+  create: 'success',
+  update: 'info',
+  skip: 'neutral',
+  error: 'error',
+  reuse: 'neutral',
+  none: 'neutral',
 }
 </script>
 
@@ -576,7 +578,7 @@ const ACTION_BADGE: Record<string, string> = {
         <p class="text-xs opacity-60 leading-relaxed">
           This is a dry run — nothing has been written yet. <span class="font-medium">{{ writeTotal }}</span>
           record(s) will be created or updated when you confirm. Rows marked
-          <span class="badge badge-error badge-xs">error</span> are skipped.
+          <span class="badge-soft badge-soft-error">error</span> are skipped.
         </p>
       </RailCard>
 
@@ -588,7 +590,7 @@ const ACTION_BADGE: Record<string, string> = {
               <code v-if="item.chKey" class="text-[11px] opacity-50">{{ item.chKey }}</code>
             </template>
             <template #cell-chAction="{ item }">
-              <span class="badge badge-sm" :class="ACTION_BADGE[item.chAction]">{{ item.chAction }}</span>
+              <SoftBadge :tone="ACTION_TONE[item.chAction]" dot>{{ item.chAction }}</SoftBadge>
             </template>
             <template #cell-credValue="{ item }">
               <code v-if="item.credValue" class="text-sm">{{ item.credValue }}</code>
@@ -596,7 +598,7 @@ const ACTION_BADGE: Record<string, string> = {
               <span v-if="item.credType" class="block text-[11px] opacity-50">{{ item.credType }}</span>
             </template>
             <template #cell-credAction="{ item }">
-              <span v-if="item.credAction !== 'none'" class="badge badge-sm" :class="ACTION_BADGE[item.credAction]">{{ item.credAction }}</span>
+              <SoftBadge v-if="item.credAction !== 'none'" :tone="ACTION_TONE[item.credAction]" dot>{{ item.credAction }}</SoftBadge>
               <span v-else class="opacity-40">—</span>
             </template>
             <template #cell-messages="{ item }">
@@ -611,14 +613,14 @@ const ACTION_BADGE: Record<string, string> = {
               <div class="text-sm font-bold text-primary truncate">{{ item.chLabel }}</div>
             </template>
             <template #card-chAction="{ item }">
-              <span class="badge badge-xs" :class="ACTION_BADGE[item.chAction]">{{ item.chAction }}</span>
+              <SoftBadge :tone="ACTION_TONE[item.chAction]" dot>{{ item.chAction }}</SoftBadge>
             </template>
             <template #card-credValue="{ item }">
               <code v-if="item.credValue" class="text-xs">{{ item.credValue }}</code>
               <span v-else>—</span>
             </template>
             <template #card-credAction="{ item }">
-              <span v-if="item.credAction !== 'none'" class="badge badge-xs" :class="ACTION_BADGE[item.credAction]">{{ item.credAction }}</span>
+              <SoftBadge v-if="item.credAction !== 'none'" :tone="ACTION_TONE[item.credAction]" dot>{{ item.credAction }}</SoftBadge>
               <span v-else>—</span>
             </template>
             <template #card-messages="{ item }">
@@ -666,7 +668,7 @@ const ACTION_BADGE: Record<string, string> = {
           <h3 class="text-sm font-bold mb-2">Errors</h3>
           <div class="border border-base-300 rounded-box divide-y divide-base-200 max-h-72 overflow-y-auto">
             <div v-for="(e, i) in result.errors" :key="i" class="flex gap-3 px-3 py-2 text-sm">
-              <span class="badge badge-ghost badge-sm shrink-0">line {{ e.line }}</span>
+              <SoftBadge class="shrink-0">line {{ e.line }}</SoftBadge>
               <span class="text-error">{{ e.message }}</span>
             </div>
           </div>

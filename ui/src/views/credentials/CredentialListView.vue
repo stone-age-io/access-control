@@ -12,6 +12,8 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
+import type { SoftTone } from '@/utils/badges'
 
 const router = useRouter()
 const toast = useToast()
@@ -41,10 +43,10 @@ const columns: Column<Credential>[] = [
   { key: 'label', label: 'Label' },
 ]
 
-const STATUS_BADGE: Record<string, string> = {
-  active: 'badge-success',
-  revoked: 'badge-error',
-  suspended: 'badge-warning',
+const STATUS_TONE: Record<string, SoftTone> = {
+  active: 'success',
+  revoked: 'error',
+  suspended: 'warning',
 }
 
 async function handleDelete(c: Credential) {
@@ -103,10 +105,10 @@ onMounted(reload)
         <template #card-value="{ item }"><code class="text-sm font-bold text-primary" :title="item.value">{{ item.value }}</code></template>
 
         <template #cell-type="{ item }">
-          <span class="badge badge-ghost badge-sm">{{ item.type || '-' }}</span>
+          <SoftBadge>{{ item.type || '-' }}</SoftBadge>
         </template>
         <template #card-type="{ item }">
-          <span class="badge badge-ghost badge-sm">{{ item.type || '-' }}</span>
+          <SoftBadge>{{ item.type || '-' }}</SoftBadge>
         </template>
 
         <template #cell-expand.user.name="{ item }">
@@ -121,16 +123,16 @@ onMounted(reload)
         </template>
 
         <template #cell-status="{ item }">
-          <span class="badge badge-sm" :class="STATUS_BADGE[item.status] || 'badge-ghost'">{{ item.status || '-' }}</span>
+          <SoftBadge :tone="STATUS_TONE[item.status] || 'neutral'" dot>{{ item.status || '-' }}</SoftBadge>
         </template>
         <template #card-status="{ item }">
-          <span class="badge badge-sm" :class="STATUS_BADGE[item.status] || 'badge-ghost'">{{ item.status || '-' }}</span>
+          <SoftBadge :tone="STATUS_TONE[item.status] || 'neutral'" dot>{{ item.status || '-' }}</SoftBadge>
         </template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 

@@ -10,6 +10,7 @@ import { computed } from 'vue'
 import type { ModelProfile } from '@/utils/models'
 import type { ControllerIO, Occupant } from '@/utils/io'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const props = defineProps<{ profile: ModelProfile | null; io: ControllerIO }>()
 
@@ -46,7 +47,7 @@ const inputRows = computed(() => (props.profile ? rows(props.profile.inputs, pro
             class="flex items-center gap-2 py-1.5 px-1"
             :class="r.occ.length > 1 ? 'text-error' : ''"
           >
-            <span class="badge badge-sm badge-ghost font-mono w-7 justify-center shrink-0">{{ r.index }}</span>
+            <SoftBadge class="font-mono w-7 justify-center shrink-0">{{ r.index }}</SoftBadge>
             <span v-if="r.occ.length > 1" class="shrink-0" title="More than one record claims this line">⚠</span>
             <div class="flex-1 min-w-0 flex flex-wrap gap-x-2">
               <template v-if="r.occ.length">
@@ -76,7 +77,7 @@ const inputRows = computed(() => (props.profile ? rows(props.profile.inputs, pro
             class="flex items-center gap-2 py-1.5 px-1"
             :class="r.occ.length > 1 ? 'text-error' : ''"
           >
-            <span class="badge badge-sm badge-ghost font-mono w-7 justify-center shrink-0">{{ r.index }}</span>
+            <SoftBadge class="font-mono w-7 justify-center shrink-0">{{ r.index }}</SoftBadge>
             <span v-if="r.occ.length > 1" class="shrink-0" title="More than one record claims this line">⚠</span>
             <div class="flex-1 min-w-0 flex flex-wrap gap-x-2">
               <template v-if="r.occ.length">

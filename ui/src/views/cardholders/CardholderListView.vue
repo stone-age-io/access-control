@@ -12,6 +12,8 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
+import Avatar from '@/components/ui/Avatar.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -97,27 +99,37 @@ onMounted(reload)
 
     <BaseCard :no-padding="true">
       <ResponsiveList :items="cardholders" :columns="columns" :loading="loading" @row-click="(c) => router.push(`/cardholders/${c.id}`)">
-        <template #cell-name="{ item }"><div class="font-medium">{{ item.name || 'Unnamed' }}</div></template>
-        <template #card-name="{ item }"><div class="text-sm font-bold text-primary truncate">{{ item.name || 'Unnamed' }}</div></template>
+        <template #cell-name="{ item }">
+          <div class="flex items-center gap-2.5">
+            <Avatar :name="item.name" :seed="item.id" />
+            <span class="font-medium">{{ item.name || 'Unnamed' }}</span>
+          </div>
+        </template>
+        <template #card-name="{ item }">
+          <div class="flex items-center gap-2 min-w-0">
+            <Avatar :name="item.name" :seed="item.id" size="xs" />
+            <span class="text-sm font-bold text-primary truncate">{{ item.name || 'Unnamed' }}</span>
+          </div>
+        </template>
 
         <template #cell-status="{ item }">
-          <span class="badge badge-sm" :class="item.status === 'active' ? 'badge-success' : 'badge-warning'">{{ item.status || 'active' }}</span>
+          <SoftBadge :tone="item.status === 'active' ? 'success' : 'warning'" dot>{{ item.status || 'active' }}</SoftBadge>
         </template>
         <template #card-status="{ item }">
-          <span class="badge badge-sm" :class="item.status === 'active' ? 'badge-success' : 'badge-warning'">{{ item.status || 'active' }}</span>
+          <SoftBadge :tone="item.status === 'active' ? 'success' : 'warning'" dot>{{ item.status || 'active' }}</SoftBadge>
         </template>
 
         <template #cell-roles="{ item }">
           <div v-if="rolesOf(item).length" class="flex flex-wrap gap-1">
-            <code v-for="r in rolesOf(item).slice(0, 3)" :key="r.id" class="badge badge-ghost badge-sm">{{ r.code }}</code>
-            <span v-if="rolesOf(item).length > 3" class="badge badge-ghost badge-sm">+{{ rolesOf(item).length - 3 }}</span>
+            <SoftBadge v-for="r in rolesOf(item).slice(0, 3)" :key="r.id" class="font-mono">{{ r.code }}</SoftBadge>
+            <SoftBadge v-if="rolesOf(item).length > 3">+{{ rolesOf(item).length - 3 }}</SoftBadge>
           </div>
           <span v-else class="text-base-content/40">-</span>
         </template>
         <template #card-roles="{ item }">
           <div v-if="rolesOf(item).length" class="flex flex-wrap gap-1 justify-end">
-            <code v-for="r in rolesOf(item).slice(0, 2)" :key="r.id" class="badge badge-ghost badge-sm">{{ r.code }}</code>
-            <span v-if="rolesOf(item).length > 2" class="badge badge-ghost badge-sm">+{{ rolesOf(item).length - 2 }}</span>
+            <SoftBadge v-for="r in rolesOf(item).slice(0, 2)" :key="r.id" class="font-mono">{{ r.code }}</SoftBadge>
+            <SoftBadge v-if="rolesOf(item).length > 2">+{{ rolesOf(item).length - 2 }}</SoftBadge>
           </div>
           <span v-else>-</span>
         </template>
@@ -132,9 +144,9 @@ onMounted(reload)
         </template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 

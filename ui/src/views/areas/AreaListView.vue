@@ -7,7 +7,7 @@ import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
 import { useAreaCommands } from '@/composables/useAreaCommands'
-import { aggregateArm, armBadge, armLabel } from '@/utils/arming'
+import { aggregateArm, armTone, armLabel } from '@/utils/arming'
 import { pb } from '@/utils/pb'
 import type { Area, PointStatus } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
@@ -15,6 +15,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -260,25 +261,25 @@ onBeforeUnmount(() => {
 
         <!-- Live aggregated arm-state across this area's controllers (Unknown = none reporting). -->
         <template #cell-state="{ item }">
-          <span class="badge badge-sm" :class="armBadge(armFor(item).state)">{{ armLabel(armFor(item)) }}</span>
+          <SoftBadge :tone="armTone(armFor(item).state)" dot>{{ armLabel(armFor(item)) }}</SoftBadge>
         </template>
         <template #card-state="{ item }">
-          <span class="badge badge-sm" :class="armBadge(armFor(item).state)">{{ armLabel(armFor(item)) }}</span>
+          <SoftBadge :tone="armTone(armFor(item).state)" dot>{{ armLabel(armFor(item)) }}</SoftBadge>
         </template>
 
         <template #cell-arm="{ item }">
-          <span class="badge badge-sm" :class="item.arm === 'armed' ? 'badge-error' : 'badge-ghost'">{{ item.arm || 'disarmed' }}</span>
+          <SoftBadge :tone="item.arm === 'armed' ? 'error' : 'neutral'" dot>{{ item.arm || 'disarmed' }}</SoftBadge>
         </template>
         <template #card-arm="{ item }">
-          <span class="badge badge-sm" :class="item.arm === 'armed' ? 'badge-error' : 'badge-ghost'">{{ item.arm || 'disarmed' }}</span>
+          <SoftBadge :tone="item.arm === 'armed' ? 'error' : 'neutral'" dot>{{ item.arm || 'disarmed' }}</SoftBadge>
         </template>
 
         <template #cell-arm_override="{ item }">
-          <span v-if="item.arm_override" class="badge badge-sm badge-warning">{{ item.arm_override }}</span>
+          <SoftBadge v-if="item.arm_override" tone="warning" dot>{{ item.arm_override }}</SoftBadge>
           <span v-else class="opacity-40">—</span>
         </template>
         <template #card-arm_override="{ item }">
-          <span v-if="item.arm_override" class="badge badge-sm badge-warning">{{ item.arm_override }}</span>
+          <SoftBadge v-if="item.arm_override" tone="warning" dot>{{ item.arm_override }}</SoftBadge>
           <span v-else class="opacity-40">—</span>
         </template>
 

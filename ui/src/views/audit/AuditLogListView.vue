@@ -3,11 +3,13 @@ import { ref, computed, onMounted } from 'vue'
 import { usePagination } from '@/composables/usePagination'
 import { formatDate, formatConstant } from '@/utils/format'
 import type { AuditLog, AuditEventType } from '@/types/pocketbase'
+import type { SoftTone } from '@/utils/badges'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const { items: logs, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
   usePagination<AuditLog>('audit_logs', 25)
@@ -47,12 +49,12 @@ const columns: Column<AuditLog>[] = [
   { key: 'actor_email', label: 'Actor' },
 ]
 
-function typeBadge(l: AuditLog): string {
+function typeTone(l: AuditLog): SoftTone {
   switch (l.event_type) {
-    case 'create': return 'badge-success'
-    case 'delete': return 'badge-error'
-    case 'auth': return 'badge-info'
-    default: return 'badge-ghost'
+    case 'create': return 'success'
+    case 'delete': return 'error'
+    case 'auth': return 'info'
+    default: return 'neutral'
   }
 }
 
@@ -84,8 +86,8 @@ onMounted(loadLogs)
 
     <BaseCard :no-padding="true">
       <ResponsiveList :items="filtered" :columns="columns" :loading="loading" @row-click="(l) => selected = l">
-        <template #cell-event_type="{ item }"><span class="badge badge-sm" :class="typeBadge(item)">{{ item.event_type || '—' }}</span></template>
-        <template #card-event_type="{ item }"><span class="badge badge-sm" :class="typeBadge(item)">{{ item.event_type || '—' }}</span></template>
+        <template #cell-event_type="{ item }"><SoftBadge :tone="typeTone(item)" dot>{{ item.event_type || '—' }}</SoftBadge></template>
+        <template #card-event_type="{ item }"><SoftBadge :tone="typeTone(item)" dot>{{ item.event_type || '—' }}</SoftBadge></template>
         <template #cell-collection_name="{ item }"><code class="text-xs">{{ item.collection_name || '-' }}</code></template>
         <template #cell-record_id="{ item }"><code class="text-xs">{{ item.record_id || '-' }}</code></template>
 
@@ -106,7 +108,7 @@ onMounted(loadLogs)
       <div class="modal-box max-w-3xl" v-if="selected">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-bold text-lg flex items-center gap-2">
-            <span class="badge" :class="typeBadge(selected)">{{ selected.event_type }}</span>
+            <SoftBadge :tone="typeTone(selected)" dot>{{ selected.event_type }}</SoftBadge>
             <code class="text-sm">{{ selected.collection_name }}</code>
           </h3>
           <button @click="selected = null" class="btn btn-sm btn-circle btn-ghost">✕</button>

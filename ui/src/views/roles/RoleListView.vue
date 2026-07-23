@@ -12,6 +12,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -100,23 +101,23 @@ onMounted(reload)
 
         <template #cell-access_groups="{ item }">
           <div v-if="groupsOf(item).length" class="flex flex-wrap gap-1">
-            <code v-for="g in groupsOf(item).slice(0, 3)" :key="g.id" class="badge badge-ghost badge-sm">{{ g.code }}</code>
-            <span v-if="groupsOf(item).length > 3" class="badge badge-ghost badge-sm">+{{ groupsOf(item).length - 3 }}</span>
+            <SoftBadge v-for="g in groupsOf(item).slice(0, 3)" :key="g.id" class="font-mono">{{ g.code }}</SoftBadge>
+            <SoftBadge v-if="groupsOf(item).length > 3">+{{ groupsOf(item).length - 3 }}</SoftBadge>
           </div>
-          <span v-else class="badge badge-ghost badge-sm">{{ (item.access_groups || []).length }}</span>
+          <SoftBadge v-else>{{ (item.access_groups || []).length }}</SoftBadge>
         </template>
         <template #card-access_groups="{ item }">
           <div v-if="groupsOf(item).length" class="flex flex-wrap gap-1 justify-end">
-            <code v-for="g in groupsOf(item).slice(0, 2)" :key="g.id" class="badge badge-ghost badge-sm">{{ g.code }}</code>
-            <span v-if="groupsOf(item).length > 2" class="badge badge-ghost badge-sm">+{{ groupsOf(item).length - 2 }}</span>
+            <SoftBadge v-for="g in groupsOf(item).slice(0, 2)" :key="g.id" class="font-mono">{{ g.code }}</SoftBadge>
+            <SoftBadge v-if="groupsOf(item).length > 2">+{{ groupsOf(item).length - 2 }}</SoftBadge>
           </div>
-          <span v-else class="badge badge-ghost badge-sm">{{ (item.access_groups || []).length }}</span>
+          <SoftBadge v-else>{{ (item.access_groups || []).length }}</SoftBadge>
         </template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import HelpButton from '@/components/ui/HelpButton.vue'
+import ListLayout from '@/components/ui/ListLayout.vue'
 import DeniedAccessReport from './DeniedAccessReport.vue'
 import WhoHasAccessReport from './WhoHasAccessReport.vue'
 import WiringReport from './WiringReport.vue'
@@ -31,15 +31,10 @@ function select(key: string) {
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-      <div>
-        <h1 class="text-3xl font-bold">Reports</h1>
-        <p class="text-base-content/70 mt-1">Read-only views over the policy graph and event stream — exportable for audits and handoff.</p>
-      </div>
-      <HelpButton />
-    </div>
-
+  <ListLayout
+    title="Reports"
+    subtitle="Read-only views over the policy graph and event stream — exportable for audits and handoff."
+  >
     <!-- Wrapping segmented control: full labels, no horizontal scroll. Plain
          buttons rather than DaisyUI tabs-boxed, whose fixed-height tabs clipped
          the labels (emoji-only) and double-scrolled once four wide tabs overflowed
@@ -66,5 +61,5 @@ function select(key: string) {
     <WhoHasAccessReport v-else-if="active === 'who-has-access'" />
     <WiringReport v-else-if="active === 'wiring'" />
     <AccessSimulatorReport v-else-if="active === 'simulator'" />
-  </div>
+  </ListLayout>
 </template>

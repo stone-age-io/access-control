@@ -11,6 +11,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -124,9 +125,9 @@ onBeforeUnmount(() => {
     <BaseCard title="Live status">
       <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
         <DataField label="Relay">
-          <span class="badge badge-sm" :class="status.state === 'energized' ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="status.state === 'energized' ? 'success' : 'neutral'" dot>
             {{ status.state === 'energized' ? 'Energized' : 'Off' }}
-          </span>
+          </SoftBadge>
         </DataField>
         <DataField label="Updated">{{ changedAt() }}</DataField>
       </div>

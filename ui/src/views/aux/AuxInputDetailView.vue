@@ -10,6 +10,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -108,9 +109,9 @@ onBeforeUnmount(() => {
     <BaseCard title="Live status">
       <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
         <DataField label="Input">
-          <span class="badge badge-sm" :class="status.state === 'active' ? 'badge-warning' : 'badge-ghost'">
+          <SoftBadge :tone="status.state === 'active' ? 'warning' : 'neutral'" dot>
             {{ status.state === 'active' ? 'Active' : 'Inactive' }}
-          </span>
+          </SoftBadge>
         </DataField>
         <DataField label="Updated">{{ changedAt() }}</DataField>
       </div>
@@ -146,9 +147,9 @@ onBeforeUnmount(() => {
           <span v-else class="opacity-40">None</span>
         </DataField>
         <DataField label="Point type">
-          <span class="badge badge-sm" :class="record.point_type === 'intrusion' ? 'badge-error' : record.point_type === 'tamper_24h' ? 'badge-warning' : 'badge-ghost'">
+          <SoftBadge :tone="record.point_type === 'intrusion' ? 'error' : record.point_type === 'tamper_24h' ? 'warning' : 'neutral'" dot>
             {{ record.point_type || 'monitor' }}
-          </span>
+          </SoftBadge>
         </DataField>
       </div>
     </BaseCard>

@@ -12,6 +12,7 @@ import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
 import FloorPlanMap from '@/components/map/FloorPlanMap.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -113,14 +114,14 @@ onMounted(load)
           <code class="text-sm">{{ record.timezone }}</code>
         </DataField>
         <DataField label="FAI Suppress">
-          <span class="badge badge-sm" :class="record.fai_suppress ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="record.fai_suppress ? 'success' : 'neutral'" dot>
             {{ record.fai_suppress ? 'suppressed' : 'off' }}
-          </span>
+          </SoftBadge>
         </DataField>
         <DataField label="Email on fire">
-          <span class="badge badge-sm" :class="record.notify_fire ? 'badge-warning' : 'badge-ghost'">
+          <SoftBadge :tone="record.notify_fire ? 'warning' : 'neutral'" dot>
             {{ record.notify_fire ? 'emails opted-in operators' : 'off' }}
-          </span>
+          </SoftBadge>
         </DataField>
         <DataField label="Coordinates">
           <span v-if="hasCoords" class="font-mono text-sm">
@@ -134,7 +135,7 @@ onMounted(load)
               v-for="c in record.expand.holiday_calendars"
               :key="c.id"
               :to="`/holiday-calendars/${c.id}`"
-              class="badge badge-outline gap-1"
+              class="badge-soft badge-soft-neutral gap-1"
             ><code class="text-xs">{{ c.code }}</code></router-link>
           </div>
           <span v-else class="opacity-40">none</span>

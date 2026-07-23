@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { SoftTone } from '@/utils/badges'
 
 /**
  * Effective-posture badge that names its own provenance. The colour and prefix
@@ -21,12 +22,12 @@ const props = withDefaults(
   { posture: '', source: '' },
 )
 
-type Look = { label: string; icon: string; cls: string; emphatic?: boolean }
+type Look = { label: string; icon: string; tone: SoftTone; emphatic?: boolean }
 
 const LOOKS: Record<string, Look> = {
-  override: { label: 'Manual', icon: '⚠', cls: 'badge-warning font-semibold', emphatic: true },
-  scheduled: { label: 'Scheduled', icon: '🕐', cls: 'badge-info badge-outline' },
-  standing: { label: 'Standing', icon: '⚙', cls: 'badge-ghost' },
+  override: { label: 'Manual', icon: '⚠', tone: 'warning', emphatic: true },
+  scheduled: { label: 'Scheduled', icon: '🕐', tone: 'info' },
+  standing: { label: 'Standing', icon: '⚙', tone: 'neutral' },
 }
 
 const look = computed(() => LOOKS[props.source || 'standing'] ?? LOOKS.standing)
@@ -35,8 +36,8 @@ const value = computed(() => props.posture || '—')
 
 <template>
   <span
-    class="badge badge-sm gap-1 whitespace-nowrap"
-    :class="look.cls"
+    class="badge-soft gap-1"
+    :class="`badge-soft-${look.tone}`"
     :title="`${look.label} posture: ${value}`"
   >
     <span aria-hidden="true">{{ look.icon }}</span>

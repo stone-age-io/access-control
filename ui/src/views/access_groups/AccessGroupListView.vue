@@ -12,6 +12,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -114,25 +115,25 @@ onMounted(reload)
 
         <template #cell-portals="{ item }">
           <div v-if="portalsOf(item).length" class="flex flex-wrap gap-1">
-            <code v-for="p in portalsOf(item).slice(0, 3)" :key="p.id" class="badge badge-ghost badge-sm">{{ p.code }}</code>
-            <span v-if="portalsOf(item).length > 3" class="badge badge-ghost badge-sm">+{{ portalsOf(item).length - 3 }}</span>
+            <SoftBadge v-for="p in portalsOf(item).slice(0, 3)" :key="p.id" class="font-mono">{{ p.code }}</SoftBadge>
+            <SoftBadge v-if="portalsOf(item).length > 3">+{{ portalsOf(item).length - 3 }}</SoftBadge>
           </div>
-          <span v-else-if="(item.portals || []).length" class="badge badge-ghost badge-sm">{{ (item.portals || []).length }}</span>
+          <SoftBadge v-else-if="(item.portals || []).length">{{ (item.portals || []).length }}</SoftBadge>
           <span v-else class="text-base-content/40">-</span>
         </template>
         <template #card-portals="{ item }">
           <div v-if="portalsOf(item).length" class="flex flex-wrap gap-1 justify-end">
-            <code v-for="p in portalsOf(item).slice(0, 2)" :key="p.id" class="badge badge-ghost badge-sm">{{ p.code }}</code>
-            <span v-if="portalsOf(item).length > 2" class="badge badge-ghost badge-sm">+{{ portalsOf(item).length - 2 }}</span>
+            <SoftBadge v-for="p in portalsOf(item).slice(0, 2)" :key="p.id" class="font-mono">{{ p.code }}</SoftBadge>
+            <SoftBadge v-if="portalsOf(item).length > 2">+{{ portalsOf(item).length - 2 }}</SoftBadge>
           </div>
-          <span v-else-if="(item.portals || []).length" class="badge badge-ghost badge-sm">{{ (item.portals || []).length }}</span>
+          <SoftBadge v-else-if="(item.portals || []).length">{{ (item.portals || []).length }}</SoftBadge>
           <span v-else>-</span>
         </template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 

@@ -1,0 +1,1 @@
+import{A as e,N as t,_ as n,bt as r,d as i,u as a}from"./pb-CoeGtn5a.js";var o={key:0,class:`badge-dot`},s=n({__name:`SoftBadge`,props:{tone:{default:`neutral`},dot:{type:Boolean,default:!1}},setup(n){return(s,c)=>(e(),i(`span`,{class:r([`badge-soft`,`badge-soft-${n.tone}`])},[n.dot?(e(),i(`span`,o)):a(``,!0),t(s.$slots,`default`)],2))}});export{s as t};

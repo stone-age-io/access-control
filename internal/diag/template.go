@@ -25,41 +25,70 @@ const statusHTML = `<!doctype html>
 <meta http-equiv="refresh" content="2">
 <title>access-controller · {{.Identity.Controller}}</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 3rem; }
-  h1 { font-size: 1.25rem; margin: 0 0 .15rem; }
-  h2 { font-size: .95rem; text-transform: uppercase; letter-spacing: .04em; color: #888; margin: 1.5rem 0 .4rem; }
-  .sub { color: #888; margin: 0 0 .75rem; }
-  .strip { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0 0; }
-  .badge { display: inline-block; padding: .1rem .5rem; border-radius: .5rem; font-size: .82rem; font-weight: 600; }
-  .good { background: #1f7a3d; color: #fff; }
-  .bad  { background: #b3261e; color: #fff; }
-  .warn { background: #9a6b00; color: #fff; }
-  .muted { color: #888; }
-  .scroll { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
-  th, td { text-align: left; padding: .3rem .55rem; border-bottom: 1px solid #8884; white-space: nowrap; }
-  th { color: #888; font-weight: 600; }
+  /* Self-contained + light/dark adaptive. The palette mirrors the accessd UI's
+     theme (base-100/200/300, soft-badge tints) so a field screenshot reads as the
+     same product, but nothing here is shared with the Vite build. */
+  :root {
+    color-scheme: light dark;
+    --page: #f4f6fa; --card: #fff; --fg: #1b2330; --muted: #6b7280; --line: #e4e8ef;
+    --zebra: rgba(27,35,48,.025);
+    --good-bg: #e4f3e9; --good-fg: #146c34; --good-dot: #16a34a;
+    --bad-bg:  #fbebeb; --bad-fg:  #b41c1c; --bad-dot:  #dc2626;
+    --warn-bg: #fbf0de; --warn-fg: #97590a; --warn-dot: #d97706;
+    --neut-bg: #edf0f5; --neut-fg: #47536a; --neut-dot: #64748b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0d1017; --card: #12161d; --fg: #e7ebf2; --muted: #8a93a5; --line: #232a35;
+      --zebra: rgba(231,235,242,.03);
+      --good-bg: #14291d; --good-fg: #7fd69c; --good-dot: #34b26e;
+      --bad-bg:  #2e1717; --bad-fg:  #f2a0a0; --bad-dot:  #e05656;
+      --warn-bg: #2e2410; --warn-fg: #f4c264; --warn-dot: #e0a417;
+      --neut-bg: #232b37; --neut-fg: #a8b3c6; --neut-dot: #7c8aa0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 70rem; padding: 1.25rem 1.25rem 3rem; background: var(--page); color: var(--fg); }
+  h1 { font-size: 1.35rem; margin: 0 0 .15rem; }
+  h2 { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 1.75rem 0 .5rem; }
+  .sub { color: var(--muted); margin: 0 0 .25rem; }
+  .band { background: var(--card); border: 1px solid var(--line); border-radius: .75rem; padding: 1rem 1.15rem; }
+  .strip { display: flex; flex-wrap: wrap; gap: .5rem; margin: .85rem 0 0; }
+  .badge { display: inline-flex; align-items: center; gap: .4rem; padding: .18rem .55rem; border-radius: .375rem; font-size: .76rem; font-weight: 600; line-height: 1; }
+  .badge::before { content: ""; width: .4rem; height: .4rem; border-radius: 50%; background: currentColor; flex: none; }
+  .good { background: var(--good-bg); color: var(--good-fg); }  .good::before { background: var(--good-dot); }
+  .bad  { background: var(--bad-bg);  color: var(--bad-fg);  }  .bad::before  { background: var(--bad-dot); }
+  .warn { background: var(--warn-bg); color: var(--warn-fg); }  .warn::before { background: var(--warn-dot); }
+  .neutral { background: var(--neut-bg); color: var(--neut-fg); }  .neutral::before { background: var(--neut-dot); }
+  .muted { color: var(--muted); }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: .75rem; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-size: .84rem; }
+  th, td { text-align: left; padding: .45rem .65rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:nth-child(even) td { background: var(--zebra); }
+  th { color: var(--muted); font-weight: 600; font-size: .66rem; text-transform: uppercase; letter-spacing: .04em; }
   code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .banner { background: #b3261e; color: #fff; padding: .75rem 1rem; border-radius: .5rem; font-weight: 600; }
-  .row-warn td { background: #9a6b0022; }
-  .kv { display: grid; grid-template-columns: max-content 1fr; gap: .15rem 1rem; }
-  .kv dt { color: #888; }
+  .banner { background: var(--bad-bg); color: var(--bad-fg); border: 1px solid var(--line); padding: .75rem 1rem; border-radius: .75rem; font-weight: 600; }
+  .row-warn td { background: var(--warn-bg); }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1.25rem; margin: 0; }
+  .kv dt { color: var(--muted); }
   .kv dd { margin: 0; }
-  footer { margin-top: 2rem; color: #888; font-size: .8rem; }
+  footer { margin-top: 2rem; color: var(--muted); font-size: .8rem; }
 </style>
 </head>
 <body>
 
-<h1>{{or .Identity.Controller "(no controller code)"}}</h1>
-<p class="sub">location <code>{{or .Identity.Location "—"}}</code> · reader <code>{{.Identity.Reader}}</code> · driver <code>{{.Identity.Driver}}</code>{{if .Identity.Model}} · model <code>{{.Identity.Model}}</code>{{end}}</p>
-
-<div class="strip">
-  {{if .Policy.Synced}}<span class="badge good">policy synced</span>{{else}}<span class="badge bad">DEFAULT-DENY · policy not loaded</span>{{end}}
-  {{if .NATS.Connected}}<span class="badge good">NATS connected</span>{{else}}<span class="badge bad">NATS disconnected</span>{{end}}
-</div>
+<header class="band">
+  <h1>{{or .Identity.Controller "(no controller code)"}}</h1>
+  <p class="sub">location <code>{{or .Identity.Location "—"}}</code> · reader <code>{{.Identity.Reader}}</code> · driver <code>{{.Identity.Driver}}</code>{{if .Identity.Model}} · model <code>{{.Identity.Model}}</code>{{end}}</p>
+  <div class="strip">
+    {{if .Policy.Synced}}<span class="badge good">policy synced</span>{{else}}<span class="badge bad">DEFAULT-DENY · policy not loaded</span>{{end}}
+    {{if .NATS.Connected}}<span class="badge good">NATS connected</span>{{else}}<span class="badge bad">NATS disconnected</span>{{end}}
+  </div>
+</header>
 
 <h2>Identity &amp; connectivity</h2>
+<div class="band">
 <dl class="kv">
   <dt>controller</dt><dd class="mono">{{or .Identity.Controller "(unset)"}}</dd>
   <dt>location</dt><dd class="mono">{{or .Identity.Location "—"}}</dd>
@@ -68,6 +97,7 @@ const statusHTML = `<!doctype html>
   <dt>NATS</dt><dd class="mono">{{if .NATS.Connected}}{{.NATS.URL}}{{else}}disconnected{{end}} · {{.NATS.Reconnects}} reconnects</dd>
   <dt>uptime</dt><dd class="mono">{{.Identity.Uptime}}</dd>
 </dl>
+</div>
 
 <h2>Policy</h2>
 <p class="mono">

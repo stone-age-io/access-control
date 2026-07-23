@@ -6,6 +6,7 @@ import { reasonExplanation } from '@/utils/events'
 import type { Credential, Portal, Posture } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import Combobox from '@/components/ui/Combobox.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 // What-if tool: send (credential value, portal code, instant, optional posture
 // override) to POST /api/simulate, which runs the REAL policy.Decide over a live
@@ -179,7 +180,7 @@ onMounted(loadOptions)
           <div class="opacity-50 text-xs">Effective posture</div>
           <div class="font-medium">
             {{ result.posture ? formatConstant(result.posture) : '—' }}
-            <span v-if="result.postureSource" class="badge badge-xs badge-ghost ml-1">{{ result.postureSource }}</span>
+            <SoftBadge v-if="result.postureSource" class="ml-1">{{ result.postureSource }}</SoftBadge>
           </div>
         </div>
         <div>

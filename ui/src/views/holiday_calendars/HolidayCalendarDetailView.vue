@@ -10,6 +10,7 @@ import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -97,9 +98,9 @@ onMounted(load)
         <li v-for="h in holidays" :key="h.id" class="flex items-center gap-3 py-2">
           <router-link :to="`/holidays/${h.id}`" class="font-mono text-sm link link-hover">{{ formatDate(h.date, 'PP') }}</router-link>
           <span class="text-sm opacity-70">{{ h.name || '—' }}</span>
-          <span class="badge badge-sm ml-auto" :class="h.recurring ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="h.recurring ? 'success' : 'neutral'" dot class="ml-auto">
             {{ h.recurring ? 'yearly' : 'once' }}
-          </span>
+          </SoftBadge>
         </li>
       </ul>
       <p v-else class="text-sm opacity-50">No dates on this calendar yet.</p>
@@ -107,7 +108,7 @@ onMounted(load)
 
     <BaseCard title="Observed by">
       <div v-if="observers.length" class="flex flex-wrap gap-2">
-        <router-link v-for="l in observers" :key="l.id" :to="`/locations/${l.id}`" class="badge badge-outline badge-lg gap-1">
+        <router-link v-for="l in observers" :key="l.id" :to="`/locations/${l.id}`" class="badge-soft badge-soft-neutral gap-1">
           <code class="text-xs">{{ l.code }}</code>
         </router-link>
       </div>

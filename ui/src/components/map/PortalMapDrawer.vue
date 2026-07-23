@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Portal } from '@/types/pocketbase'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 defineProps<{ portal: Portal; isMobile: boolean }>()
 defineEmits<{ close: [] }>()
@@ -25,11 +26,11 @@ defineEmits<{ close: [] }>()
     <div class="flex-1 overflow-y-auto p-4 space-y-3 text-sm">
       <div v-if="portal.type" class="flex items-center gap-2">
         <span class="uppercase tracking-wider text-base-content/50 font-semibold text-xs">Type</span>
-        <span class="badge badge-ghost badge-sm">{{ portal.type }}</span>
+        <SoftBadge>{{ portal.type }}</SoftBadge>
       </div>
       <div v-if="portal.posture" class="flex items-center gap-2">
         <span class="uppercase tracking-wider text-base-content/50 font-semibold text-xs">Standing posture</span>
-        <span class="badge badge-sm badge-ghost">{{ portal.posture }}</span>
+        <SoftBadge>{{ portal.posture }}</SoftBadge>
       </div>
     </div>
 

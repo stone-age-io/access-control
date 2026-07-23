@@ -1,4 +1,5 @@
 import type { AccessEvent } from '@/types/pocketbase'
+import type { SoftTone } from './badges'
 
 /**
  * Single source of truth for how an event is coloured and labelled across the
@@ -6,11 +7,11 @@ import type { AccessEvent } from '@/types/pocketbase'
  * own `kindBadge`/`typeBadge`, which drifted apart.
  */
 
-/** Badge class for an event's kind: tap allow/deny, fire/alarm warn, else ghost. */
-export function eventKindBadge(e: AccessEvent): string {
-  if (e.kind === 'tap') return e.allow ? 'badge-success' : 'badge-error'
-  if (e.kind === 'fire' || e.kind === 'alarm') return 'badge-warning'
-  return 'badge-ghost'
+/** Soft-badge tone for an event's kind: tap allow/deny, fire/alarm warn, else neutral. */
+export function eventKindTone(e: AccessEvent): SoftTone {
+  if (e.kind === 'tap') return e.allow ? 'success' : 'error'
+  if (e.kind === 'fire' || e.kind === 'alarm') return 'warning'
+  return 'neutral'
 }
 
 /**
@@ -98,12 +99,21 @@ export function alarmTypeClause(type: string): string[] {
   return [`payload.type = "${type}"`]
 }
 
-/** Badge class for an alarm row keyed on its specific type (fire/tamper warn, trips error). */
-export function alarmTypeBadge(e: AccessEvent): string {
-  const t = alarmType(e)
-  if (e.kind === 'fire' || t === 'tamper_24h') return 'badge-warning'
-  if (t === 'intrusion' || t === 'forced' || t === 'held') return 'badge-error'
-  return 'badge-ghost'
+/**
+ * Severity tone for an alarm sub-type — the shared basis for its badge colour, its
+ * row accent stripe, and its summary tile, so the three can't drift. Trips
+ * (intrusion/forced/held) are error; fire and tamper are warning; else neutral.
+ */
+export function alarmToneForType(type: string): 'error' | 'warning' | 'neutral' {
+  if (type === 'intrusion' || type === 'forced' || type === 'held') return 'error'
+  if (type === 'fire' || type === 'tamper_24h') return 'warning'
+  return 'neutral'
+}
+
+/** Severity tone for an alarm event (see alarmToneForType); a fire event is warning. */
+export function alarmTone(e: AccessEvent): 'error' | 'warning' | 'neutral' {
+  if (e.kind === 'fire') return 'warning'
+  return alarmToneForType(alarmType(e))
 }
 
 /**

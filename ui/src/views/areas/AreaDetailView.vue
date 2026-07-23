@@ -7,12 +7,14 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
 import { useAreaCommands } from '@/composables/useAreaCommands'
 import { policyKey } from '@/utils/policyKey'
-import { aggregateArm, armBadge, armLabel } from '@/utils/arming'
+import { aggregateArm, armTone, armLabel } from '@/utils/arming'
 import type { Area, AuxInput, Portal, PointStatus } from '@/types/pocketbase'
+import type { SoftTone } from '@/utils/badges'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -117,10 +119,10 @@ async function handleDelete() {
   }
 }
 
-function pointTypeBadge(t: string): string {
-  if (t === 'intrusion') return 'badge-error'
-  if (t === 'tamper_24h') return 'badge-warning'
-  return 'badge-ghost'
+function pointTypeTone(t: string): SoftTone {
+  if (t === 'intrusion') return 'error'
+  if (t === 'tamper_24h') return 'warning'
+  return 'neutral'
 }
 
 onMounted(load)
@@ -147,10 +149,10 @@ onBeforeUnmount(() => {
 
     <BaseCard title="Arm state">
       <div class="flex flex-wrap items-center gap-3">
-        <span class="badge badge-lg" :class="armBadge(agg.state)">{{ armLabel(agg) }}</span>
-        <span v-if="record.arm_override" class="badge badge-warning gap-1">
+        <SoftBadge :tone="armTone(agg.state)" dot>{{ armLabel(agg) }}</SoftBadge>
+        <SoftBadge v-if="record.arm_override" class="gap-1" tone="warning" dot>
           override: {{ record.arm_override }}
-        </span>
+        </SoftBadge>
         <span v-else class="text-sm opacity-60">standing: {{ record.arm || 'disarmed' }}</span>
         <span v-if="shadows.length === 0" class="text-sm opacity-50">— no controller has reported yet</span>
       </div>
@@ -183,9 +185,9 @@ onBeforeUnmount(() => {
         <DataField label="Standing arm">{{ record.arm || 'disarmed' }}</DataField>
         <DataField label="Auto arm">{{ record.auto_arm || '—' }}</DataField>
         <DataField label="Email on intrusion">
-          <span class="badge badge-sm" :class="record.notify_on_alarm ? 'badge-warning' : 'badge-ghost'">
+          <SoftBadge :tone="record.notify_on_alarm ? 'warning' : 'neutral'" dot>
             {{ record.notify_on_alarm ? 'emails opted-in operators' : 'off' }}
-          </span>
+          </SoftBadge>
         </DataField>
         <DataField label="Auto schedule">
           <router-link v-if="record.expand?.auto_schedule" :to="`/schedules/${record.expand.auto_schedule.id}`" class="link link-primary">
@@ -210,7 +212,7 @@ onBeforeUnmount(() => {
           </router-link>
           <div class="flex items-center gap-2">
             <code v-if="m.expand?.controller" class="text-xs opacity-60">{{ m.expand.controller.code }}</code>
-            <span class="badge badge-sm" :class="pointTypeBadge(m.point_type)">{{ m.point_type || 'monitor' }}</span>
+            <SoftBadge :tone="pointTypeTone(m.point_type)" dot>{{ m.point_type || 'monitor' }}</SoftBadge>
           </div>
         </li>
       </ul>
@@ -219,7 +221,7 @@ onBeforeUnmount(() => {
     <BaseCard title="Member doors">
       <p class="text-sm opacity-60 mb-3">
         Portals assigned to this area. Edit membership on the portal. While armed, a <em>forced</em>
-        open (no grant/REX) raises intrusion; a <span class="badge badge-xs badge-warning align-middle">grant disarms</span>
+        open (no grant/REX) raises intrusion; a <span class="badge-soft badge-soft-warning align-middle">grant disarms</span>
         door also disarms the area on a valid credential.
       </p>
       <div v-if="memberPortals.length === 0" class="text-sm opacity-50">No member doors yet.</div>
@@ -231,8 +233,8 @@ onBeforeUnmount(() => {
           </router-link>
           <div class="flex items-center gap-2">
             <code v-if="p.expand?.controller" class="text-xs opacity-60">{{ p.expand.controller.code }}</code>
-            <span v-if="p.disarm_on_grant" class="badge badge-sm badge-warning">grant disarms</span>
-            <span v-else class="badge badge-sm badge-ghost">monitored</span>
+            <SoftBadge v-if="p.disarm_on_grant" tone="warning" dot>grant disarms</SoftBadge>
+            <SoftBadge v-else tone="neutral" dot>monitored</SoftBadge>
           </div>
         </li>
       </ul>

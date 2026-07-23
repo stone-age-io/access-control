@@ -14,6 +14,8 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
+import Avatar from '@/components/ui/Avatar.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -108,40 +110,50 @@ onMounted(reload)
 
     <BaseCard :no-padding="true">
       <ResponsiveList :items="operators" :columns="columns" :loading="loading" @row-click="(u) => router.push(`/operators/${u.id}/edit`)">
-        <template #cell-email="{ item }"><div class="font-medium">{{ item.email }}</div></template>
-        <template #card-email="{ item }"><div class="text-sm font-bold text-primary truncate">{{ item.email }}</div></template>
+        <template #cell-email="{ item }">
+          <div class="flex items-center gap-2.5">
+            <Avatar :name="item.name || item.email" :seed="item.id" />
+            <span class="font-medium">{{ item.email }}</span>
+          </div>
+        </template>
+        <template #card-email="{ item }">
+          <div class="flex items-center gap-2 min-w-0">
+            <Avatar :name="item.name || item.email" :seed="item.id" size="xs" />
+            <span class="text-sm font-bold text-primary truncate">{{ item.email }}</span>
+          </div>
+        </template>
 
         <template #cell-permissions="{ item }">
           <div class="flex flex-wrap items-center gap-1">
-            <span class="badge badge-sm" :class="(item.permissions?.length ?? 0) ? 'badge-primary' : 'badge-ghost'">{{ presetLabel(item.permissions || []) }}</span>
-            <span v-for="c in item.permissions || []" :key="c" class="badge badge-ghost badge-sm">{{ c }}</span>
+            <SoftBadge :tone="(item.permissions?.length ?? 0) ? 'primary' : 'neutral'">{{ presetLabel(item.permissions || []) }}</SoftBadge>
+            <SoftBadge v-for="c in item.permissions || []" :key="c">{{ c }}</SoftBadge>
           </div>
         </template>
         <template #card-permissions="{ item }">
           <div class="flex flex-wrap items-center gap-1">
-            <span class="badge badge-sm" :class="(item.permissions?.length ?? 0) ? 'badge-primary' : 'badge-ghost'">{{ presetLabel(item.permissions || []) }}</span>
-            <span v-for="c in item.permissions || []" :key="c" class="badge badge-ghost badge-sm">{{ c }}</span>
+            <SoftBadge :tone="(item.permissions?.length ?? 0) ? 'primary' : 'neutral'">{{ presetLabel(item.permissions || []) }}</SoftBadge>
+            <SoftBadge v-for="c in item.permissions || []" :key="c">{{ c }}</SoftBadge>
           </div>
         </template>
 
         <template #cell-verified="{ item }">
-          <span class="badge badge-sm" :class="item.verified ? 'badge-success' : 'badge-ghost'">{{ item.verified ? 'yes' : 'no' }}</span>
+          <SoftBadge :tone="item.verified ? 'success' : 'neutral'" dot>{{ item.verified ? 'yes' : 'no' }}</SoftBadge>
         </template>
         <template #card-verified="{ item }">
-          <span class="badge badge-sm" :class="item.verified ? 'badge-success' : 'badge-ghost'">{{ item.verified ? 'yes' : 'no' }}</span>
+          <SoftBadge :tone="item.verified ? 'success' : 'neutral'" dot>{{ item.verified ? 'yes' : 'no' }}</SoftBadge>
         </template>
 
         <template #cell-notify="{ item }">
-          <span class="badge badge-sm" :class="item.notify ? 'badge-warning' : 'badge-ghost'">{{ notifyLabel(item) }}</span>
+          <SoftBadge :tone="item.notify ? 'warning' : 'neutral'" dot>{{ notifyLabel(item) }}</SoftBadge>
         </template>
         <template #card-notify="{ item }">
-          <span class="badge badge-sm" :class="item.notify ? 'badge-warning' : 'badge-ghost'">{{ notifyLabel(item) }}</span>
+          <SoftBadge :tone="item.notify ? 'warning' : 'neutral'" dot>{{ notifyLabel(item) }}</SoftBadge>
         </template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 

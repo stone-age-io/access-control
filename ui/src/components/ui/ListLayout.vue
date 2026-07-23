@@ -16,7 +16,7 @@
  */
 import EmptyState from './EmptyState.vue'
 import ErrorState from './ErrorState.vue'
-import HelpButton from './HelpButton.vue'
+import PageHeader from './PageHeader.vue'
 
 defineProps<{
   title: string
@@ -43,16 +43,9 @@ function onInput(e: Event) {
 <template>
   <div class="space-y-6">
     <!-- Header -->
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-      <div>
-        <h1 class="text-3xl font-bold">{{ title }}</h1>
-        <p v-if="subtitle" class="text-base-content/70 mt-1">{{ subtitle }}</p>
-      </div>
-      <div class="flex items-center gap-2 w-full sm:w-auto">
-        <slot name="actions" />
-        <HelpButton />
-      </div>
-    </div>
+    <PageHeader :title="title" :subtitle="subtitle">
+      <template #actions><slot name="actions" /></template>
+    </PageHeader>
 
     <!-- Toolbar + search -->
     <div v-if="searchPlaceholder || $slots.toolbar" class="flex flex-col sm:flex-row sm:flex-wrap gap-3">

@@ -6,6 +6,7 @@ import { useClientPagination } from '@/composables/useClientPagination'
 import type { Cardholder, Role, AccessGroup, Portal, Schedule, Credential } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 // The access matrix, walked over the policy graph exactly as policy.Decide reads
 // it: cardholder → roles → access groups → (portals + one schedule). Each grant
@@ -229,9 +230,9 @@ onMounted(load)
     <template v-else>
       <!-- Coverage gaps -->
       <div class="flex flex-wrap gap-2 text-sm">
-        <span class="badge badge-ghost gap-1">{{ new Set(edges.map((e) => e.chId)).size }} cardholders with access</span>
-        <span v-if="noAccess > 0" class="badge badge-warning gap-1">{{ noAccess }} with no access</span>
-        <span v-if="noGrant > 0" class="badge badge-warning gap-1">{{ noGrant }} portals nobody can reach</span>
+        <SoftBadge class="gap-1">{{ new Set(edges.map((e) => e.chId)).size }} cardholders with access</SoftBadge>
+        <SoftBadge v-if="noAccess > 0" tone="warning" class="gap-1">{{ noAccess }} with no access</SoftBadge>
+        <SoftBadge v-if="noGrant > 0" tone="warning" class="gap-1">{{ noGrant }} portals nobody can reach</SoftBadge>
       </div>
 
       <div v-if="grouped.length === 0" class="text-center py-12 opacity-50">
@@ -245,8 +246,8 @@ onMounted(load)
             <div class="font-semibold truncate">{{ g.title }}</div>
             <div class="text-xs opacity-50 truncate">{{ g.meta }}</div>
           </div>
-          <span v-if="g.status && g.status !== 'active'" class="badge badge-sm badge-warning">{{ g.status }}</span>
-          <span class="badge badge-sm tabular-nums shrink-0">{{ g.rows.length }}</span>
+          <SoftBadge v-if="g.status && g.status !== 'active'" tone="warning" dot>{{ g.status }}</SoftBadge>
+          <SoftBadge class="tabular-nums shrink-0">{{ g.rows.length }}</SoftBadge>
         </div>
         <div class="overflow-x-auto">
           <table class="table table-sm">

@@ -6,11 +6,12 @@ import { useAuthStore } from '@/stores/auth'
 import { useAlarmAck } from '@/composables/useAlarmAck'
 import { useConfirm } from '@/composables/useConfirm'
 import { formatDate, formatRelativeTime, formatConstant } from '@/utils/format'
-import { alarmType, alarmTypeBadge, alarmTypeClause, eventThing, unackedAlarmFilter } from '@/utils/events'
+import { alarmType, alarmTone, alarmToneForType, alarmTypeClause, eventThing, unackedAlarmFilter } from '@/utils/events'
 import type { AccessEvent, Location } from '@/types/pocketbase'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 import EventDetailModal from '@/components/ui/EventDetailModal.vue'
 
 const auth = useAuthStore()
@@ -27,6 +28,9 @@ const searchQuery = ref('')
 const typeFilter = ref('')
 const locationFilter = ref('')
 const locations = ref<Location[]>([])
+// Per-type unacked totals across the whole window (see loadCounts) — drives the
+// triage summary tiles, which double as the type filter.
+const counts = ref<Record<string, number>>({})
 let unsub: (() => void) | null = null
 
 const canCommand = computed(() => auth.can('command'))
@@ -34,6 +38,26 @@ const canCommand = computed(() => auth.can('command'))
 // Operator-facing alarm sub-types for the toolbar filter (held_clear is a clear,
 // not something you triage, so it's omitted — leaving it unfiltered still shows it).
 const ALARM_TYPES = ['forced', 'held', 'intrusion', 'tamper_24h', 'fire']
+
+// Short tile/badge labels — formatConstant would render 'tamper_24h' as 'Tamper 24h'.
+const TYPE_LABELS: Record<string, string> = {
+  forced: 'Forced',
+  held: 'Held',
+  intrusion: 'Intrusion',
+  tamper_24h: 'Tamper',
+  fire: 'Fire',
+}
+// Severity tone → utility classes for the summary tiles and the row accent stripe.
+const TONE_TEXT: Record<string, string> = { error: 'text-error', warning: 'text-warning', neutral: 'text-base-content/60' }
+const TONE_DOT: Record<string, string> = { error: 'bg-error', warning: 'bg-warning', neutral: 'bg-base-content/40' }
+const TONE_BORDER: Record<string, string> = { error: 'border-error', warning: 'border-warning', neutral: 'border-base-300' }
+
+function typeLabel(t: string): string {
+  return TYPE_LABELS[t] || formatConstant(t)
+}
+function accentBorder(e: AccessEvent): string {
+  return TONE_BORDER[alarmTone(e)]
+}
 
 const hasQuery = computed(() => !!searchQuery.value || !!typeFilter.value || !!locationFilter.value)
 
@@ -63,12 +87,14 @@ const filtered = computed(() => {
 function reload() {
   page.value = 1
   load(queryOpts())
+  loadCounts()
 }
 
 // Single reconcile path for both acks and live updates: reload the current page
 // so counts/paging stay correct. If acks emptied the page past the end, snap back
 // to the last real page so the operator isn't stranded on a blank page.
 async function reconcile() {
+  loadCounts()
   await load(queryOpts())
   if (alarms.value.length === 0 && page.value > 1 && page.value > totalPages.value) {
     page.value = Math.max(1, totalPages.value)
@@ -91,6 +117,33 @@ async function loadLocations() {
     // Fail-safe: no location filter, but the console still works.
     locations.value = []
   }
+}
+
+// Per-type unacked totals across the whole window — not just the loaded page — so
+// the tiles are a real triage count. Respects the location filter (so tiles track a
+// location narrowing) but not the type filter (each tile owns its own type) nor the
+// client-side page search. One cheap count query per type, run in parallel.
+async function loadCounts() {
+  const locClause = locationFilter.value ? [`location = "${locationFilter.value}"`] : []
+  const entries = await Promise.all(
+    ALARM_TYPES.map(async (t) => {
+      try {
+        const res = await pb.collection('events').getList(1, 1, {
+          filter: unackedAlarmFilter([...alarmTypeClause(t), ...locClause]),
+        })
+        return [t, res.totalItems] as const
+      } catch {
+        return [t, 0] as const // fail-safe: a count of 0, console still works
+      }
+    }),
+  )
+  counts.value = Object.fromEntries(entries)
+}
+
+// Tiles double as the type filter: click to narrow, click the active one to clear.
+function selectType(t: string) {
+  typeFilter.value = typeFilter.value === t ? '' : t
+  reload()
 }
 
 async function subscribe() {
@@ -174,7 +227,7 @@ onBeforeUnmount(() => {
     <template #toolbar>
       <select v-model="typeFilter" class="select select-bordered sm:w-48" @change="reload">
         <option value="">All types</option>
-        <option v-for="t in ALARM_TYPES" :key="t" :value="t">{{ formatConstant(t) }}</option>
+        <option v-for="t in ALARM_TYPES" :key="t" :value="t">{{ typeLabel(t) }}</option>
       </select>
       <select v-model="locationFilter" class="select select-bordered sm:w-48" @change="reload">
         <option value="">All locations</option>
@@ -182,27 +235,61 @@ onBeforeUnmount(() => {
       </select>
     </template>
 
+    <!-- Triage summary: unacked totals per type across the whole window. Each tile
+         is also the type filter — click to narrow, click the active one to clear. -->
+    <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      <button
+        v-for="t in ALARM_TYPES"
+        :key="t"
+        type="button"
+        class="rounded-lg border px-3 py-2 text-left transition-colors"
+        :class="typeFilter === t
+          ? 'border-primary bg-base-100 ring-1 ring-primary/30'
+          : 'border-base-300 bg-base-200/40 hover:bg-base-200'"
+        :aria-pressed="typeFilter === t"
+        @click="selectType(t)"
+      >
+        <div
+          class="flex items-center gap-1.5 text-xs font-medium"
+          :class="(counts[t] || 0) > 0 ? TONE_TEXT[alarmToneForType(t)] : 'text-base-content/50'"
+        >
+          <span
+            class="inline-block h-1.5 w-1.5 rounded-full"
+            :class="(counts[t] || 0) > 0 ? TONE_DOT[alarmToneForType(t)] : 'bg-base-content/25'"
+          ></span>
+          {{ typeLabel(t) }}
+        </div>
+        <div
+          class="mt-0.5 text-2xl font-bold tabular-nums"
+          :class="(counts[t] || 0) > 0 ? TONE_TEXT[alarmToneForType(t)] : 'text-base-content/40'"
+        >
+          {{ counts[t] || 0 }}
+        </div>
+      </button>
+    </div>
+
     <BaseCard :no-padding="true">
       <ul v-if="filtered.length" class="divide-y divide-base-200">
         <li
           v-for="e in filtered"
           :key="e.id"
-          class="flex items-center justify-between gap-3 p-4 cursor-pointer transition-colors hover:bg-base-200/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/60"
+          class="flex items-center justify-between gap-3 border-l-4 py-3 pl-3 pr-4 cursor-pointer transition-colors hover:bg-base-200/60 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
+          :class="accentBorder(e)"
           role="button"
           tabindex="0"
-          :aria-label="`View ${formatConstant(alarmType(e))} alarm detail`"
+          :aria-label="`View ${typeLabel(alarmType(e))} alarm detail`"
           @click="selected = e"
           @keydown.enter.prevent="selected = e"
           @keydown.space.prevent="selected = e"
         >
           <div class="flex items-center gap-3 min-w-0">
-            <span class="badge" :class="alarmTypeBadge(e)">{{ formatConstant(alarmType(e)) }}</span>
+            <SoftBadge :tone="alarmTone(e)" dot class="shrink-0">{{ typeLabel(alarmType(e)) }}</SoftBadge>
             <div class="min-w-0">
-              <div class="font-medium truncate">
+              <div class="truncate">
                 <code class="text-sm">{{ eventThing(e) }}</code>
-                <span class="opacity-50 text-xs ml-2">{{ e.location }}</span>
+                <SoftBadge v-if="e.location" class="ml-2 align-middle">{{ e.location }}</SoftBadge>
               </div>
-              <div class="text-xs opacity-50" :title="formatDate(e.ts || e.created, 'PPpp')">
+              <div class="text-xs text-base-content/50" :title="formatDate(e.ts || e.created, 'PPpp')">
                 {{ formatRelativeTime(e.ts || e.created) }}
               </div>
             </div>

@@ -9,6 +9,7 @@ import type { Schedule, ScheduleWindow } from '@/types/pocketbase'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -210,7 +211,7 @@ onMounted(() => {
                 <label class="label py-1"><span class="label-text text-xs">End</span></label>
                 <input v-model="w.end" type="time" class="input input-bordered input-sm font-mono" />
               </div>
-              <span v-if="crossesMidnight(w)" class="badge badge-warning badge-sm mb-2">crosses midnight</span>
+              <SoftBadge v-if="crossesMidnight(w)" tone="warning" dot class="mb-2">crosses midnight</SoftBadge>
             </div>
           </div>
         </div>

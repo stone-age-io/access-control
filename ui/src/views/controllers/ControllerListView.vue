@@ -13,6 +13,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -112,17 +113,17 @@ onMounted(reload)
         </template>
 
         <template #cell-model="{ item }">
-          <span class="badge badge-ghost badge-sm font-mono">{{ item.model || '-' }}</span>
+          <SoftBadge class="font-mono">{{ item.model || '-' }}</SoftBadge>
         </template>
         <template #card-model="{ item }">
-          <span class="badge badge-ghost badge-sm font-mono">{{ item.model || '-' }}</span>
+          <SoftBadge class="font-mono">{{ item.model || '-' }}</SoftBadge>
         </template>
 
         <template #cell-status="{ item }">
-          <span class="badge badge-sm" :class="item.status === 'online' ? 'badge-success' : 'badge-ghost'">{{ item.status || 'unknown' }}</span>
+          <SoftBadge :tone="item.status === 'online' ? 'success' : 'neutral'" dot>{{ item.status || 'unknown' }}</SoftBadge>
         </template>
         <template #card-status="{ item }">
-          <span class="badge badge-sm" :class="item.status === 'online' ? 'badge-success' : 'badge-ghost'">{{ item.status || 'unknown' }}</span>
+          <SoftBadge :tone="item.status === 'online' ? 'success' : 'neutral'" dot>{{ item.status || 'unknown' }}</SoftBadge>
         </template>
 
         <template #cell-last_seen="{ item }">
@@ -135,9 +136,9 @@ onMounted(reload)
         </template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 

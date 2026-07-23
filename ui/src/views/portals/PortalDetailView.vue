@@ -8,12 +8,14 @@ import { useAuthStore } from '@/stores/auth'
 import { usePortalCommands, POSTURES } from '@/composables/usePortalCommands'
 import { policyKey } from '@/utils/policyKey'
 import type { Portal, AccessGroup, PointStatus } from '@/types/pocketbase'
+import type { SoftTone } from '@/utils/badges'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import PostureBadge from '@/components/ui/PostureBadge.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -39,14 +41,14 @@ const isOverridden = computed(() => status.value?.posture_source === 'override')
 const kvKey = computed(() => (record.value ? policyKey('portals', record.value) : ''))
 const statusKey = computed(() => (record.value ? `portal.${record.value.code}` : ''))
 
-const doorBadge = computed(() => {
+const doorTone = computed<{ tone: SoftTone; text: string }>(() => {
   switch (status.value?.state) {
     case 'open':
-      return { cls: 'badge-error', text: 'Open' }
+      return { tone: 'error', text: 'Open' }
     case 'closed':
-      return { cls: 'badge-success', text: 'Closed' }
+      return { tone: 'success', text: 'Closed' }
     default:
-      return { cls: 'badge-ghost', text: 'Unknown' }
+      return { tone: 'neutral', text: 'Unknown' }
   }
 })
 
@@ -143,13 +145,13 @@ onBeforeUnmount(() => {
       <div class="space-y-4">
         <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-6 gap-y-4">
           <DataField label="Door">
-            <span class="badge badge-sm" :class="doorBadge.cls">{{ doorBadge.text }}</span>
+            <SoftBadge :tone="doorTone.tone" dot>{{ doorTone.text }}</SoftBadge>
           </DataField>
           <DataField label="Effective posture">
             <PostureBadge :posture="status.posture" :source="status.posture_source" />
           </DataField>
           <DataField label="Held open">
-            <span v-if="status.held" class="badge badge-sm badge-warning">Held</span>
+            <SoftBadge v-if="status.held" tone="warning" dot>Held</SoftBadge>
             <span v-else class="opacity-40">No</span>
           </DataField>
           <DataField label="Updated">{{ changedAt() }}</DataField>
@@ -212,7 +214,7 @@ onBeforeUnmount(() => {
         </DataField>
         <DataField label="Name">{{ record.name || '—' }}</DataField>
         <DataField label="Type">
-          <span class="badge badge-ghost badge-sm">{{ record.type || '—' }}</span>
+          <SoftBadge>{{ record.type || '—' }}</SoftBadge>
         </DataField>
         <DataField label="Location">
           <router-link v-if="record.expand?.location" :to="`/locations/${record.expand.location.id}`" class="link link-primary">
@@ -227,7 +229,7 @@ onBeforeUnmount(() => {
       <div class="space-y-4">
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-4">
           <DataField label="Standing posture">
-            <span class="badge badge-sm badge-ghost">{{ record.posture || 'secure' }}</span>
+            <SoftBadge>{{ record.posture || 'secure' }}</SoftBadge>
           </DataField>
           <DataField label="Pulse">{{ record.pulse_seconds }} s</DataField>
           <DataField label="Held-open">
@@ -235,7 +237,7 @@ onBeforeUnmount(() => {
             <span v-else class="opacity-40">Disabled</span>
           </DataField>
           <DataField label="Email on alarm">
-            <span v-if="record.notify_on_alarm" class="badge badge-sm badge-warning">Emails opted-in operators</span>
+            <SoftBadge v-if="record.notify_on_alarm" tone="warning" dot>Emails opted-in operators</SoftBadge>
             <span v-else class="opacity-40">Off</span>
           </DataField>
         </div>
@@ -246,7 +248,7 @@ onBeforeUnmount(() => {
           </p>
           <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
             <DataField label="Posture">
-              <span class="badge badge-sm badge-ghost">{{ record.auto_posture || '—' }}</span>
+              <SoftBadge>{{ record.auto_posture || '—' }}</SoftBadge>
             </DataField>
             <DataField label="Schedule">
               <router-link v-if="record.expand?.auto_schedule" :to="`/schedules/${record.expand.auto_schedule.id}`" class="link link-primary">
@@ -298,7 +300,7 @@ onBeforeUnmount(() => {
           </router-link>
         </DataField>
         <DataField label="Disarm on grant">
-          <span v-if="record.disarm_on_grant" class="badge badge-sm badge-warning">Entry door — grant disarms</span>
+          <SoftBadge v-if="record.disarm_on_grant" tone="warning" dot>Entry door — grant disarms</SoftBadge>
           <span v-else class="opacity-40">No — monitored only (forced-while-armed = intrusion)</span>
         </DataField>
       </div>

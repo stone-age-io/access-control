@@ -15,6 +15,7 @@ import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
 import ControllerIOMap from '@/components/ui/ControllerIOMap.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -110,10 +111,10 @@ onMounted(load)
           <span v-else class="opacity-40">—</span>
         </DataField>
         <DataField label="Model">
-          <span class="badge badge-ghost badge-sm font-mono">{{ record.model || '—' }}</span>
+          <SoftBadge class="font-mono">{{ record.model || '—' }}</SoftBadge>
         </DataField>
         <DataField label="Status">
-          <span class="badge badge-sm" :class="record.status === 'online' ? 'badge-success' : 'badge-ghost'">{{ record.status || 'unknown' }}</span>
+          <SoftBadge :tone="record.status === 'online' ? 'success' : 'neutral'" dot>{{ record.status || 'unknown' }}</SoftBadge>
         </DataField>
         <DataField label="Last seen">
           <span v-if="record.last_seen" :title="formatDate(record.last_seen)">{{ formatRelativeTime(record.last_seen) }}</span>

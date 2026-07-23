@@ -2,11 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { pb } from '@/utils/pb'
 import { formatRelativeTime, formatConstant } from '@/utils/format'
-import { eventKindBadge, unackedAlarmFilter } from '@/utils/events'
+import { eventKindTone, unackedAlarmFilter } from '@/utils/events'
 import { aggregateArm } from '@/utils/arming'
 import type { AccessEvent, PointStatus } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import EventDetailModal from '@/components/ui/EventDetailModal.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 interface StatusCard {
   label: string
@@ -145,7 +146,7 @@ onMounted(async () => {
           @keydown.enter.prevent="selected = e"
           @keydown.space.prevent="selected = e"
         >
-          <span class="badge badge-sm" :class="eventKindBadge(e)">{{ e.kind || 'event' }}</span>
+          <SoftBadge :tone="eventKindTone(e)" dot>{{ e.kind || 'event' }}</SoftBadge>
           <div class="flex-1 min-w-0">
             <div class="text-sm truncate">
               <span class="font-medium">{{ e.location || '—' }}</span>

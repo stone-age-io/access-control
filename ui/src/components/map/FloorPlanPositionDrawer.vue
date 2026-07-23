@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Portal } from '@/types/pocketbase'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 defineProps<{
   unmapped: Portal[]
@@ -49,7 +50,7 @@ const emit = defineEmits<{
       <div class="p-3">
         <div class="text-[10px] uppercase tracking-wider text-base-content/50 font-semibold mb-2">
           Not on plan
-          <span v-if="unmapped.length" class="badge badge-xs ml-1">{{ unmapped.length }}</span>
+          <SoftBadge v-if="unmapped.length" class="ml-1">{{ unmapped.length }}</SoftBadge>
         </div>
         <p v-if="unmapped.length === 0" class="text-xs text-base-content/40 italic px-1 py-2">All portals are placed.</p>
         <button
@@ -60,7 +61,7 @@ const emit = defineEmits<{
         >
           <span class="min-w-0 flex-1">
             <span class="font-medium text-sm truncate block">{{ p.name || p.code }}</span>
-            <span v-if="p.type" class="badge badge-ghost badge-xs">{{ p.type }}</span>
+            <SoftBadge v-if="p.type">{{ p.type }}</SoftBadge>
           </span>
           <span class="btn btn-xs btn-primary btn-outline shrink-0 pointer-events-none">Place</span>
         </button>
@@ -70,13 +71,13 @@ const emit = defineEmits<{
       <div class="p-3 border-t border-base-300">
         <div class="text-[10px] uppercase tracking-wider text-base-content/50 font-semibold mb-2">
           On plan
-          <span v-if="placed.length" class="badge badge-xs ml-1">{{ placed.length }}</span>
+          <SoftBadge v-if="placed.length" class="ml-1">{{ placed.length }}</SoftBadge>
         </div>
         <p v-if="placed.length === 0" class="text-xs text-base-content/40 italic px-1 py-2">Nothing placed yet.</p>
         <div v-for="p in placed" :key="p.id" class="w-full p-2 rounded flex items-center justify-between gap-2 min-w-0">
           <span class="min-w-0 flex-1">
             <span class="font-medium text-sm truncate block">{{ p.name || p.code }}</span>
-            <span v-if="p.type" class="badge badge-ghost badge-xs">{{ p.type }}</span>
+            <SoftBadge v-if="p.type">{{ p.type }}</SoftBadge>
           </span>
           <button class="btn btn-xs btn-ghost text-error shrink-0" @click="emit('unmap', p.id)">Remove</button>
         </div>

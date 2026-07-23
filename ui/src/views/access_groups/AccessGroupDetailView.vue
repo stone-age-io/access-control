@@ -11,6 +11,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -120,7 +121,7 @@ onMounted(load)
       <template #item="{ item: p }">
         <code class="text-sm font-medium text-primary">{{ p.code }}</code>
         <span class="text-sm opacity-60 truncate flex-1">{{ p.name }}</span>
-        <span class="badge badge-ghost badge-sm">{{ p.posture || '—' }}</span>
+        <SoftBadge>{{ p.posture || '—' }}</SoftBadge>
       </template>
     </RelationList>
 

@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import type { Area, PointStatus } from '@/types/pocketbase'
 import { useAreaCommands } from '@/composables/useAreaCommands'
 import { useAuthStore } from '@/stores/auth'
-import { aggregateArm, armBadge, armLabel } from '@/utils/arming'
+import { aggregateArm, armTone, armLabel } from '@/utils/arming'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 // Areas have no floor-plan coordinates, so unlike portals they can't be markers.
 // They ride the SAME right-edge drawer as PortalCommandDrawer instead of floating
@@ -45,7 +46,7 @@ function armFor(a: Area) {
             <div class="font-medium text-sm truncate">{{ a.name || a.code }}</div>
             <code class="text-xs text-primary">{{ a.code }}</code>
           </div>
-          <span class="badge badge-sm shrink-0" :class="armBadge(armFor(a).state)">{{ armLabel(armFor(a)) }}</span>
+          <SoftBadge :tone="armTone(armFor(a).state)" dot class="shrink-0">{{ armLabel(armFor(a)) }}</SoftBadge>
         </div>
         <div v-if="canCommand" class="flex gap-2">
           <button class="btn btn-xs btn-warning flex-1" :disabled="commanding" @click="arm(a.id, a.code)">Arm</button>

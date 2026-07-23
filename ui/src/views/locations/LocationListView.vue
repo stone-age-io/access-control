@@ -14,6 +14,7 @@ import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
 import LocationMapViz from '@/components/locations/LocationMapViz.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -121,22 +122,22 @@ onMounted(reload)
         <template #card-code="{ item }"><code class="text-sm font-bold text-primary">{{ item.code }}</code></template>
 
         <template #cell-fai_suppress="{ item }">
-          <span class="badge badge-sm" :class="item.fai_suppress ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="item.fai_suppress ? 'success' : 'neutral'" dot>
             {{ item.fai_suppress ? 'on' : 'off' }}
-          </span>
+          </SoftBadge>
         </template>
         <template #card-fai_suppress="{ item }">
-          <span class="badge badge-sm" :class="item.fai_suppress ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="item.fai_suppress ? 'success' : 'neutral'" dot>
             {{ item.fai_suppress ? 'on' : 'off' }}
-          </span>
+          </SoftBadge>
         </template>
 
         <template #cell-timezone="{ item }"><span class="font-mono text-xs">{{ item.timezone }}</span></template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 

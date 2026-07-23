@@ -10,6 +10,7 @@
  * `#item` slot; the link wrapper, hover, and dividers stay consistent.
  */
 import { ref, computed } from 'vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -74,7 +75,7 @@ const groups = computed<Group[]>(() => {
       <div class="flex items-center justify-between gap-2">
         <h2 class="card-title text-base flex items-center gap-2">
           <span v-if="icon">{{ icon }}</span>{{ title }}
-          <span v-if="!loading" class="badge badge-ghost badge-sm">{{ items.length }}</span>
+          <SoftBadge v-if="!loading">{{ items.length }}</SoftBadge>
         </h2>
         <div v-if="$slots.actions" class="flex items-center gap-2">
           <slot name="actions" />

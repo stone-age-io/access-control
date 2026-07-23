@@ -11,6 +11,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
 import LocationPicker from '@/components/locations/LocationPicker.vue'
 import RelationPicker from '@/components/ui/RelationPicker.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -235,7 +236,7 @@ onMounted(async () => {
           <FormField label="Floor plan" hint="Image (PNG/JPEG/WebP/SVG) used to place portals. A new upload replaces any existing plan.">
             <div class="space-y-2">
               <div v-if="existingFloorplan && !selectedFile && !removeFloorplan" class="flex items-center gap-2 text-sm min-w-0">
-                <span class="badge badge-ghost shrink-0">Current</span>
+                <SoftBadge class="shrink-0">Current</SoftBadge>
                 <code class="truncate">{{ existingFloorplan }}</code>
                 <button type="button" class="btn btn-xs btn-ghost text-error shrink-0" @click="removeFloorplan = true">Remove</button>
               </div>

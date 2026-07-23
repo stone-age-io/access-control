@@ -11,6 +11,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
 import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -105,9 +106,9 @@ onMounted(load)
         </DataField>
         <DataField label="Name">{{ record.name || '—' }}</DataField>
         <DataField label="Observes holidays">
-          <span class="badge badge-sm" :class="!record.ignore_holidays ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="!record.ignore_holidays ? 'success' : 'neutral'" dot>
             {{ !record.ignore_holidays ? 'Yes' : 'No' }}
-          </span>
+          </SoftBadge>
         </DataField>
       </div>
     </BaseCard>
@@ -124,20 +125,20 @@ onMounted(load)
         >
           <!-- Days -->
           <div class="flex flex-wrap gap-1.5">
-            <span
+            <SoftBadge
               v-for="d in DAYS"
               :key="d.num"
-              class="badge badge-sm"
-              :class="w.days.includes(d.num) ? 'badge-primary' : 'badge-ghost opacity-50'"
+              :tone="w.days.includes(d.num) ? 'primary' : 'neutral'"
+              :class="w.days.includes(d.num) ? '' : 'opacity-50'"
             >
               {{ d.label }}
-            </span>
+            </SoftBadge>
           </div>
 
           <!-- Times -->
           <div class="flex flex-wrap items-center gap-2">
             <code class="text-sm font-mono">{{ w.start }} → {{ w.end }}</code>
-            <span v-if="crossesMidnight(w)" class="badge badge-warning badge-sm">crosses midnight</span>
+            <SoftBadge v-if="crossesMidnight(w)" tone="warning" dot>crosses midnight</SoftBadge>
           </div>
         </div>
       </div>

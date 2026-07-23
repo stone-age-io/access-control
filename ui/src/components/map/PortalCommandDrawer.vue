@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Portal, PointStatus } from '@/types/pocketbase'
+import type { SoftTone } from '@/utils/badges'
 import { usePortalCommands, POSTURES } from '@/composables/usePortalCommands'
 import { useAuthStore } from '@/stores/auth'
 import PostureBadge from '@/components/ui/PostureBadge.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const props = defineProps<{ portal: Portal; status: PointStatus | null; isMobile: boolean }>()
 defineEmits<{ close: [] }>()
@@ -14,14 +16,14 @@ const { commanding, grant, setPosture } = usePortalCommands()
 
 const isOverridden = computed(() => props.status?.posture_source === 'override')
 
-const doorBadge = computed(() => {
+const doorBadge = computed<{ tone: SoftTone; text: string }>(() => {
   switch (props.status?.state) {
     case 'open':
-      return { cls: 'badge-error', text: 'Open' }
+      return { tone: 'error', text: 'Open' }
     case 'closed':
-      return { cls: 'badge-success', text: 'Closed' }
+      return { tone: 'success', text: 'Closed' }
     default:
-      return { cls: 'badge-ghost', text: 'Unknown' }
+      return { tone: 'neutral', text: 'Unknown' }
   }
 })
 </script>
@@ -54,11 +56,11 @@ const doorBadge = computed(() => {
         <div class="grid grid-cols-2 gap-2 text-center">
           <div>
             <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">Door</div>
-            <span class="badge badge-sm" :class="doorBadge.cls">{{ doorBadge.text }}</span>
+            <SoftBadge :tone="doorBadge.tone" dot>{{ doorBadge.text }}</SoftBadge>
           </div>
           <div>
             <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">Held</div>
-            <span v-if="status?.held" class="badge badge-sm badge-warning">Held</span>
+            <SoftBadge v-if="status?.held" tone="warning" dot>Held</SoftBadge>
             <span v-else class="opacity-40 text-sm">No</span>
           </div>
         </div>

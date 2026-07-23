@@ -5,8 +5,10 @@ import { useRouter } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useFloorPlan } from '@/composables/useFloorPlan'
 import { useUIStore } from '@/stores/ui'
-import { aggregateArm, armBadge, type ArmState } from '@/utils/arming'
+import { aggregateArm, armTone, type ArmState } from '@/utils/arming'
+import type { SoftTone } from '@/utils/badges'
 import type { Location, Portal, Area, PointStatus, AccessEvent } from '@/types/pocketbase'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 import PortalCommandDrawer from '@/components/map/PortalCommandDrawer.vue'
 import AreaCommandDrawer from '@/components/map/AreaCommandDrawer.vue'
 
@@ -100,14 +102,14 @@ function toggleAreaDrawer() {
   if (areaDrawerOpen.value) selectedPortalId.value = null
 }
 
-function doorBadgeFor(p: Portal): { cls: string; text: string } {
+function doorBadgeFor(p: Portal): { tone: SoftTone; text: string } {
   switch (statusFor(p)?.state) {
     case 'open':
-      return { cls: 'badge-error', text: 'Open' }
+      return { tone: 'error', text: 'Open' }
     case 'closed':
-      return { cls: 'badge-success', text: 'Closed' }
+      return { tone: 'success', text: 'Closed' }
     default:
-      return { cls: 'badge-ghost', text: 'Unknown' }
+      return { tone: 'neutral', text: 'Unknown' }
   }
 }
 
@@ -393,7 +395,7 @@ watch(
           @click="toggleAreaDrawer"
         >
           🛡️ <span class="hidden sm:inline">Areas</span>
-          <span class="badge badge-sm" :class="armBadge(areaSummary.state)">{{ areaSummary.label }}</span>
+          <SoftBadge :tone="armTone(areaSummary.state)" dot>{{ areaSummary.label }}</SoftBadge>
         </button>
       </div>
       <!-- Legend -->
@@ -440,8 +442,8 @@ watch(
               <code class="text-xs text-primary">{{ p.code }}</code>
             </span>
             <span class="flex items-center gap-1 shrink-0">
-              <span v-if="statusFor(p)?.held" class="badge badge-xs badge-warning">Held</span>
-              <span class="badge badge-sm" :class="doorBadgeFor(p).cls">{{ doorBadgeFor(p).text }}</span>
+              <SoftBadge v-if="statusFor(p)?.held" tone="warning" dot>Held</SoftBadge>
+              <SoftBadge :tone="doorBadgeFor(p).tone" dot>{{ doorBadgeFor(p).text }}</SoftBadge>
             </span>
           </button>
           <p v-if="portals.length === 0" class="text-sm opacity-50 col-span-full text-center py-4">

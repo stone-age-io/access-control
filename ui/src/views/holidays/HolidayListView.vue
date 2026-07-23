@@ -13,6 +13,7 @@ import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
+import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -99,14 +100,14 @@ onMounted(reload)
         <template #cell-date="{ item }"><span class="font-mono text-xs">{{ formatDate(item.date, 'PP') }}</span></template>
 
         <template #cell-recurring="{ item }">
-          <span class="badge badge-sm" :class="item.recurring ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="item.recurring ? 'success' : 'neutral'" dot>
             {{ item.recurring ? 'yearly' : 'once' }}
-          </span>
+          </SoftBadge>
         </template>
         <template #card-recurring="{ item }">
-          <span class="badge badge-sm" :class="item.recurring ? 'badge-success' : 'badge-ghost'">
+          <SoftBadge :tone="item.recurring ? 'success' : 'neutral'" dot>
             {{ item.recurring ? 'yearly' : 'once' }}
-          </span>
+          </SoftBadge>
         </template>
 
         <template #cell-calendar="{ item }">
@@ -117,9 +118,9 @@ onMounted(reload)
         </template>
 
         <template #empty>
-          <div class="flex flex-col items-center gap-2 opacity-40">
+          <div class="flex flex-col items-center gap-2 py-2 text-center opacity-60">
             <span class="text-4xl">🔍</span>
-            <span class="text-sm font-bold uppercase tracking-widest">No matches</span>
+            <span class="text-sm">No matches<template v-if="searchQuery"> for “{{ searchQuery }}”</template>.</span>
           </div>
         </template>
 
