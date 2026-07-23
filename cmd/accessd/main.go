@@ -30,6 +30,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
+	"github.com/stone-age-io/access-control/internal/armrelease"
 	"github.com/stone-age-io/access-control/internal/audit"
 	"github.com/stone-age-io/access-control/internal/changelog"
 	"github.com/stone-age-io/access-control/internal/commandapi"
@@ -105,6 +106,7 @@ func main() {
 		disarmer   *disarm.Disarmer
 		healthMon  *health.Monitor
 		statusProj *status.Projector
+		releaser   *armrelease.Releaser
 	)
 
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -270,6 +272,14 @@ func main() {
 		// authenticated operator; it reveals only what policy already grants.
 		simulateapi.Register(e, kv, log)
 
+		// One-shot disarm release: a periodic sweep that clears a disarm override on a
+		// scheduled area once its base arm-state is disarmed, so scheduled-arm +
+		// entry-disarm loops without an operator clearing the override daily. Reads the
+		// policy KV (hence here, not with the pre-serve prunes); owns its lifetime,
+		// stopped in OnTerminate.
+		releaser = armrelease.New(e.App, kv, log)
+		releaser.Start()
+
 		// Status projector: ACC_STATUS device shadow → point_status projection (UI
 		// live state). Watches on a background context so it outlives this setup
 		// (the 2-minute ctx above is cancelled on return); stopped in OnTerminate.
@@ -289,6 +299,9 @@ func main() {
 
 	pb.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		log.Info("accessd terminating")
+		if releaser != nil {
+			releaser.Stop()
+		}
 		if statusProj != nil {
 			statusProj.Stop()
 		}

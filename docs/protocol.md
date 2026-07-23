@@ -196,10 +196,14 @@ ignored, and an operator remote `cmd.grant` carries no `cred`, so a remote door-
 can't silently disarm a building. The write is idempotent and skips an area that is
 already disarmed / can never be armed, so a redelivery is a harmless no-op (no dedup
 needed). Each disarm writes its own `audit_logs` row attributed to the credential +
-portal. **Re-arm is explicit (a v1 limitation):** `armOverride: disarmed` is sticky
-and outranks `autoArm`, so entry-disarm does **not** compose with scheduled
-auto-re-arm — re-arm via an operator action (or don't put `autoArm` on an
-entry-disarm area). Automatic re-arm is a deliberate fast-follow.
+portal. **One-shot release:** a disarm `armOverride` (manual *or* entry-disarm) on a
+*scheduled* area is released automatically at the next scheduled arm — accessd's
+`internal/armrelease` sweep clears `armOverride` once the area's base arm-state
+(scheduled `autoArm` / standing `arm`, override excluded) is disarmed. So scheduled
+auto-arm + entry-disarm loops on its own — arm overnight, first badge disarms in the
+morning, re-arms the next window — with no operator action. An area with **no**
+`autoSchedule` has no scheduled arm to revert to, so its disarm override stays until an
+operator clears it (`arm-clear`).
 
 Each input's **contact sense** is configurable per install (`dpsContact`/
 `rexContact`/`aux_input.contact`, see Policy KV below): a normally-open vs

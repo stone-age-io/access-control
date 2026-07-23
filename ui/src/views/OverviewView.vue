@@ -3,7 +3,8 @@ import { ref, onMounted } from 'vue'
 import { pb } from '@/utils/pb'
 import { formatRelativeTime, formatConstant } from '@/utils/format'
 import { eventKindBadge, unackedAlarmFilter } from '@/utils/events'
-import type { AccessEvent } from '@/types/pocketbase'
+import { aggregateArm } from '@/utils/arming'
+import type { AccessEvent, PointStatus } from '@/types/pocketbase'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import EventDetailModal from '@/components/ui/EventDetailModal.vue'
 
@@ -12,6 +13,10 @@ interface StatusCard {
   icon: string
   path: string
   count: number | null
+  /** Optional denominator, rendered as "count / total" (e.g. areas armed). */
+  total?: number | null
+  /** Informational, not a problem: skip the red "needs attention" styling. */
+  neutral?: boolean
   /** Copy shown when the count is zero — the "nothing to worry about" state. */
   okHint: string
 }
@@ -23,6 +28,8 @@ interface StatusCard {
 const status = ref<StatusCard[]>([
   { label: 'Alarms to acknowledge', icon: '🚨', path: '/alarms', count: null, okHint: 'All clear' },
   { label: 'Controllers not online', icon: '⚙️', path: '/controllers', count: null, okHint: 'All online' },
+  // Informational, not an alarm — armed is a normal state — so it stays neutral.
+  { label: 'Areas armed', icon: '🛡️', path: '/areas', count: null, total: null, neutral: true, okHint: '' },
 ])
 
 const recentEvents = ref<AccessEvent[]>([])
@@ -30,16 +37,32 @@ const selected = ref<AccessEvent | null>(null)
 const loading = ref(true)
 
 async function loadStatus() {
-  const [alarmRes, ctrlRes] = await Promise.allSettled([
+  const [alarmRes, ctrlRes, areaCountRes, shadowRes] = await Promise.allSettled([
     // Shared filter (utils/events) so this headline number matches the console.
     pb.collection('events').getList(1, 1, { filter: unackedAlarmFilter() }),
     // Anything not confirmed online — swept-offline *and* never-reported (empty
     // status, e.g. a new/undeployed box). A box we've never heard from is exactly
     // what an operator needs surfaced, so it counts here rather than hiding.
     pb.collection('controllers').getList(1, 1, { filter: 'status != "online"' }),
+    // Areas armed: total is the denominator; the live count aggregates the per-
+    // controller arm shadows the same way the Areas list and detail page do.
+    pb.collection('areas').getList(1, 1),
+    pb.collection('point_status').getFullList<PointStatus>({ filter: 'kind = "area"' }),
   ])
   status.value[0].count = alarmRes.status === 'fulfilled' ? alarmRes.value.totalItems : 0
   status.value[1].count = ctrlRes.status === 'fulfilled' ? ctrlRes.value.totalItems : 0
+  status.value[2].count = armedAreaCount(shadowRes.status === 'fulfilled' ? shadowRes.value : [])
+  status.value[2].total = areaCountRes.status === 'fulfilled' ? areaCountRes.value.totalItems : null
+}
+
+// armedAreaCount groups the kind=area shadows by area code and counts the areas whose
+// aggregated state is fully armed (partial/unknown do not count as armed).
+function armedAreaCount(rows: PointStatus[]): number {
+  const byCode = new Map<string, PointStatus[]>()
+  for (const r of rows) byCode.set(r.code, [...(byCode.get(r.code) ?? []), r])
+  let n = 0
+  for (const group of byCode.values()) if (aggregateArm(group).state === 'armed') n++
+  return n
 }
 
 async function loadRecentEvents() {
@@ -65,14 +88,15 @@ onMounted(async () => {
       <p class="text-base-content/70 mt-1">System health and recent access activity.</p>
     </div>
 
-    <!-- Operational status — turns red when something needs attention. -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <!-- Operational status — turns red when something needs attention (neutral cards
+         stay calm: an armed area is a normal state, not a problem). -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       <router-link
         v-for="s in status"
         :key="s.path"
         :to="s.path"
         class="card border shadow-sm transition-all hover:shadow-md"
-        :class="(s.count ?? 0) > 0
+        :class="!s.neutral && (s.count ?? 0) > 0
           ? 'bg-error/5 border-error/40 hover:border-error/60'
           : 'bg-base-100 border-base-300 hover:border-primary/40'"
       >
@@ -81,14 +105,16 @@ onMounted(async () => {
             <span class="text-2xl">{{ s.icon }}</span>
             <span
               class="text-3xl font-bold tabular-nums"
-              :class="(s.count ?? 0) > 0 ? 'text-error' : 'opacity-80'"
+              :class="!s.neutral && (s.count ?? 0) > 0 ? 'text-error' : 'opacity-80'"
             >
               <span v-if="s.count === null" class="loading loading-dots loading-sm opacity-40"></span>
-              <template v-else>{{ s.count }}</template>
+              <template v-else>
+                {{ s.count }}<span v-if="s.total != null" class="text-lg opacity-50"> / {{ s.total }}</span>
+              </template>
             </span>
           </div>
           <div class="text-sm font-medium opacity-70 mt-1">{{ s.label }}</div>
-          <div v-if="s.count === 0" class="text-xs text-success/80 mt-0.5">{{ s.okHint }}</div>
+          <div v-if="s.count === 0 && s.okHint" class="text-xs text-success/80 mt-0.5">{{ s.okHint }}</div>
         </div>
       </router-link>
     </div>

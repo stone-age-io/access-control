@@ -17,8 +17,10 @@ Two Go binaries plus a Vue 3 management UI:
   receive it — recipients optionally scoped to locations via `users.notify_locations`, empty = all; SMTP
   transport is PocketBase's own mail settings) — and runs the **entry-disarm sink**
   (`internal/disarm`) — a *third* such durable that, on a valid credential grant at a `disarm_on_grant` portal,
-  durably disarms that portal's area (`DeliverNew`, always on but inert unless a portal opts in). Serves the
-  embedded UI at `/`.
+  durably disarms that portal's area (`DeliverNew`, always on but inert unless a portal opts in) — and runs the
+  **one-shot disarm release** (`internal/armrelease`) — a periodic sweep that clears a disarm `arm_override` on a
+  scheduled area once its base arm-state (scheduled/standing, override excluded) is disarmed, so scheduled-arm +
+  entry-disarm loops without an operator clearing the override. Serves the embedded UI at `/`.
 - **`access-controller`** (`cmd/access-controller`) — edge runtime. Watches the KV keyspace into in-memory
   maps, decides credential presentations **locally** with the pure `policy.Decide`, drives reader/lock/door-input
   hardware, runs a per-door forced/held-open state machine, evaluates **area arm-state** (intrusion-lite: while an
@@ -145,7 +147,11 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   by `point_type`), and a **portal** trip (`runtime.maybeForcedIntrusion` at the `forced` site — a member portal's
   unauthorized open while armed; a grant/REX open is normal passage and never trips). Entry-disarm is the inverse,
   and lives **centrally** (durable arm-state, area spans boxes): accessd's `internal/disarm` sink, not the
-  controller, writes `armOverride: disarmed` on a credential grant at a `disarm_on_grant` portal.
+  controller, writes `armOverride: disarmed` on a credential grant at a `disarm_on_grant` portal. A disarm
+  override (manual or entry-disarm) on a *scheduled* area is **one-shot**: accessd's `internal/armrelease` sweep
+  clears it once the area's base arm-state (scheduled `autoArm`/standing, override excluded) is disarmed, so
+  scheduled auto-arm + entry-disarm loops without an operator clearing it daily (an area with no `autoSchedule`
+  stays disarmed until cleared).
 - **Audit** (`internal/audit`) — JetStream is the system of record for events; the PocketBase `events`
   collection is a rebuildable projection. Durable consumer, at-least-once made idempotent: each row carries
   its message's JetStream stream sequence (`stream_seq`, unique-indexed), so a redelivery whose row already
