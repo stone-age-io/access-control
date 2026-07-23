@@ -11,9 +11,11 @@
 // live in internal/policy and are reused verbatim. What this package re-implements
 // is the small, mechanical KV-wire → policy-type mapping that the controller's
 // PolicyStore also performs (the two are kept honest by the shared policykv wire
-// contract and by this package's own tests). Only the maps the access decision and
-// posture resolution need are built — aux inputs, aux outputs, areas, and
-// controllers are irrelevant to policy.Decide and are skipped.
+// contract and by this package's own tests). It builds the maps the access decision
+// and posture resolution need, plus areas — so accessd can resolve an area's
+// scheduled arm-state centrally (ShouldReleaseDisarm), the same way the controller
+// does, without importing the edge runtime. Aux inputs/outputs and controllers are
+// irrelevant to both and are skipped.
 package policysnapshot
 
 import (
@@ -43,6 +45,7 @@ type Snapshot struct {
 	tzName    map[string]string         // location code -> IANA tz name (for display)
 	locations map[string]policykv.Location
 	holidays  map[string]policykv.Holiday // keyed by KV holiday id
+	areas     map[string]policykv.Area    // area code -> area (for BaseArmState)
 }
 
 // Result is the outcome of a simulated presentation: the real policy.Decision plus
@@ -80,6 +83,7 @@ func Build(entries map[string][]byte) *Snapshot {
 		tzName:    make(map[string]string),
 		locations: make(map[string]policykv.Location),
 		holidays:  make(map[string]policykv.Holiday),
+		areas:     make(map[string]policykv.Area),
 	}
 
 	for key, value := range entries {
@@ -163,8 +167,15 @@ func Build(entries map[string][]byte) *Snapshot {
 			}
 			s.holidays[strings.TrimPrefix(key, policykv.PrefixHoliday)] = w
 
+		case strings.HasPrefix(key, policykv.PrefixArea):
+			var w policykv.Area
+			if json.Unmarshal(value, &w) != nil {
+				continue
+			}
+			s.areas[w.Code] = w
+
 		default:
-			// controller / auxin / auxout / area: irrelevant to the access decision.
+			// controller / auxin / auxout: irrelevant to decision and arm-state.
 		}
 	}
 
@@ -222,6 +233,56 @@ func (s *Snapshot) resolvePosture(portalCode, override string, atUTC time.Time) 
 		}
 	}
 	return ap.Posture, SourceStanding
+}
+
+// ShouldReleaseDisarm reports whether a disarm override on the given area should be
+// released now — the policy half of accessd's one-shot disarm (see internal/armrelease).
+// It is true only when the area is SCHEDULED (has an auto_schedule) and its base
+// arm-state (schedule+standing, override excluded) currently resolves to DISARMED.
+//
+//   - An area with no auto_schedule is never released here: with no scheduled arm to
+//     revert to, its disarm override is sticky until an operator clears it. (The
+//     snapshot reflects the mirror's both-or-neither rule, so an auto_schedule set
+//     without an auto_arm reads as no schedule here — correctly not released.)
+//   - false on unknown/unresolved (KV lag, schedule/location not yet loaded) — fail-safe
+//     keep the override, the same "keep previous" ResolveArmState applies.
+//
+// It never inspects the override itself: the caller (which holds the authoritative
+// PocketBase record) has already selected areas whose durable arm_override is disarmed.
+func (s *Snapshot) ShouldReleaseDisarm(areaCode string, atUTC time.Time) bool {
+	if a, ok := s.areas[areaCode]; !ok || a.AutoSchedule == "" {
+		return false
+	}
+	armed, resolved := s.baseArmState(areaCode, atUTC)
+	return resolved && !armed
+}
+
+// baseArmState resolves an area's BASE arm-state at atUTC — the scheduled/standing
+// arm-state with the durable arm_override EXCLUDED. It mirrors the scheduled→standing
+// tiers of the controller's PolicyStore.ResolveArmState (via the same
+// policy.ScheduleOpen), deliberately dropping the override tier so ShouldReleaseDisarm
+// can decide whether the base is still holding the area armed.
+//
+// resolved is false when the base can't be trusted — the area is unknown to this
+// snapshot (KV lag), or an auto_schedule is configured but its schedule/location isn't
+// loaded yet.
+func (s *Snapshot) baseArmState(areaCode string, atUTC time.Time) (armed, resolved bool) {
+	a, ok := s.areas[areaCode]
+	if !ok {
+		return false, false // unknown here: don't act on missing data
+	}
+	standing := a.Arm == "armed"
+	if a.AutoSchedule != "" {
+		sched, schedOK := s.graph.Schedules[a.AutoSchedule]
+		loc, locOK := s.locs[a.Location]
+		if !schedOK || !locOK || loc == nil {
+			return standing, false // configured but unresolved: keep the override
+		}
+		if policy.ScheduleOpen(sched, loc, atUTC, s.graph.Holidays[a.Location]) {
+			return a.AutoArm == "armed", true
+		}
+	}
+	return standing, true
 }
 
 func toSchedule(w policykv.Schedule) policy.Schedule {

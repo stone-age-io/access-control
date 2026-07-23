@@ -5,18 +5,28 @@ import { useRouter } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useFloorPlan } from '@/composables/useFloorPlan'
 import { useUIStore } from '@/stores/ui'
-import type { Location, Portal, PointStatus, AccessEvent } from '@/types/pocketbase'
+import { useAuthStore } from '@/stores/auth'
+import { useAreaCommands } from '@/composables/useAreaCommands'
+import { aggregateArm, armBadge, armLabel } from '@/utils/arming'
+import type { Location, Portal, Area, PointStatus, AccessEvent } from '@/types/pocketbase'
 import PortalCommandDrawer from '@/components/map/PortalCommandDrawer.vue'
 
 const props = defineProps<{ locationId: string }>()
 const router = useRouter()
 const ui = useUIStore()
+const auth = useAuthStore()
+
+const canCommand = computed(() => auth.can('command'))
+const { commanding, arm, disarm, armClear } = useAreaCommands()
 
 const { initFloorPlan, renderMarkers, setSelected, invalidateSize, cleanup } = useFloorPlan()
 
 const location = ref<Location | null>(null)
 const portals = ref<Portal[]>([])
 const statusByCode = ref<Map<string, PointStatus>>(new Map()) // keyed by portal code
+const areas = ref<Area[]>([]) // this location's intrusion areas
+const areaShadowsByCode = ref<Map<string, PointStatus[]>>(new Map()) // one row per controller
+const armPanelOpen = ref(true)
 const alarmingIds = ref<Set<string>>(new Set()) // portal ids flashing from a recent alarm
 const selectedPortalId = ref<string | null>(null)
 const loading = ref(true)
@@ -57,6 +67,11 @@ function onResize() {
 
 function statusFor(p: Portal): PointStatus | undefined {
   return statusByCode.value.get(p.code)
+}
+
+// Live aggregated arm-state for an area, from its per-controller shadows.
+function armFor(a: Area) {
+  return aggregateArm(areaShadowsByCode.value.get(a.code) ?? [])
 }
 
 function doorBadgeFor(p: Portal): { cls: string; text: string } {
@@ -120,6 +135,27 @@ async function loadStatuses() {
   }
 }
 
+// Areas + their arm shadows are supplementary to the door view — load them non-fatally
+// so a failure here never bounces the operator off the floor plan.
+async function loadAreas() {
+  try {
+    areas.value = await pb.collection('areas').getFullList<Area>({ filter: `location = "${props.locationId}"`, sort: 'code' })
+  } catch {
+    areas.value = []
+  }
+}
+
+async function loadAreaShadows() {
+  try {
+    const rows = await pb.collection('point_status').getFullList<PointStatus>({ filter: 'kind = "area"' })
+    const m = new Map<string, PointStatus[]>()
+    for (const r of rows) m.set(r.code, [...(m.get(r.code) ?? []), r])
+    areaShadowsByCode.value = m
+  } catch {
+    areaShadowsByCode.value = new Map()
+  }
+}
+
 async function load() {
   loading.value = true
   selectedPortalId.value = null
@@ -131,7 +167,7 @@ async function load() {
     ])
     location.value = loc
     portals.value = pts
-    await loadStatuses()
+    await Promise.all([loadStatuses(), loadAreas(), loadAreaShadows()])
   } catch {
     router.push('/monitor')
     return
@@ -209,14 +245,25 @@ function flashPortal(id: string) {
 }
 
 async function subscribe() {
-  // Live door/posture/held state — point_status is small, so watch all and key by code.
+  // Live door/posture/held state AND area arm-state — point_status is small, so watch
+  // the whole collection once and branch by kind (portals key one row per code; areas
+  // key a list, one row per participating controller).
   unsubStatus = await pb.collection('point_status').subscribe<PointStatus>('*', (e) => {
-    if (e.record.kind !== 'portal') return
-    const m = new Map(statusByCode.value)
-    if (e.action === 'delete') m.delete(e.record.code)
-    else m.set(e.record.code, e.record)
-    statusByCode.value = m
-    renderAll()
+    const r = e.record
+    if (r.kind === 'portal') {
+      const m = new Map(statusByCode.value)
+      if (e.action === 'delete') m.delete(r.code)
+      else m.set(r.code, r)
+      statusByCode.value = m
+      renderAll()
+    } else if (r.kind === 'area') {
+      const m = new Map(areaShadowsByCode.value)
+      const arr = (m.get(r.code) ?? []).filter((s) => s.key !== r.key)
+      if (e.action !== 'delete') arr.push(r)
+      if (arr.length) m.set(r.code, arr)
+      else m.delete(r.code)
+      areaShadowsByCode.value = m
+    }
   })
   // Forced/held alarms are events, not sticky state — flash the marker transiently.
   unsubEvents = await pb.collection('events').subscribe<AccessEvent>('*', (e) => {
@@ -347,6 +394,34 @@ watch(
           <p v-if="portals.length === 0" class="text-sm opacity-50 col-span-full text-center py-4">
             No portals in this location.
           </p>
+        </div>
+      </div>
+
+      <!-- Area arm panel — a left-anchored overlay listing this location's areas with
+           live arm-state and arm/disarm (independent of plan/list view). Areas have no
+           coordinates, so they're a panel, not markers. Collapsible to stay out of the way. -->
+      <div v-if="areas.length" class="monitor-arm-panel absolute top-2 left-2 z-[500] w-60 max-w-[calc(100%-1rem)]">
+        <div class="rounded-xl border border-base-300 bg-base-100/95 shadow-xl backdrop-blur">
+          <button
+            class="flex items-center justify-between w-full px-3 py-2 text-sm font-bold"
+            @click="armPanelOpen = !armPanelOpen"
+          >
+            <span class="flex items-center gap-1">🛡️ Areas <span class="opacity-50 font-normal">({{ areas.length }})</span></span>
+            <span class="opacity-60">{{ armPanelOpen ? '▾' : '▸' }}</span>
+          </button>
+          <div v-if="armPanelOpen" class="max-h-80 overflow-y-auto border-t border-base-200 divide-y divide-base-200">
+            <div v-for="a in areas" :key="a.id" class="p-2.5 space-y-1.5">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-sm font-medium truncate">{{ a.name || a.code }}</span>
+                <span class="badge badge-xs shrink-0" :class="armBadge(armFor(a).state)">{{ armLabel(armFor(a)) }}</span>
+              </div>
+              <div v-if="canCommand" class="flex gap-1">
+                <button class="btn btn-xs btn-warning flex-1" :disabled="commanding" @click="arm(a.id, a.code)">Arm</button>
+                <button class="btn btn-xs flex-1" :disabled="commanding" @click="disarm(a.id, a.code)">Disarm</button>
+                <button class="btn btn-xs btn-ghost" :disabled="commanding || !a.arm_override" title="Clear override" @click="armClear(a.id)">✕</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { watchDebounced } from '@vueuse/core'
 import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import { useAuthStore } from '@/stores/auth'
+import { useAreaCommands } from '@/composables/useAreaCommands'
+import { aggregateArm, armBadge, armLabel } from '@/utils/arming'
 import { pb } from '@/utils/pb'
-import type { Area } from '@/types/pocketbase'
+import type { Area, PointStatus } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ResponsiveList from '@/components/ui/ResponsiveList.vue'
@@ -16,11 +19,26 @@ import ListPagination from '@/components/ui/ListPagination.vue'
 const router = useRouter()
 const toast = useToast()
 const { confirm } = useConfirm()
+const auth = useAuthStore()
 
 const { items, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
   usePagination<Area>('areas', 50)
 const searchQuery = ref('')
 const deleting = ref(false)
+
+const canCommand = computed(() => auth.can('command'))
+const { commanding, arm, disarm, armClear } = useAreaCommands()
+
+// Live arm-state per area from the point_status shadow. An area spans one shadow row
+// PER participating controller (same code, distinct controller), so we key by code to a
+// LIST and aggregate — unlike portals, which have a single row per code. Loaded once and
+// kept live; independent of search/pagination.
+const shadowsByCode = ref<Map<string, PointStatus[]>>(new Map())
+let unsubStatus: (() => void) | null = null
+
+function armFor(a: Area) {
+  return aggregateArm(shadowsByCode.value.get(a.code) ?? [])
+}
 
 function queryOpts() {
   const q = searchQuery.value.trim().replace(/["\\]/g, '')
@@ -33,10 +51,34 @@ function reload() {
   load(queryOpts())
 }
 
+async function loadShadows() {
+  try {
+    const rows = await pb.collection('point_status').getFullList<PointStatus>({ filter: 'kind = "area"' })
+    const m = new Map<string, PointStatus[]>()
+    for (const r of rows) m.set(r.code, [...(m.get(r.code) ?? []), r])
+    shadowsByCode.value = m
+  } catch {
+    shadowsByCode.value = new Map()
+  }
+}
+
+async function subscribeShadows() {
+  unsubStatus = await pb.collection('point_status').subscribe<PointStatus>('*', (e) => {
+    if (e.record.kind !== 'area') return
+    const m = new Map(shadowsByCode.value)
+    const arr = (m.get(e.record.code) ?? []).filter((s) => s.key !== e.record.key)
+    if (e.action !== 'delete') arr.push(e.record)
+    if (arr.length) m.set(e.record.code, arr)
+    else m.delete(e.record.code)
+    shadowsByCode.value = m
+  })
+}
+
 const columns: Column<Area>[] = [
   { key: 'code', label: 'Code' },
   { key: 'name', label: 'Name' },
   { key: 'location', label: 'Location' },
+  { key: 'state', label: 'State' },
   { key: 'arm', label: 'Standing' },
   { key: 'arm_override', label: 'Override' },
 ]
@@ -63,7 +105,14 @@ async function handleDelete(a: Area) {
 }
 
 watchDebounced(searchQuery, reload, { debounce: 300 })
-onMounted(reload)
+onMounted(() => {
+  reload()
+  loadShadows()
+  subscribeShadows()
+})
+onBeforeUnmount(() => {
+  if (unsubStatus) unsubStatus()
+})
 </script>
 
 <template>
@@ -102,6 +151,14 @@ onMounted(reload)
         <template #cell-location="{ item }"><code class="text-xs">{{ item.expand?.location?.code || '—' }}</code></template>
         <template #card-location="{ item }"><code class="text-xs">{{ item.expand?.location?.code || '—' }}</code></template>
 
+        <!-- Live aggregated arm-state across this area's controllers (Unknown = none reporting). -->
+        <template #cell-state="{ item }">
+          <span class="badge badge-sm" :class="armBadge(armFor(item).state)">{{ armLabel(armFor(item)) }}</span>
+        </template>
+        <template #card-state="{ item }">
+          <span class="badge badge-sm" :class="armBadge(armFor(item).state)">{{ armLabel(armFor(item)) }}</span>
+        </template>
+
         <template #cell-arm="{ item }">
           <span class="badge badge-sm" :class="item.arm === 'armed' ? 'badge-error' : 'badge-ghost'">{{ item.arm || 'disarmed' }}</span>
         </template>
@@ -119,6 +176,11 @@ onMounted(reload)
         </template>
 
         <template #actions="{ item }">
+          <template v-if="canCommand">
+            <button class="btn btn-xs btn-warning" :disabled="commanding" @click="arm(item.id, item.code)">Arm</button>
+            <button class="btn btn-xs" :disabled="commanding" @click="disarm(item.id, item.code)">Disarm</button>
+            <button class="btn btn-xs btn-ghost" :disabled="commanding || !item.arm_override" @click="armClear(item.id)">Clear</button>
+          </template>
           <router-link :to="`/areas/${item.id}/edit`" class="btn btn-xs">Edit</router-link>
           <button @click="handleDelete(item)" class="btn btn-xs text-error" :disabled="deleting">Delete</button>
         </template>

@@ -167,6 +167,172 @@ func TestSimulate_HolidayClosesSchedule(t *testing.T) {
 	}
 }
 
+// armEntries builds the minimal snapshot BaseArmState needs: a location, an area,
+// and any schedules it references.
+func armEntries(t *testing.T, loc policykv.Location, area policykv.Area, scheds ...policykv.Schedule) map[string][]byte {
+	t.Helper()
+	e := map[string][]byte{
+		policykv.PrefixLocation + loc.Code: mk(t, loc),
+		policykv.PrefixArea + area.Code:    mk(t, area),
+	}
+	for _, s := range scheds {
+		e[policykv.PrefixSched+s.Code] = mk(t, s)
+	}
+	return e
+}
+
+// BaseArmState resolves the scheduled/standing arm-state (override excluded), the
+// same tiers as the controller's ResolveArmState. It backs accessd's one-shot disarm
+// release, so getting these cases right is the safety-relevant part.
+func TestBaseArmState(t *testing.T) {
+	hq := policykv.Location{Code: "hq", Timezone: "UTC"}
+	openNow := policykv.Window{Days: []int{isoWD(at)}, Start: "00:00", End: "24:00"}
+	closedNow := policykv.Window{Days: []int{isoWD(at)}, Start: "20:00", End: "23:00"} // 14:00 outside
+	midnightOpen := policykv.Window{Days: []int{isoWD(at)}, Start: "12:00", End: "02:00"} // crosses midnight, open at 14:00
+
+	tests := []struct {
+		name         string
+		entries      map[string][]byte
+		area         string
+		wantArmed    bool
+		wantResolved bool
+	}{
+		{
+			name:      "no schedule, standing armed",
+			entries:   armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "armed"}),
+			area:      "a1", wantArmed: true, wantResolved: true,
+		},
+		{
+			name:      "no schedule, standing disarmed",
+			entries:   armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed"}),
+			area:      "a1", wantArmed: false, wantResolved: true,
+		},
+		{
+			name:      "no schedule, empty arm defaults disarmed",
+			entries:   armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq"}),
+			area:      "a1", wantArmed: false, wantResolved: true,
+		},
+		{
+			name: "window open → auto_arm armed",
+			entries: armEntries(t, hq,
+				policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed", AutoArm: "armed", AutoSchedule: "s1"},
+				policykv.Schedule{Code: "s1", Windows: []policykv.Window{openNow}, ObserveHolidays: true}),
+			area: "a1", wantArmed: true, wantResolved: true,
+		},
+		{
+			name: "midnight-crossing window open → auto_arm armed",
+			entries: armEntries(t, hq,
+				policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed", AutoArm: "armed", AutoSchedule: "s1"},
+				policykv.Schedule{Code: "s1", Windows: []policykv.Window{midnightOpen}}),
+			area: "a1", wantArmed: true, wantResolved: true,
+		},
+		{
+			name: "window closed → standing (disarmed)",
+			entries: armEntries(t, hq,
+				policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed", AutoArm: "armed", AutoSchedule: "s1"},
+				policykv.Schedule{Code: "s1", Windows: []policykv.Window{closedNow}}),
+			area: "a1", wantArmed: false, wantResolved: true,
+		},
+		{
+			name: "window closed → standing (armed)",
+			entries: armEntries(t, hq,
+				policykv.Area{Code: "a1", Location: "hq", Arm: "armed", AutoArm: "disarmed", AutoSchedule: "s1"},
+				policykv.Schedule{Code: "s1", Windows: []policykv.Window{closedNow}}),
+			area: "a1", wantArmed: true, wantResolved: true,
+		},
+		{
+			name: "holiday closes schedule → standing (disarmed)",
+			entries: func() map[string][]byte {
+				e := armEntries(t,
+					policykv.Location{Code: "hq", Timezone: "UTC", HolidayCalendars: []string{"cal1"}},
+					policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed", AutoArm: "armed", AutoSchedule: "s1"},
+					policykv.Schedule{Code: "s1", Windows: []policykv.Window{openNow}, ObserveHolidays: true})
+				e[policykv.PrefixHoliday+"h1"] = mk(t, policykv.Holiday{Calendar: "cal1", Date: at.Format("2006-01-02")})
+				return e
+			}(),
+			area: "a1", wantArmed: false, wantResolved: true,
+		},
+		{
+			name: "auto_schedule set but schedule missing → unresolved",
+			entries: armEntries(t, hq,
+				policykv.Area{Code: "a1", Location: "hq", Arm: "armed", AutoArm: "armed", AutoSchedule: "ghost"}),
+			area: "a1", wantArmed: true, wantResolved: false, // returns standing, resolved=false
+		},
+		{
+			name:      "unknown area → unresolved",
+			entries:   armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "armed"}),
+			area:      "other", wantArmed: false, wantResolved: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			armed, resolved := Build(tc.entries).baseArmState(tc.area, at)
+			if resolved != tc.wantResolved {
+				t.Errorf("resolved = %v, want %v", resolved, tc.wantResolved)
+			}
+			if armed != tc.wantArmed {
+				t.Errorf("armed = %v, want %v", armed, tc.wantArmed)
+			}
+		})
+	}
+}
+
+// ShouldReleaseDisarm is the one-shot disarm gate: release only a SCHEDULED area whose
+// base arm-state is now disarmed; a standing-only area (or an unresolved/unknown one) is
+// never released here.
+func TestShouldReleaseDisarm(t *testing.T) {
+	hq := policykv.Location{Code: "hq", Timezone: "UTC"}
+	openNow := policykv.Window{Days: []int{isoWD(at)}, Start: "00:00", End: "24:00"}
+	closedNow := policykv.Window{Days: []int{isoWD(at)}, Start: "20:00", End: "23:00"}
+
+	tests := []struct {
+		name    string
+		entries map[string][]byte
+		area    string
+		want    bool
+	}{
+		{
+			name: "scheduled, window closed, standing disarmed → release",
+			entries: armEntries(t, hq,
+				policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed", AutoArm: "armed", AutoSchedule: "s1"},
+				policykv.Schedule{Code: "s1", Windows: []policykv.Window{closedNow}}),
+			area: "a1", want: true,
+		},
+		{
+			name: "scheduled, window open (base armed) → keep",
+			entries: armEntries(t, hq,
+				policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed", AutoArm: "armed", AutoSchedule: "s1"},
+				policykv.Schedule{Code: "s1", Windows: []policykv.Window{openNow}}),
+			area: "a1", want: false,
+		},
+		{
+			name:    "no schedule → never release (sticky)",
+			entries: armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed"}),
+			area:    "a1", want: false,
+		},
+		{
+			name: "schedule set but missing (unresolved) → keep",
+			entries: armEntries(t, hq,
+				policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed", AutoArm: "armed", AutoSchedule: "ghost"}),
+			area: "a1", want: false,
+		},
+		{
+			name:    "unknown area → keep",
+			entries: armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed"}),
+			area:    "other", want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Build(tc.entries).ShouldReleaseDisarm(tc.area, at); got != tc.want {
+				t.Errorf("ShouldReleaseDisarm = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // A malformed value must be skipped (fail closed), not crash the build.
 func TestBuild_MalformedValueSkipped(t *testing.T) {
 	e := baseEntries(t)
