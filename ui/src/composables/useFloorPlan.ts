@@ -1,16 +1,17 @@
 import { ref, shallowRef, onUnmounted } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import type { Portal } from '@/types/pocketbase'
+import type { Placeable } from '@/utils/placeable'
 import { fixLeafletIcons } from '@/utils/leafletIcons'
 
 export interface RenderOptions {
   draggable: boolean
   onMove: (id: string, x: number, y: number) => void
   onClick: (id: string) => void
-  /** Optional per-portal marker icon (e.g. status-colored divIcon on the
-   *  operational map). When omitted, Leaflet's default pin is used. */
-  iconFor?: (portal: Portal) => L.Icon | L.DivIcon
+  /** Optional per-marker icon (e.g. status-colored divIcon on the operational
+   *  map, or a kind-badge on the editor). When omitted, Leaflet's default pin
+   *  is used. */
+  iconFor?: (item: Placeable) => L.Icon | L.DivIcon
 }
 
 /**
@@ -62,33 +63,34 @@ export function useFloorPlan() {
     mapInitialized.value = true
   }
 
-  // Renders only placed portals (those with a floorplan_position). Unplaced
-  // portals live in the positioning drawer until explicitly placed.
-  const renderMarkers = (portals: Portal[], opts: RenderOptions) => {
+  // Renders only placed items (those with a floorplan_position). Unplaced items
+  // live in the positioning drawer until explicitly placed. `item.id` is the
+  // namespaced marker key (see Placeable) so portals and aux I/O never collide.
+  const renderMarkers = (items: Placeable[], opts: RenderOptions) => {
     if (!markerLayer.value || !map.value) return
     clearMarkers()
 
-    portals.forEach((portal) => {
-      const pos = portal.floorplan_position
+    items.forEach((item) => {
+      const pos = item.floorplan_position
       if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') return
 
       // Leaflet uses [lat, lng] = [y, x] in CRS.Simple.
-      const icon = opts.iconFor?.(portal)
+      const icon = opts.iconFor?.(item)
       const marker = L.marker([pos.y, pos.x], {
         draggable: opts.draggable,
-        title: portal.name || portal.code,
+        title: item.name || item.code,
         ...(icon ? { icon } : {}),
       })
 
-      marker.on('click', () => opts.onClick(portal.id))
+      marker.on('click', () => opts.onClick(item.id))
       if (opts.draggable) {
         marker.on('dragend', (e) => {
           const { lat, lng } = (e.target as L.Marker).getLatLng()
-          opts.onMove(portal.id, Math.round(lng), Math.round(lat))
+          opts.onMove(item.id, Math.round(lng), Math.round(lat))
         })
       }
 
-      markerInstances.set(portal.id, marker)
+      markerInstances.set(item.id, marker)
       marker.addTo(markerLayer.value!)
     })
 

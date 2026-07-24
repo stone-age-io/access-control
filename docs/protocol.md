@@ -277,8 +277,9 @@ sole writer; controllers are read-only watchers.
 | `area.{code}` | `{"code","name"?,"location","arm"?,"armOverride"?,"autoArm"?,"autoSchedule"?}` |
 
 **UI-only fields are deliberately excluded.** The management UI adds
-`locations.description`/`coordinates`/`floorplan` and `portals.floorplan_position`
-for the location map and floor-plan views. These are visualization metadata only —
+`locations.description`/`coordinates`/`floorplan` and `floorplan_position` on
+`portals`, `aux_input`, and `aux_output` for the location map and floor-plan views.
+These are visualization metadata only —
 the mirror's wire shape above omits them, so they never reach `ACC_POLICY` or the
 edge. `policy.Decide`, arming, and the door state machine are unaffected, and no
 floor-plan image data ever leaves accessd.
