@@ -8,6 +8,7 @@ import { aggregateArm, rollupArmStates, armTone, type ArmState } from '@/utils/a
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 import AreaGrid from '@/components/map/AreaGrid.vue'
 import IoGrid from '@/components/map/IoGrid.vue'
+import PortalCommandDrawer from '@/components/map/PortalCommandDrawer.vue'
 
 // The all-locations "List" mode of the Live View: every location's portals,
 // areas, and aux I/O, grouped by location. Each row leads with a glanceable
@@ -25,9 +26,29 @@ const auxStatusByKey = ref<Map<string, PointStatus>>(new Map()) // aux status by
 const areaShadowsByCode = ref<Map<string, PointStatus[]>>(new Map()) // area shadows by code (one per controller)
 const expanded = ref<Set<string>>(new Set())
 const loading = ref(true)
+const isMobile = ref(false)
+// Portals are commanded via the same slide-over drawer as the per-location view
+// (richer than areas/outputs, so it stays out of the card grid). Areas/outputs
+// keep their inline controls.
+const selectedPortalId = ref<string | null>(null)
 
 let unsubStatus: (() => void) | null = null
 let unsubAreas: (() => void) | null = null
+
+const selectedPortal = computed(() => allPortals.value.find((p) => p.id === selectedPortalId.value) || null)
+const selectedPortalStatus = computed(() =>
+  selectedPortal.value ? statusByCode.value.get(selectedPortal.value.code) ?? null : null,
+)
+
+function checkMobile() {
+  isMobile.value = window.innerWidth < 768
+}
+function openPortal(id: string) {
+  selectedPortalId.value = selectedPortalId.value === id ? null : id
+}
+function closePortal() {
+  selectedPortalId.value = null
+}
 
 interface Group {
   loc: Location
@@ -160,17 +181,23 @@ async function subscribe() {
 }
 
 onMounted(() => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   load()
   subscribe()
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
   if (unsubStatus) unsubStatus()
   if (unsubAreas) unsubAreas()
 })
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto">
+  <!-- Positioned shell so the command drawer can anchor over the scrolling list
+       (the list itself is the inner scroller), mirroring the per-location view. -->
+  <div class="relative h-full">
+    <div class="absolute inset-0 overflow-y-auto">
     <div class="flex items-center justify-between mb-3">
       <p class="text-sm opacity-60">{{ groups.length }} location{{ groups.length === 1 ? '' : 's' }}</p>
       <button v-if="groups.length" class="btn btn-xs btn-ghost" @click="toggleAll">
@@ -211,11 +238,12 @@ onBeforeUnmount(() => {
           <div v-if="g.portals.length" class="p-4">
             <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-2">🚪 Portals</div>
             <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              <router-link
+              <button
                 v-for="p in g.portals"
                 :key="p.id"
-                :to="`/portals/${p.id}`"
-                class="rounded-lg border border-base-300 bg-base-100 p-3 flex items-center justify-between gap-2 hover:border-primary/40 transition-colors min-w-0"
+                class="rounded-lg border bg-base-100 p-3 flex items-center justify-between gap-2 transition-colors min-w-0 text-left w-full"
+                :class="selectedPortalId === p.id ? 'border-primary ring-1 ring-primary/40' : 'border-base-300 hover:border-primary/40'"
+                @click="openPortal(p.id)"
               >
                 <span class="min-w-0">
                   <span class="font-medium text-sm truncate block">{{ p.name || p.code }}</span>
@@ -225,7 +253,7 @@ onBeforeUnmount(() => {
                   <SoftBadge v-if="statusByCode.get(p.code)?.held" tone="warning" dot>Held</SoftBadge>
                   <SoftBadge :tone="portalBadge(p).tone" dot>{{ portalBadge(p).text }}</SoftBadge>
                 </span>
-              </router-link>
+              </button>
             </div>
           </div>
 
@@ -247,5 +275,14 @@ onBeforeUnmount(() => {
 
       <p v-if="!groups.length" class="text-sm opacity-50 text-center py-8">No locations yet.</p>
     </div>
+    </div>
+
+    <PortalCommandDrawer
+      v-if="selectedPortal"
+      :portal="selectedPortal"
+      :status="selectedPortalStatus"
+      :is-mobile="isMobile"
+      @close="closePortal"
+    />
   </div>
 </template>
