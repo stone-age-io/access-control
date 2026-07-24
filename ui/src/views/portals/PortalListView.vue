@@ -83,7 +83,7 @@ const columns: Column<Portal>[] = [
   { key: 'name', label: 'Name' },
   { key: 'type', label: 'Type' },
   { key: 'expand.location.code', label: 'Location' },
-  { key: 'door', label: 'Door' },
+  { key: 'door', label: 'State' },
   { key: 'posture', label: 'Posture' },
 ]
 

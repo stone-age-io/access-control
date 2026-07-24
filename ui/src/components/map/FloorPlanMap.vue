@@ -1,15 +1,26 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import L from 'leaflet'
 import { useFloorPlan } from '@/composables/useFloorPlan'
 import { pb } from '@/utils/pb'
-import type { Portal, Location } from '@/types/pocketbase'
-import PortalMapDrawer from '@/components/map/PortalMapDrawer.vue'
+import type { Portal, AuxInput, AuxOutput, Location } from '@/types/pocketbase'
+import {
+  portalPlaceable, auxInputPlaceable, auxOutputPlaceable,
+  isPlaced, parseMarkerId, PLACE_KIND_META,
+  type Placeable, type PlaceKind,
+} from '@/utils/placeable'
+import FloorPlanDetailDrawer from '@/components/map/FloorPlanDetailDrawer.vue'
 import FloorPlanPositionDrawer from '@/components/map/FloorPlanPositionDrawer.vue'
 
-const props = defineProps<{ location: Location; portals: Portal[] }>()
+const props = defineProps<{
+  location: Location
+  portals: Portal[]
+  auxInputs: AuxInput[]
+  auxOutputs: AuxOutput[]
+}>()
 
 const emit = defineEmits<{
-  'update-position': [payload: { id: string; position: { x: number; y: number } | null }]
+  'update-position': [payload: { kind: PlaceKind; id: string; position: { x: number; y: number } | null }]
 }>()
 
 const { initFloorPlan, renderMarkers, setSelected, getViewCenter } = useFloorPlan()
@@ -17,25 +28,56 @@ const { initFloorPlan, renderMarkers, setSelected, getViewCenter } = useFloorPla
 const loading = ref(false)
 const positionMode = ref(false) // markers draggable; persists across drawer open/close
 const showPositionDrawer = ref(false) // the positioning panel
-const selectedPortalId = ref<string | null>(null) // the detail panel (view mode)
+const selectedId = ref<string | null>(null) // namespaced marker id (detail panel, view mode)
 const isMobile = ref(false)
 
-function isPlaced(p: Portal): boolean {
-  const pos = p.floorplan_position
-  return !!pos && typeof pos.x === 'number' && typeof pos.y === 'number'
-}
+// Portals + aux I/O normalized into one marker list (namespaced ids so kinds
+// never collide). Areas are excluded — they have no single position.
+const allPlaceables = computed<Placeable[]>(() => [
+  ...props.portals.map(portalPlaceable),
+  ...props.auxInputs.map(auxInputPlaceable),
+  ...props.auxOutputs.map(auxOutputPlaceable),
+])
+const placed = computed(() => allPlaceables.value.filter(isPlaced))
+const unmapped = computed(() => allPlaceables.value.filter((p) => !isPlaced(p)))
+const selectedPlaceable = computed(() => allPlaceables.value.find((p) => p.id === selectedId.value) || null)
 
-const placedPortals = computed(() => props.portals.filter(isPlaced))
-const unmappedPortals = computed(() => props.portals.filter((p) => !isPlaced(p)))
-const selectedPortal = computed(() => props.portals.find((p) => p.id === selectedPortalId.value) || null)
+// The underlying PB record for the selected marker (kind-routed).
+const selectedRecord = computed<any>(() => {
+  const pl = selectedPlaceable.value
+  if (!pl) return null
+  if (pl.kind === 'portal') return props.portals.find((r) => r.id === pl.recordId) || null
+  if (pl.kind === 'aux_input') return props.auxInputs.find((r) => r.id === pl.recordId) || null
+  return props.auxOutputs.find((r) => r.id === pl.recordId) || null
+})
 
 function checkMobile() {
   isMobile.value = window.innerWidth < 768
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
+  )
+}
+
+// Editor marker: a kind emoji pin + name label, so the three kinds are
+// distinguishable while arranging them (live status comes on the Live Map).
+function editorIcon(item: Placeable): L.DivIcon {
+  const meta = PLACE_KIND_META[item.kind]
+  const label = escapeHtml(item.name || item.code)
+  return L.divIcon({
+    className: 'fp-marker',
+    html: `<span class="fp-pin fp-pin-${item.kind}">${meta.emoji}</span><span class="fp-label">${label}</span>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  })
+}
+
 const loadMap = () => {
   // Reset interaction state when the floor plan changes (e.g. navigating locations).
-  selectedPortalId.value = null
+  selectedId.value = null
   showPositionDrawer.value = false
   positionMode.value = false
 
@@ -56,27 +98,31 @@ const loadMap = () => {
 }
 
 function renderAll() {
-  renderMarkers(placedPortals.value, {
+  renderMarkers(placed.value, {
     draggable: positionMode.value,
-    onMove: (id, x, y) => emit('update-position', { id, position: { x, y } }),
+    onMove: (markerId, x, y) => {
+      const { kind, recordId } = parseMarkerId(markerId)
+      emit('update-position', { kind, id: recordId, position: { x, y } })
+    },
     onClick: handleMarkerClick,
+    iconFor: editorIcon,
   })
-  setSelected(selectedPortalId.value)
+  setSelected(selectedId.value)
 }
 
 // In view mode (not arranging, no panel open), clicking a marker shows its detail.
-function handleMarkerClick(id: string) {
+function handleMarkerClick(markerId: string) {
   if (positionMode.value || showPositionDrawer.value) return
-  if (selectedPortalId.value === id) {
+  if (selectedId.value === markerId) {
     closeDetail()
     return
   }
-  selectedPortalId.value = id
-  setSelected(id)
+  selectedId.value = markerId
+  setSelected(markerId)
 }
 
 function closeDetail() {
-  selectedPortalId.value = null
+  selectedId.value = null
   setSelected(null)
 }
 
@@ -89,19 +135,21 @@ function togglePositionDrawer() {
   showPositionDrawer.value = true
 }
 
-function place(id: string) {
-  emit('update-position', { id, position: getViewCenter() })
+function place(markerId: string) {
+  const { kind, recordId } = parseMarkerId(markerId)
+  emit('update-position', { kind, id: recordId, position: getViewCenter() })
   if (isMobile.value) showPositionDrawer.value = false // free the map to drag on mobile
 }
 
-function unmap(id: string) {
-  if (selectedPortalId.value === id) closeDetail()
-  emit('update-position', { id, position: null })
+function unmap(markerId: string) {
+  if (selectedId.value === markerId) closeDetail()
+  const { kind, recordId } = parseMarkerId(markerId)
+  emit('update-position', { kind, id: recordId, position: null })
 }
 
 // Click on the map background (not a marker or drawer) closes the detail panel.
 function handleMapBgClick(event: MouseEvent) {
-  if (!selectedPortalId.value) return
+  if (!selectedId.value) return
   const target = event.target as HTMLElement
   if (target.closest('.leaflet-marker-icon') || target.closest('.floorplan-drawer')) return
   closeDetail()
@@ -114,7 +162,7 @@ onMounted(() => {
 })
 onUnmounted(() => window.removeEventListener('resize', checkMobile))
 
-watch(() => props.portals, renderAll, { deep: true })
+watch([() => props.portals, () => props.auxInputs, () => props.auxOutputs], renderAll, { deep: true })
 watch(positionMode, renderAll)
 watch(() => props.location?.floorplan, loadMap)
 </script>
@@ -132,7 +180,7 @@ watch(() => props.location?.floorplan, loadMap)
       <button
         class="btn btn-sm shadow-sm gap-1"
         :class="showPositionDrawer || positionMode ? 'btn-primary' : 'bg-base-100 border-base-300 hover:bg-base-200'"
-        title="Position portals"
+        title="Position points"
         @click="togglePositionDrawer"
       >
         🛠️ <span class="hidden sm:inline">Position</span>
@@ -140,9 +188,10 @@ watch(() => props.location?.floorplan, loadMap)
     </div>
 
     <!-- Detail drawer (view mode) -->
-    <PortalMapDrawer
-      v-if="selectedPortal"
-      :portal="selectedPortal"
+    <FloorPlanDetailDrawer
+      v-if="selectedPlaceable"
+      :placeable="selectedPlaceable"
+      :record="selectedRecord"
       :is-mobile="isMobile"
       class="floorplan-drawer"
       @close="closeDetail"
@@ -151,8 +200,8 @@ watch(() => props.location?.floorplan, loadMap)
     <!-- Positioning drawer -->
     <FloorPlanPositionDrawer
       v-if="showPositionDrawer"
-      :unmapped="unmappedPortals"
-      :placed="placedPortals"
+      :unmapped="unmapped"
+      :placed="placed"
       :position-mode="positionMode"
       :is-mobile="isMobile"
       class="floorplan-drawer"
@@ -167,5 +216,50 @@ watch(() => props.location?.floorplan, loadMap)
 <style scoped>
 :deep(.marker-selected) {
   filter: hue-rotate(180deg) saturate(1.5) drop-shadow(0 0 8px rgba(116, 128, 255, 0.8));
+}
+</style>
+
+<!-- Global (un-scoped): Leaflet injects marker HTML outside the component's
+     scoped DOM, so these class names must be global to take effect. -->
+<style>
+.leaflet-div-icon.fp-marker {
+  background: transparent;
+  border: 0;
+  width: auto !important;
+  height: auto !important;
+}
+.fp-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  font-size: 13px;
+  line-height: 1;
+  background: oklch(var(--b1));
+  border: 2px solid oklch(var(--bc) / 0.4);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.fp-pin-portal {
+  border-color: #3b82f6;
+}
+.fp-pin-aux_input {
+  border-color: #f59e0b;
+}
+.fp-pin-aux_output {
+  border-color: #22c55e;
+}
+.fp-marker .fp-label {
+  position: absolute;
+  left: 26px;
+  top: 2px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  color: oklch(var(--bc));
+  background: oklch(var(--b1) / 0.8);
+  padding: 0 4px;
+  border-radius: 4px;
 }
 </style>

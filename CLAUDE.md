@@ -222,7 +222,9 @@ the `policy.Decide` wire), `1750000018` (shareable holiday calendars), `17500000
 (notification opt-in: `users.notify` recipient flag + per-source `portals`/`areas.notify_on_alarm` and
 `locations.notify_fire` — moves the alarm-email "who"/"which" out of config into UI-managed data), and
 `1750000024` (notification recipient scoping: `users.notify_locations` — an operator is paged only for
-alarms at locations in its scope; empty = all locations).
+alarms at locations in its scope; empty = all locations), `1750000025` (events `stream_seq` unique index for
+idempotent audit projection), and `1750000026` (`aux_input`/`aux_output` `floorplan_position` — UI-only, so aux
+I/O can be placed and monitored on the floor plan like portals, never mirrored to KV).
 The base `1750000000` stays frozen; everything is additive. `migratecmd`
 Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
 before committing.

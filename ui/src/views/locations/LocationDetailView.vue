@@ -5,7 +5,8 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { policyKey } from '@/utils/policyKey'
-import type { Location, Portal } from '@/types/pocketbase'
+import type { Location, Portal, AuxInput, AuxOutput } from '@/types/pocketbase'
+import { PLACE_KIND_COLLECTION, type PlaceKind } from '@/utils/placeable'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
@@ -22,6 +23,8 @@ const { confirm } = useConfirm()
 const recordId = route.params.id as string
 const record = ref<Location | null>(null)
 const portals = ref<Portal[]>([])
+const auxInputs = ref<AuxInput[]>([])
+const auxOutputs = ref<AuxOutput[]>([])
 const loading = ref(true)
 const deleting = ref(false)
 
@@ -32,30 +35,37 @@ const hasCoords = computed(() => {
   return !!c && (c.lat !== 0 || c.lon !== 0)
 })
 
-// Persist a portal's floor-plan position (or null to remove it). Optimistic:
-// update the local portal so the map re-renders immediately, revert on failure.
-async function handleUpdatePosition({ id, position }: { id: string; position: { x: number; y: number } | null }) {
-  const portal = portals.value.find((p) => p.id === id)
-  if (!portal) return
-  const prev = portal.floorplan_position
-  portal.floorplan_position = position
+// Persist a point's floor-plan position (or null to remove it), routed to the
+// right collection by kind. Optimistic: update the local record so the map
+// re-renders immediately, revert on failure.
+async function handleUpdatePosition({ kind, id, position }: { kind: PlaceKind; id: string; position: { x: number; y: number } | null }) {
+  const list =
+    kind === 'portal' ? portals.value : kind === 'aux_input' ? auxInputs.value : auxOutputs.value
+  const rec = (list as { id: string; floorplan_position?: { x: number; y: number } | null }[]).find((r) => r.id === id)
+  if (!rec) return
+  const prev = rec.floorplan_position
+  rec.floorplan_position = position
   try {
-    await pb.collection('portals').update(id, { floorplan_position: position })
+    await pb.collection(PLACE_KIND_COLLECTION[kind]).update(id, { floorplan_position: position })
   } catch (err: any) {
-    portal.floorplan_position = prev
-    toast.error(err?.message || 'Failed to update portal position')
+    rec.floorplan_position = prev
+    toast.error(err?.message || 'Failed to update position')
   }
 }
 
 async function load() {
   loading.value = true
   try {
-    const [l, pts] = await Promise.all([
+    const [l, pts, ins, outs] = await Promise.all([
       pb.collection('locations').getOne<Location>(recordId, { expand: 'holiday_calendars' }),
       pb.collection('portals').getFullList<Portal>({ filter: `location = "${recordId}"`, sort: 'code' }),
+      pb.collection('aux_input').getFullList<AuxInput>({ filter: `location = "${recordId}"`, sort: 'code' }),
+      pb.collection('aux_output').getFullList<AuxOutput>({ filter: `location = "${recordId}"`, sort: 'code' }),
     ])
     record.value = l
     portals.value = pts
+    auxInputs.value = ins
+    auxOutputs.value = outs
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load location')
     router.push('/locations')
@@ -165,6 +175,8 @@ onMounted(load)
         v-if="record.floorplan"
         :location="record"
         :portals="portals"
+        :aux-inputs="auxInputs"
+        :aux-outputs="auxOutputs"
         @update-position="handleUpdatePosition"
       />
       <div v-else class="text-center py-8 text-base-content/60">

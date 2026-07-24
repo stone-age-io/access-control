@@ -55,7 +55,7 @@ const doorBadge = computed<{ tone: SoftTone; text: string }>(() => {
         </div>
         <div class="grid grid-cols-2 gap-2 text-center">
           <div>
-            <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">Door</div>
+            <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-1">State</div>
             <SoftBadge :tone="doorBadge.tone" dot>{{ doorBadge.text }}</SoftBadge>
           </div>
           <div>
@@ -108,7 +108,7 @@ const doorBadge = computed<{ tone: SoftTone; text: string }>(() => {
       </div>
 
       <p v-if="!canCommand" class="border-t border-base-200 pt-4 text-xs opacity-50">
-        Read-only — issuing commands needs the <span class="font-medium">Door commands</span> capability.
+        Read-only — issuing commands needs the <span class="font-medium">Commands</span> capability.
       </p>
     </div>
 

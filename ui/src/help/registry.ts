@@ -42,11 +42,11 @@ const TOPICS: Record<string, HelpTopic> = {
     ],
   },
   monitor: {
-    title: 'Live Map',
+    title: 'Live View',
     icon: '🗺️',
     sections: [
-      { body: 'A live operational view: a geographic overview of your locations that drills into a per-location floor plan. Portals render with their current state — open/closed, posture, held-open — streamed up from the edge.' },
-      { heading: 'Commands', body: 'Click a portal on the floor plan to send operator commands (grant, posture override) without leaving the map. Commands are fire-and-forget; the live status reflects the result and is never written back to the record.' },
+      { body: 'A live operational view of a location, with a switcher between the floor plan, a Portals list, Areas (arm-state), and Aux I/O. Points render their current state — open/closed, posture, held-open, armed/disarmed, input active, output energized — streamed up from the edge. The top level is a geographic overview that drills into a location.' },
+      { heading: 'Commands', body: 'Tap a portal or aux point on the floor plan to command it (grant, posture override, output on/off/pulse) without leaving the view; arm/disarm from the Areas view. Commands are fire-and-forget; the live status reflects the result and is never written back to the record.' },
       { heading: 'Coverage', body: 'A portal shows live state only while its controller is reporting. “Unknown” means the controller is offline or unassigned, or no door sensor is wired.' },
     ],
   },

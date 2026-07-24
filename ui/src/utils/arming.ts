@@ -49,6 +49,22 @@ export function aggregateArm(rows: PointStatus[]): ArmAggregate {
   return { state: 'partial', armed, total }
 }
 
+/**
+ * Roll several areas' aggregated states into one glanceable state — for a
+ * location or site summary. Any converging/mixed member ⇒ partial; all-armed or
+ * all-disarmed collapse to that; nothing reporting ⇒ unknown.
+ */
+export function rollupArmStates(states: ArmState[]): ArmState {
+  if (!states.length) return 'unknown'
+  if (states.some((s) => s === 'partial')) return 'partial'
+  const armed = states.filter((s) => s === 'armed').length
+  const disarmed = states.filter((s) => s === 'disarmed').length
+  if (armed === states.length) return 'armed'
+  if (disarmed === states.length) return 'disarmed'
+  if (armed === 0 && disarmed === 0) return 'unknown'
+  return 'partial'
+}
+
 /** Soft-badge tone for an aggregated arm-state (armed = error, converging = warning). */
 export function armTone(state: ArmState): SoftTone {
   switch (state) {

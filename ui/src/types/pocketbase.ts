@@ -156,6 +156,8 @@ export interface AuxInput extends BaseRecord {
   area: string
   /** Point type: '' / 'monitor' (default, observe-only) / 'intrusion' (alarms while its area is armed) / 'tamper_24h' (alarms always). */
   point_type: PointType | ''
+  /** {x, y} pixel position on the location's floorplan (UI only; null/absent = not placed). */
+  floorplan_position?: { x: number; y: number } | null
   expand?: { location?: Location; controller?: Controller; area?: Area }
 }
 
@@ -192,6 +194,8 @@ export interface AuxOutput extends BaseRecord {
   relay_index: number
   /** Default momentary-pulse duration (seconds) for the "pulse" action. */
   pulse_seconds: number
+  /** {x, y} pixel position on the location's floorplan (UI only; null/absent = not placed). */
+  floorplan_position?: { x: number; y: number } | null
   expand?: { location?: Location; controller?: Controller }
 }
 

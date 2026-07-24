@@ -21,7 +21,7 @@ export const CAPABILITIES: CapabilityMeta[] = [
   { value: 'enroll', label: 'Enroll people', hint: 'Create & edit cardholders and credentials.' },
   { value: 'policy', label: 'Access policy', hint: 'Edit roles, access groups, schedules, and holidays.' },
   { value: 'topology', label: 'Hardware / topology', hint: 'Edit locations, controllers, portals, and aux I/O.' },
-  { value: 'command', label: 'Door commands', hint: 'Grant, set posture, and drive aux outputs.' },
+  { value: 'command', label: 'Commands', hint: 'Grant, set posture, drive aux outputs, and arm areas.' },
   { value: 'operators', label: 'Manage operators', hint: 'Manage operator accounts, read the audit log, hard-delete records.' },
 ]
 
@@ -34,7 +34,7 @@ export interface Preset {
 export const PRESETS: Preset[] = [
   { name: 'Read-only', caps: [] },
   { name: 'Enrollment', caps: ['enroll'] },
-  { name: 'Door Ops', caps: ['command', 'policy'] },
+  { name: 'Command Ops', caps: ['command', 'policy'] },
   { name: 'Facilities', caps: ['topology'] },
   { name: 'Admin', caps: ['enroll', 'policy', 'topology', 'command', 'operators'] },
 ]
