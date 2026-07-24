@@ -62,10 +62,15 @@ type NATSStatus struct {
 	Reconnects uint64 `json:"reconnects"`
 }
 
-// PolicyStatus reports whether policy has synced and what loaded.
+// PolicyStatus reports whether policy has synced, from where, and what loaded.
+// State is "synced" (live KV), "cached" (running on the offline snapshot, NATS
+// unreachable), or "loading" (default-deny boot window). SyncedAt is the cache's
+// freshness time, meaningful only when State is "cached".
 type PolicyStatus struct {
-	Synced bool           `json:"synced"`
-	Counts map[string]int `json:"counts"`
+	Synced   bool           `json:"synced"`
+	State    string         `json:"state"`
+	SyncedAt time.Time      `json:"syncedAt"`
+	Counts   map[string]int `json:"counts"`
 }
 
 // PortalView joins a portal bound to this controller (the authoritative "what
@@ -205,12 +210,14 @@ func (s *Source) Report() Report {
 	alarms := snap.Alarms
 	slices.Reverse(alarms)
 
+	state, syncedAt := s.store.SyncStatus()
+
 	return Report{
 		GeneratedAt: now,
 		Identity:    ident,
 		Build:       s.build,
 		NATS:        ns,
-		Policy:      PolicyStatus{Synced: s.store.Ready(), Counts: s.store.Counts()},
+		Policy:      PolicyStatus{Synced: s.store.Ready(), State: state, SyncedAt: syncedAt, Counts: s.store.Counts()},
 		Portals:     portals,
 		Fire:        fire,
 		AuxOutputs:  snap.AuxOutputs,

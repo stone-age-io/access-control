@@ -40,13 +40,20 @@ type Conn struct {
 // Connect establishes the NATS connection and JetStream context using the
 // configured auth and TLS settings. The metrics argument may be nil.
 //
-// onReconnect, if non-nil, is invoked from the NATS reconnect handler — the
-// controller uses it to re-arm its KV watcher, which can go stale across a
-// reconnect.
-func Connect(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onReconnect func()) (*Conn, error) {
+// onReconnect, if non-nil, is invoked from the NATS reconnect handler (and, when
+// retryOnFailedConnect is set, from the first-connect handler too) — the
+// controller uses it to re-arm its KV watcher and re-publish its status shadow,
+// which go stale across a connection loss.
+//
+// retryOnFailedConnect makes a cold boot with no reachable server non-fatal: the
+// controller (an always-on edge device) returns a connection in reconnecting
+// state and keeps trying in the background, so it can come up on its cached config
+// and converge when NATS returns. accessd leaves it false and fails fast — the hub
+// has nothing useful to do without its own NATS.
+func Connect(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onReconnect func(), retryOnFailedConnect bool) (*Conn, error) {
 	log = log.With("component", "natsx")
 
-	opts, err := buildOptions(cfg, log, m, onReconnect)
+	opts, err := buildOptions(cfg, log, m, onReconnect, retryOnFailedConnect)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build NATS options: %w", err)
 	}
@@ -58,8 +65,15 @@ func Connect(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onR
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to NATS (urls=%v): %w", cfg.URLs, err)
 	}
-	m.SetNATSConnectionStatus(true)
-	log.Info("NATS connection established", "connectedURL", nc.ConnectedUrl())
+	if nc.IsConnected() {
+		m.SetNATSConnectionStatus(true)
+		log.Info("NATS connection established", "connectedURL", nc.ConnectedUrl())
+	} else {
+		// retryOnFailedConnect path: no server reachable yet. Not fatal — the client
+		// keeps retrying and the connect handler flips the metric once it lands.
+		m.SetNATSConnectionStatus(false)
+		log.Warn("NATS not reachable at startup; retrying in background", "urls", cfg.URLs)
+	}
 
 	js, err := jetstream.New(nc)
 	if err != nil {
@@ -68,6 +82,16 @@ func Connect(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onR
 	}
 
 	return &Conn{NC: nc, JS: js, log: log}, nil
+}
+
+// KVBinder returns a closure that binds the named KV bucket read-only on demand.
+// The controller hands this to its PolicyStore/StatusWriter so the bind is retried
+// lazily (inside the watcher/drain loop) rather than done fatally at boot — the
+// key to surviving a reboot with NATS unreachable.
+func (c *Conn) KVBinder(bucket string) func(context.Context) (jetstream.KeyValue, error) {
+	return func(ctx context.Context) (jetstream.KeyValue, error) {
+		return c.KVBucket(ctx, bucket)
+	}
 }
 
 // EnsureKVBucket returns the named KV bucket, creating it if it does not exist.
@@ -135,7 +159,7 @@ func (c *Conn) Close() error {
 	return nil
 }
 
-func buildOptions(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onReconnect func()) ([]nats.Option, error) {
+func buildOptions(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onReconnect func(), retryOnFailedConnect bool) ([]nats.Option, error) {
 	opts := []nats.Option{
 		nats.ReconnectWait(cfg.ReconnectWait),
 		nats.MaxReconnects(cfg.MaxReconnects),
@@ -157,6 +181,22 @@ func buildOptions(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics
 			log.Error("NATS connection permanently closed", "error", nc.LastError())
 			m.SetNATSConnectionStatus(false)
 		}),
+	}
+
+	if retryOnFailedConnect {
+		// Cold boot with no server is non-fatal; keep retrying forever. The connect
+		// handler fires when a boot that started disconnected finally lands — treat it
+		// like a reconnect (flip the metric, re-arm the watcher, re-publish status).
+		opts = append(opts,
+			nats.RetryOnFailedConnect(true),
+			nats.ConnectHandler(func(nc *nats.Conn) {
+				log.Info("NATS connection established", "url", nc.ConnectedUrl())
+				m.SetNATSConnectionStatus(true)
+				if onReconnect != nil {
+					onReconnect()
+				}
+			}),
+		)
 	}
 
 	switch {

@@ -193,7 +193,7 @@ func main() {
 			if statusProj != nil {
 				statusProj.Resync()
 			}
-		})
+		}, false) // accessd fails fast: the hub has nothing to do without its own NATS
 		if err != nil {
 			return err
 		}

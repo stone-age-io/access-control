@@ -84,6 +84,9 @@ func main() {
 	// policy watcher and re-publish the whole device shadow.
 	var resync func()
 	var statusResync func()
+	// retryOnFailedConnect: an edge controller must survive a boot with NATS
+	// unreachable (leaf node down, or no network) rather than crashing — it comes up
+	// on cached/default-deny policy and converges when NATS returns.
 	nc, err := natsx.Connect(&cfg.NATS, log, m, func() {
 		if resync != nil {
 			resync()
@@ -91,30 +94,36 @@ func main() {
 		if statusResync != nil {
 			statusResync()
 		}
-	})
+	}, true)
 	if err != nil {
 		log.Fatal("failed to connect to NATS", "error", err)
 	}
 	defer func() { _ = nc.Close() }()
 
-	// Read-only bind: the controller only watches policy, so its NATS identity
-	// needs no stream-management rights. accessd owns/creates the bucket.
-	kv, err := nc.KVBucket(ctx, cfg.Policy.Bucket)
-	if err != nil {
-		log.Fatal("failed to open policy KV bucket", "error", err)
-	}
-
-	// Read-write bind to the upward status bucket: the controller publishes its
-	// device shadow here. accessd owns creation, so this fails fast if accessd has
-	// not yet created the bucket (same assumption as the policy bucket).
-	statusKV, err := nc.KVBucket(ctx, cfg.Status.Bucket)
-	if err != nil {
-		log.Fatal("failed to open status KV bucket", "error", err)
-	}
-
-	// PolicyStore watches ACC_POLICY into in-memory maps and decides locally.
-	store := controller.NewPolicyStore(kv, log, m)
+	// KV buckets are bound lazily (retried inside the watch/drain loops), not
+	// fatally here, so a boot with NATS down still starts. The policy bind is
+	// read-only (the controller only watches); the status bind is read-write for the
+	// upward device shadow. accessd owns/creates both buckets.
+	store := controller.NewPolicyStore(nc.KVBinder(cfg.Policy.Bucket), log, m)
 	resync = store.Resync
+
+	// Optional offline config cache: persist the last-known policy graph locally so a
+	// reboot with NATS unreachable (leaf node down, or no network) still decides on
+	// last-known config instead of booting default-deny. Opt-in and fail-secure — a
+	// missing/stale/corrupt snapshot just yields today's default-deny boot. Wired
+	// before the watcher and reconcilers so cached policy is in the maps when portals
+	// first arm, and a live sync overwrites it the moment one lands.
+	if cfg.Policy.Cache.Enabled {
+		cache := controller.NewPolicyCache(cfg.Policy.Cache.Path, log)
+		cache.SetConnected(nc.NC.IsConnected)
+		cache.Start(ctx)
+		defer cache.Stop()
+		store.SetCache(cache)
+		if loaded, syncedAt, age := store.LoadCache(cfg.Policy.Cache.MaxAge); loaded {
+			log.Warn("controller operating on CACHED config until policy syncs (NATS may be unreachable)",
+				"syncedAt", syncedAt, "age", age.Round(time.Second), "maxAge", cfg.Policy.Cache.MaxAge)
+		}
+	}
 
 	if cfg.Controller.Code == "" {
 		log.Warn("no controller code configured; no portals will be armed", "hint", "set controller.code to a controllers record")
@@ -204,7 +213,7 @@ func main() {
 
 	// Upward status channel: the runtime publishes each driven portal's live shadow
 	// (door/posture/held) into ACC_STATUS for accessd to project.
-	statusWriter := controller.NewStatusWriter(statusKV, cfg.Controller.Code, log)
+	statusWriter := controller.NewStatusWriterLazy(nc.KVBinder(cfg.Status.Bucket), cfg.Controller.Code, log)
 	statusWriter.Start(ctx)
 	defer statusWriter.Stop()
 	rt.SetStatusWriter(statusWriter)

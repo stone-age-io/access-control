@@ -119,7 +119,16 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   resolves each location's timezone once on apply (hot path never calls `LoadLocation`). Self-heals across NATS
   reconnects: `Resync` (wired to the reconnect handler) stops the watcher so `runWatch` re-creates it
   (`WatchAll` re-delivers every key = full re-sync). On each applied change and each sync sentinel the store
-  fires `SetOnChange`, which drives the controller's **watch-driven arming**.
+  fires `SetOnChange`, which drives the controller's **watch-driven arming**. The KV bucket is bound **lazily**
+  inside the watch loop (`NewPolicyStore` takes a `KVBinder`, not a live handle) and the bind is retried there,
+  so a controller boots even when NATS is unreachable — it never fatals on a cold, serverless start. An optional
+  **offline config cache** (`internal/controller/policycache.go`, opt-in via `policy.cache`) makes that boot
+  useful: a write-through local snapshot of the KV keyspace that `LoadCache` replays through the same `apply`
+  path on boot, so a reboot with NATS down decides on **last-known config** instead of default-deny. It's
+  fail-secure — a missing/corrupt/too-old snapshot (staleness bound `policy.cache.maxAge`) loads nothing — and
+  live KV always wins once a sync lands. `StatusWriter` binds its bucket lazily the same way (upward status is
+  simply not published while offline). `PolicyStore.SyncStatus` reports `synced`/`cached`/`loading` for the
+  `/status` page. See `docs/configuration.md`.
 - **PortalManager** (`internal/controller/portalmanager.go`) keeps the controller's armed portals in step with
   policy. Binding is **central**: the set this box drives is every portal whose `controller` relation points at
   this controller's `code` (`PolicyStore.PortalsForController`), so reassigning a portal to another box, retyping

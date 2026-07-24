@@ -26,9 +26,10 @@ const statusOpTimeout = 5 * time.Second
 // to re-publish the whole shadow, the same self-heal PolicyStore performs. KV
 // puts are never done inline on the run loop (they would block on JetStream).
 type StatusWriter struct {
-	kv   jetstream.KeyValue
-	code string // this controller's code (stamped into every PortalStatus)
-	log  *logger.Logger
+	kv     jetstream.KeyValue // bound handle; may start nil and bind lazily
+	bindKV KVBinder           // binds kv on demand (nil once kv is set eagerly)
+	code   string             // this controller's code (stamped into every PortalStatus)
+	log    *logger.Logger
 
 	mu      sync.Mutex
 	current map[string][]byte // desired latest value per key ("" key absent = should be deleted)
@@ -39,10 +40,24 @@ type StatusWriter struct {
 	done   chan struct{}
 }
 
-// NewStatusWriter creates a writer bound to a read-write ACC_STATUS handle.
+// NewStatusWriter creates a writer bound to an already-open read-write ACC_STATUS
+// handle.
 func NewStatusWriter(kv jetstream.KeyValue, controllerCode string, log *logger.Logger) *StatusWriter {
+	return newStatusWriter(kv, nil, controllerCode, log)
+}
+
+// NewStatusWriterLazy creates a writer that binds its ACC_STATUS handle on demand
+// via bindKV, retried inside the drain loop. It lets the controller start before
+// NATS is reachable: writes queue in memory and are flushed once the bind succeeds
+// (the upward shadow is useless while offline anyway — nothing is watching it).
+func NewStatusWriterLazy(bindKV KVBinder, controllerCode string, log *logger.Logger) *StatusWriter {
+	return newStatusWriter(nil, bindKV, controllerCode, log)
+}
+
+func newStatusWriter(kv jetstream.KeyValue, bindKV KVBinder, controllerCode string, log *logger.Logger) *StatusWriter {
 	return &StatusWriter{
 		kv:      kv,
+		bindKV:  bindKV,
 		code:    controllerCode,
 		log:     log.With("component", "statuswriter"),
 		current: make(map[string][]byte),
@@ -220,6 +235,9 @@ func (w *StatusWriter) signal() {
 // desired. Successful operations advance `written`; failures leave the key
 // divergent so the next signal retries it.
 func (w *StatusWriter) drain(ctx context.Context) {
+	if !w.ensureKV(ctx) {
+		return // bucket not bound yet (NATS unreachable); retry on the next signal
+	}
 	w.mu.Lock()
 	puts := make(map[string][]byte)
 	for k, v := range w.current {
@@ -260,6 +278,27 @@ func (w *StatusWriter) drain(ctx context.Context) {
 		delete(w.written, k)
 	}
 	w.mu.Unlock()
+}
+
+// ensureKV binds the ACC_STATUS handle on first need (for the lazy constructor),
+// retried on each drain. Runs only on the drain goroutine, so w.kv needs no lock.
+func (w *StatusWriter) ensureKV(ctx context.Context) bool {
+	if w.kv != nil {
+		return true
+	}
+	if w.bindKV == nil {
+		return false // eager constructor with a nil handle: nothing to bind
+	}
+	bctx, cancel := context.WithTimeout(ctx, statusOpTimeout)
+	defer cancel()
+	kv, err := w.bindKV(bctx)
+	if err != nil {
+		w.log.Warn("status KV bucket not bound yet (NATS may be unreachable); will retry", "error", err)
+		return false
+	}
+	w.kv = kv
+	w.log.Info("status KV bucket bound")
+	return true
 }
 
 func (w *StatusWriter) put(ctx context.Context, key string, val []byte) error {

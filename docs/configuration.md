@@ -215,6 +215,45 @@ portals it drives, and their relay/input bindings, live in policy, not here**
 | `controller.model` | `""` | `SA_CONTROLLER_MODEL` | hardware profile — maps a portal's logical relay/input indices to physical lines, selects the lock/input transport (native GPIO char device or MCP23017 over I2C), **and** provides the OSDP RS485 serial port: `kincony-server-mini` (CM4, GPIO, `/dev/ttyAMA0`) · `kincony-pi5r8` (CM5, I2C, `/dev/ttyAMA2`). **Required when `driver: gpio`, `reader: osdp`, or `reader: both`.** Must match the `controllers` record. |
 | `controller.reader` | `nats` | `SA_CONTROLLER_READER` | credential reader: `nats` (simulated taps published to `acc.{location}.{type}.{thing}.tap`, for dev), `osdp` (a real OSDP reader on the model's RS485 bus, clear-text in v1), or `both` (NATS for every portal **plus** OSDP for portals that have a reader). Independent of `driver` — the lock/door stay on GPIO/I2C. **`osdp` and `both` require `model`.** A portal opts into OSDP via its `reader_address`: `>= 0` = OSDP reader at that PD address, `-1` = NATS-only. Emitted tap events carry a `source` (`nats`/`osdp`). |
 
+### Offline config cache (controller-only)
+
+By default a controller is a stateless projection of NATS KV: reboot and it
+re-syncs the policy graph from the hub, booting **default-deny** until the sync
+lands. That is fail-secure, but it means a box that reboots while NATS is
+unreachable (leaf node down, or no network) can't decide anything until the link
+returns. The optional offline cache closes that gap: it persists the last policy
+graph delivered over KV to a local file and, on boot, decides from it while the
+connection is down.
+
+When enabled, the controller also **no longer treats a missing NATS at startup as
+fatal** — it binds the KV buckets lazily and retries in the background, coming up
+on cached (or default-deny) policy and converging when NATS returns.
+
+| Key | Default | Env var | Notes |
+|---|---|---|---|
+| `policy.cache.enabled` | `false` | `SA_POLICY_CACHE_ENABLED` | opt in to the offline cache. Off = today's stateless, default-deny-until-sync boot. |
+| `policy.cache.path` | `./data/policy-cache.json` | `SA_POLICY_CACHE_PATH` | snapshot file. Written `0600` (it holds credential values); atomic (temp + rename). |
+| `policy.cache.maxAge` | `72h` | `SA_POLICY_CACHE_MAXAGE` | staleness bound. On boot, a snapshot older than this is **refused** and the box falls back to default-deny, so a credential revoked during a long outage can't keep working indefinitely off a stale cache. Zero/unset resolves to the default (never "unlimited"); set a large value (e.g. `8760h`) to effectively disable the check. |
+
+Behavior and guarantees:
+
+- **Fail-secure.** A missing, unreadable, corrupt, or too-old snapshot loads
+  nothing — the box behaves exactly as if the cache were disabled.
+- **Live KV always wins.** The moment a sync lands, fresh policy overwrites the
+  cache; the snapshot is only ever written from a completed live sync (never from
+  the partial view during boot re-delivery, and never while offline).
+- **Freshness tracks connectivity.** While connected, the snapshot's timestamp is
+  refreshed periodically, so `maxAge` measures staleness from the last moment the
+  box actually had contact with the hub — not merely the last policy edit.
+- **Scope.** Only the decision inputs are cached. Transient command posture
+  overrides are not (a reboot safely reverts them), door state is re-read from
+  hardware, and the upward status shadow simply isn't published while offline
+  (nothing is watching it).
+- **The `/status` page shows the degraded state** — an `OFFLINE · cached config`
+  badge and the snapshot's age — so a running-on-cache box is never mistaken for a
+  freshly-synced one. The staleness bound is checked **only at boot**; a box
+  already running on cache keeps running until NATS returns.
+
 ## What gets rejected
 
 `Load` returns an error (the binary refuses to start) only in these cases —

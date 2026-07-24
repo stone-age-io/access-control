@@ -69,10 +69,17 @@ type Binding struct {
 // so a read lock on the decision path is cheaper and simpler than lock-free
 // snapshotting. Eventual consistency is fail-safe: an unknown credential, a
 // user referencing a not-yet-synced role, or no policy at all all deny.
+// KVBinder binds a KV bucket handle on demand. The controller passes one to the
+// PolicyStore (and StatusWriter) so the bind is retried lazily inside the
+// watch/drain loop rather than done fatally at boot — the key to surviving a
+// reboot with NATS unreachable.
+type KVBinder func(context.Context) (jetstream.KeyValue, error)
+
 type PolicyStore struct {
-	kv  jetstream.KeyValue
-	log *logger.Logger
-	m   *metrics.Metrics
+	bindKV KVBinder           // binds the policy KV bucket on demand (retried in the watch loop)
+	kv     jetstream.KeyValue // bound handle; nil until the first successful bind
+	log    *logger.Logger
+	m      *metrics.Metrics
 
 	mu             sync.RWMutex
 	locations      map[string]locationEntry
@@ -86,6 +93,10 @@ type PolicyStore struct {
 
 	onChange func() // fired (off the lock) after each applied change and each sync
 
+	cache         *PolicyCache // optional offline config cache (nil = disabled)
+	fromCache     bool         // booted from the on-disk cache, no live sync yet (guarded by mu)
+	cacheSyncedAt time.Time    // freshness time of the loaded cache, for diagnostics (guarded by mu)
+
 	ready     chan struct{}
 	readyOnce sync.Once
 	wg        sync.WaitGroup
@@ -98,11 +109,13 @@ type PolicyStore struct {
 	watchErr   error
 }
 
-// NewPolicyStore creates a store backed by the given KV bucket handle (the
-// caller ensures the bucket exists).
-func NewPolicyStore(kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metrics) *PolicyStore {
+// NewPolicyStore creates a store that binds the policy KV bucket via bindKV. The
+// bind is deferred to the watch loop (and retried there), so construction never
+// touches NATS — a controller can build its store, seed it from the offline
+// cache, and start deciding before NATS is reachable.
+func NewPolicyStore(bindKV KVBinder, log *logger.Logger, m *metrics.Metrics) *PolicyStore {
 	return &PolicyStore{
-		kv:             kv,
+		bindKV:         bindKV,
 		log:            log.With("component", "policystore"),
 		m:              m,
 		locations:      make(map[string]locationEntry),
@@ -389,6 +402,76 @@ func (s *PolicyStore) AuxOutput(code string) (policykv.AuxOutput, bool) {
 // before Watch (the callback is read from the watcher goroutine).
 func (s *PolicyStore) SetOnChange(fn func()) { s.onChange = fn }
 
+// SetCache attaches an offline config cache (nil disables it, the default). Must
+// be called before LoadCache and Watch.
+func (s *PolicyStore) SetCache(c *PolicyCache) { s.cache = c }
+
+// LoadCache seeds the policy graph from the on-disk snapshot written by a previous
+// run, so a controller that boots with NATS unreachable (leaf node down, or no
+// network) decides on its last-known config instead of default-denying. It is
+// fail-secure: a missing, unreadable, or corrupt cache — or one older than maxAge
+// — loads nothing and the box keeps today's default-deny-until-sync boot. Live KV
+// always wins: the watcher overwrites these entries the moment a sync lands.
+//
+// Must be called after SetCache and before Watch: it replays entries through apply
+// single-threaded, before the watcher goroutine runs. Returns whether it loaded,
+// plus the cache's freshness time and age for logging.
+func (s *PolicyStore) LoadCache(maxAge time.Duration) (loaded bool, syncedAt time.Time, age time.Duration) {
+	if s.cache == nil {
+		return false, time.Time{}, 0
+	}
+	snap, ok, err := s.cache.load()
+	if err != nil {
+		s.log.Error("policy cache unreadable; booting default-deny", "error", err)
+		return false, time.Time{}, 0
+	}
+	if !ok {
+		s.log.Info("no policy cache on disk; booting default-deny until sync")
+		return false, time.Time{}, 0
+	}
+	age = time.Since(snap.SyncedAt)
+	if age > maxAge {
+		s.log.Warn("policy cache too stale; refusing it (fail-secure default-deny)",
+			"age", age.Round(time.Second), "maxAge", maxAge, "syncedAt", snap.SyncedAt)
+		return false, snap.SyncedAt, age
+	}
+
+	// apply takes s.mu per call, so replay without holding it (boot is single-threaded).
+	n := 0
+	for key, val := range snap.Entries {
+		if s.apply(key, []byte(val)) {
+			n++
+		}
+	}
+	s.mu.Lock()
+	s.fromCache = true
+	s.cacheSyncedAt = snap.SyncedAt
+	s.mu.Unlock()
+	s.log.Info("loaded policy from offline cache; operating on last-known config until sync",
+		"entries", n, "age", age.Round(time.Second), "syncedAt", snap.SyncedAt)
+	return true, snap.SyncedAt, age
+}
+
+// SyncStatus reports the store's policy-source state for the diagnostics page:
+//
+//	"synced"  — a live KV sync completed this session (authoritative)
+//	"cached"  — booted from the offline cache; no live sync yet (degraded/offline)
+//	"loading" — no policy yet (the default-deny boot window)
+//
+// syncedAt is the loaded cache's freshness time, meaningful only in the "cached"
+// state.
+func (s *PolicyStore) SyncStatus() (state string, syncedAt time.Time) {
+	if s.Ready() {
+		return "synced", time.Time{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.fromCache {
+		return "cached", s.cacheSyncedAt
+	}
+	return "loading", time.Time{}
+}
+
 // notifyChange invokes the onChange callback if one is registered. Callers must
 // hold no store lock (the callback reads store state).
 func (s *PolicyStore) notifyChange() {
@@ -397,34 +480,39 @@ func (s *PolicyStore) notifyChange() {
 	}
 }
 
-// Watch starts the KV watcher (once). It returns immediately; the watcher runs
-// in a goroutine and self-heals across connection loss. Call WaitReady to block
-// until the initial sync completes.
+// Watch starts the KV watcher (once). It returns immediately and never fails on a
+// missing connection: the watcher runs in a goroutine that binds the bucket and
+// subscribes with retry, and self-heals across connection loss. A controller that
+// boots with NATS unreachable simply keeps retrying here while deciding on its
+// cached config. Call WaitReady to block until the first sync completes.
 func (s *PolicyStore) Watch(parent context.Context) error {
 	s.watchOnce.Do(func() {
 		watchCtx, cancel := context.WithCancel(parent)
 		s.newWatcher = func(c context.Context) (jetstream.KeyWatcher, error) {
+			// Bind the bucket lazily on first use, caching the handle. Accessed only
+			// from the watch goroutine (and this initial call, before it starts), so
+			// no lock is needed.
+			if s.kv == nil {
+				kv, err := s.bindKV(c)
+				if err != nil {
+					return nil, err
+				}
+				s.kv = kv
+				s.log.Info("policy KV bucket bound")
+			}
 			return s.kv.WatchAll(c)
 		}
 
-		watcher, err := s.newWatcher(watchCtx)
-		if err != nil {
-			cancel()
-			s.watchErr = err
-			return
-		}
-
 		s.watcherMu.Lock()
-		s.watcher = watcher
 		s.cancel = cancel
 		s.watcherMu.Unlock()
 
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			s.runWatch(watchCtx, watcher)
+			s.runWatch(watchCtx)
 		}()
-		s.log.Info("policy KV watcher started")
+		s.log.Info("policy KV watcher starting")
 	})
 	return s.watchErr
 }
@@ -511,49 +599,56 @@ func (s *PolicyStore) Stop() {
 	s.wg.Wait()
 }
 
-// runWatch consumes updates and self-heals across unexpected watcher closures,
-// re-creating the watcher with capped exponential backoff. WatchAll re-delivers
-// the current value/delete marker for every key on each (re)subscribe, so a
-// recreate performs a full re-sync. Returns only on context cancellation.
-func (s *PolicyStore) runWatch(ctx context.Context, watcher jetstream.KeyWatcher) {
-	backoff := kvWatchRetryBaseDelay
+// runWatch establishes the watcher (retrying until NATS is reachable), consumes
+// its updates, and re-establishes across unexpected closures. WatchAll re-delivers
+// the current value/delete marker for every key on each (re)subscribe, so every
+// (re)establish performs a full re-sync. Returns only on context cancellation.
+func (s *PolicyStore) runWatch(ctx context.Context) {
 	for {
+		watcher := s.establish(ctx)
+		if watcher == nil {
+			return // context cancelled while establishing
+		}
+		s.watcherMu.Lock()
+		s.watcher = watcher
+		s.watcherMu.Unlock()
+		s.log.Info("policy KV watcher established")
+
 		if s.consumeUpdates(ctx, watcher) {
 			return // clean shutdown
 		}
 		if ctx.Err() != nil {
 			return
 		}
-
 		s.m.SetKVWatchState(false)
 		s.log.Error("policy KV watcher channel closed unexpectedly; re-establishing")
-		for {
+	}
+}
+
+// establish creates a watcher (binding the bucket on first use), retrying with
+// capped exponential backoff until it succeeds or the context is cancelled. The
+// first attempt is immediate; a boot with NATS unreachable just keeps retrying
+// here. Returns nil only on context cancellation.
+func (s *PolicyStore) establish(ctx context.Context) jetstream.KeyWatcher {
+	backoff := kvWatchRetryBaseDelay
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(backoff):
 			}
-
-			newWatcher, err := s.newWatcher(ctx)
-			if err != nil {
-				s.log.Error("failed to re-establish policy KV watcher, will retry",
-					"retryIn", backoff, "error", err)
-				backoff = nextKVWatchBackoff(backoff)
-				continue
-			}
-			if ctx.Err() != nil {
-				_ = newWatcher.Stop()
-				return
-			}
-
-			watcher = newWatcher
-			s.watcherMu.Lock()
-			s.watcher = watcher
-			s.watcherMu.Unlock()
-			backoff = kvWatchRetryBaseDelay
-			s.log.Info("policy KV watcher re-established")
-			break
+			backoff = nextKVWatchBackoff(backoff)
 		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		watcher, err := s.newWatcher(ctx)
+		if err == nil {
+			return watcher
+		}
+		s.log.Warn("policy KV watcher not established (NATS may be unreachable); will retry",
+			"retryIn", backoff, "error", err)
 	}
 }
 
@@ -579,17 +674,30 @@ func (s *PolicyStore) consumeUpdates(ctx context.Context, watcher jetstream.KeyW
 				// again after every reconnect re-sync, so the reconciler reconverges.
 				s.readyOnce.Do(func() { close(s.ready) })
 				s.m.SetKVWatchState(true)
-				s.log.Info("policy KV initial sync complete")
+				if s.cache != nil {
+					s.cache.markSynced(time.Now()) // a complete, consistent view: safe to persist + stamp fresh
+				}
+				s.mu.Lock()
+				s.fromCache = false // a live sync has now superseded any cache-boot state
+				s.mu.Unlock()
+				s.log.Info("policy KV sync complete")
 				s.notifyChange()
 				continue
 			}
 
 			switch entry.Operation() {
 			case jetstream.KeyValuePut:
-				s.apply(entry.Key(), entry.Value())
+				// Mirror to the offline cache only what actually applied — never a value
+				// we rejected as malformed.
+				if s.apply(entry.Key(), entry.Value()) && s.cache != nil {
+					s.cache.put(entry.Key(), entry.Value())
+				}
 				s.notifyChange()
 			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
 				s.remove(entry.Key())
+				if s.cache != nil {
+					s.cache.delete(entry.Key())
+				}
 				s.notifyChange()
 			}
 		}
@@ -598,7 +706,10 @@ func (s *PolicyStore) consumeUpdates(ctx context.Context, watcher jetstream.KeyW
 
 // apply parses one KV record and writes it into the matching map under the
 // write lock. A parse error keeps the previous value for that key (fail-safe).
-func (s *PolicyStore) apply(key string, value []byte) {
+// Returns true when the record was applied — the caller uses this to mirror only
+// genuinely-applied entries into the offline cache. It takes s.mu itself, so
+// callers (the watch loop and the cache-replay boot path) must NOT hold it.
+func (s *PolicyStore) apply(key string, value []byte) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -606,7 +717,7 @@ func (s *PolicyStore) apply(key string, value []byte) {
 	case strings.HasPrefix(key, policykv.PrefixLocation):
 		var w policykv.Location
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		loc, err := time.LoadLocation(w.Timezone)
 		if err != nil {
@@ -619,14 +730,14 @@ func (s *PolicyStore) apply(key string, value []byte) {
 	case strings.HasPrefix(key, policykv.PrefixSched):
 		var w policykv.Schedule
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.graph.Schedules[w.Code] = toSchedule(w)
 
 	case strings.HasPrefix(key, policykv.PrefixPortal):
 		var w policykv.Portal
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.graph.Portals[w.Code] = policy.Portal{
 			Code: w.Code, Type: w.Type, Location: w.Location,
@@ -645,14 +756,14 @@ func (s *PolicyStore) apply(key string, value []byte) {
 	case strings.HasPrefix(key, policykv.PrefixController):
 		var w policykv.Controller
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.controllers[w.Code] = w
 
 	case strings.HasPrefix(key, policykv.PrefixHoliday):
 		var w policykv.Holiday
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.holidayRecords[strings.TrimPrefix(key, policykv.PrefixHoliday)] = w
 		s.rebuildHolidays()
@@ -660,7 +771,7 @@ func (s *PolicyStore) apply(key string, value []byte) {
 	case strings.HasPrefix(key, policykv.PrefixGroup):
 		var w policykv.AccessGroup
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.graph.Groups[w.Code] = policy.AccessGroup{
 			Code: w.Code, Portals: toSet(w.Portals), Schedule: w.Schedule,
@@ -669,21 +780,21 @@ func (s *PolicyStore) apply(key string, value []byte) {
 	case strings.HasPrefix(key, policykv.PrefixRole):
 		var w policykv.Role
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.graph.Roles[w.Code] = policy.Role{Code: w.Code, Groups: w.Groups}
 
 	case strings.HasPrefix(key, policykv.PrefixUser):
 		var w policykv.User
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.graph.Users[w.ID] = policy.User{ID: w.ID, Status: w.Status, Roles: w.Roles}
 
 	case strings.HasPrefix(key, policykv.PrefixCred):
 		var w policykv.Credential
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		validFrom, ok1 := parseOptionalTime(w.ValidFrom)
 		validUntil, ok2 := parseOptionalTime(w.ValidUntil)
@@ -694,7 +805,7 @@ func (s *PolicyStore) apply(key string, value []byte) {
 			s.log.Error("policystore: credential has unparseable validity date, dropping (fail closed)",
 				"key", key, "validFrom", w.ValidFrom, "validUntil", w.ValidUntil)
 			delete(s.graph.Creds, w.Value)
-			return
+			return false
 		}
 		s.graph.Creds[w.Value] = policy.Credential{
 			Value: w.Value, User: w.User, Status: w.Status,
@@ -704,29 +815,30 @@ func (s *PolicyStore) apply(key string, value []byte) {
 	case strings.HasPrefix(key, policykv.PrefixAuxInput):
 		var w policykv.AuxInput
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.auxInputs[w.Code] = w
 
 	case strings.HasPrefix(key, policykv.PrefixAuxOutput):
 		var w policykv.AuxOutput
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.auxOutputs[w.Code] = w
 
 	case strings.HasPrefix(key, policykv.PrefixArea):
 		var w policykv.Area
 		if !s.unmarshal(key, value, &w) {
-			return
+			return false
 		}
 		s.areas[w.Code] = w
 
 	default:
 		s.log.Warn("policystore: unknown key prefix, ignoring", "key", key)
-		return
+		return false
 	}
 	s.m.IncKVApply("put")
+	return true
 }
 
 // remove deletes one KV record from the matching map under the write lock.

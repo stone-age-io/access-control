@@ -54,6 +54,17 @@ const (
 
 	// DefaultDataDir is where accessd's embedded PocketBase stores its data.
 	DefaultDataDir = "./pb_data"
+
+	// DefaultPolicyCachePath is where the controller writes its offline config
+	// snapshot when policy.cache is enabled (relative to the controller's working
+	// directory unless overridden).
+	DefaultPolicyCachePath = "./data/policy-cache.json"
+
+	// DefaultPolicyCacheMaxAge bounds how stale a cached config may be and still be
+	// trusted on an offline reboot. Zero/unset resolves to this rather than
+	// "unlimited", so an accidental omission can't silently disable the staleness
+	// check; an install that wants a wider window sets policy.cache.maxAge explicitly.
+	DefaultPolicyCacheMaxAge = 72 * time.Hour
 )
 
 // Config is the unified configuration. Each binary reads the sections it needs:
@@ -120,9 +131,28 @@ type DiagnosticsConfig struct {
 	Address string `json:"address" yaml:"address" mapstructure:"address"`
 }
 
-// PolicyConfig names the KV bucket that mirrors the policy graph.
+// PolicyConfig names the KV bucket that mirrors the policy graph, and configures
+// the controller's optional local last-known-config cache.
 type PolicyConfig struct {
-	Bucket string `json:"bucket" yaml:"bucket" mapstructure:"bucket"`
+	Bucket string      `json:"bucket" yaml:"bucket" mapstructure:"bucket"`
+	Cache  CacheConfig `json:"cache" yaml:"cache" mapstructure:"cache"`
+}
+
+// CacheConfig configures the controller-side offline config cache: a local,
+// on-disk snapshot of the last policy graph delivered over KV, so a controller
+// that reboots while NATS is unreachable (leaf node down, or no network) still
+// decides credentials from its last-known config instead of booting default-deny.
+// Opt-in and controller-only; accessd ignores it.
+//
+// Safety is bounded by MaxAge: on boot, a snapshot older than MaxAge is refused
+// and the box falls back to default-deny, so a credential revoked during a long
+// outage can't keep working indefinitely off a stale cache. A missing, expired,
+// or corrupt snapshot is always fail-secure (unchanged default-deny boot). Live
+// KV always wins: once a sync lands, fresh policy overwrites the cache.
+type CacheConfig struct {
+	Enabled bool          `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	Path    string        `json:"path" yaml:"path" mapstructure:"path"`
+	MaxAge  time.Duration `json:"maxAge" yaml:"maxAge" mapstructure:"maxAge"`
 }
 
 // EventsConfig names the JetStream audit stream. Its subjects are derived from
@@ -323,6 +353,16 @@ func setDefaults(cfg *Config) {
 
 	if cfg.Policy.Bucket == "" {
 		cfg.Policy.Bucket = DefaultPolicyBucket
+	}
+	// Offline config cache: only meaningful when enabled; fill path/maxAge defaults
+	// so an install can opt in with just `enabled: true`.
+	if cfg.Policy.Cache.Enabled {
+		if cfg.Policy.Cache.Path == "" {
+			cfg.Policy.Cache.Path = DefaultPolicyCachePath
+		}
+		if cfg.Policy.Cache.MaxAge <= 0 {
+			cfg.Policy.Cache.MaxAge = DefaultPolicyCacheMaxAge
+		}
 	}
 	if cfg.Events.Stream == "" {
 		cfg.Events.Stream = DefaultEventsStream

@@ -72,6 +72,21 @@ diagnostics:
 policy:
   bucket: "ACC_POLICY"
 
+  # Offline config cache (OPT-IN). Persist the last policy graph delivered over KV
+  # to a local file so a reboot with NATS unreachable (leaf node down, or no
+  # network) still decides on last-known config instead of booting default-deny.
+  # When enabled, a missing NATS at startup is no longer fatal — the box binds KV
+  # lazily, runs on cache, and converges when the hub returns.
+  #
+  # Fail-secure: a missing/corrupt snapshot, or one older than maxAge, loads
+  # nothing and the box stays default-deny. Live KV always wins once it syncs.
+  # maxAge bounds how stale cached config may be to be trusted on an offline boot
+  # (zero/unset -> 72h default; a large value like 8760h ~ disables the check).
+  # cache:
+  #   enabled: true
+  #   path: "./data/policy-cache.json"
+  #   maxAge: 72h
+
 # ----------------------------------------------------------------------------
 # Subjects — the app-discriminator segment for all NATS subjects. MUST match
 # accessd's subjects.app (and every other controller's), or this controller
