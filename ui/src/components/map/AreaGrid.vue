@@ -9,7 +9,9 @@ import SoftBadge from '@/components/ui/SoftBadge.vue'
 // The "Areas" view on the Live Map — a responsive card grid peer of the Portals
 // list (areas have no floor-plan position, so they can't be markers). Arm/disarm
 // controls are inline; gated by the `command` capability.
-const props = defineProps<{ areas: Area[]; shadows: Map<string, PointStatus[]> }>()
+// `flush` drops the outer padding when embedded in a section that pads itself
+// (the all-locations overview); standalone as a view it pads itself.
+const props = defineProps<{ areas: Area[]; shadows: Map<string, PointStatus[]>; flush?: boolean }>()
 
 const auth = useAuthStore()
 const canCommand = computed(() => auth.can('command'))
@@ -21,7 +23,7 @@ function armFor(a: Area) {
 </script>
 
 <template>
-  <div class="p-4">
+  <div :class="flush ? '' : 'p-4'">
     <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
       <div v-for="a in areas" :key="a.id" class="rounded-lg border border-base-300 bg-base-100 p-3 space-y-2">
         <div class="flex items-center justify-between gap-2">

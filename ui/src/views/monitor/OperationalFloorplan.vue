@@ -5,7 +5,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useFloorPlan } from '@/composables/useFloorPlan'
 import { useUIStore } from '@/stores/ui'
-import { aggregateArm, armTone, type ArmState } from '@/utils/arming'
+import { aggregateArm, armTone, rollupArmStates, type ArmState } from '@/utils/arming'
 import type { SoftTone } from '@/utils/badges'
 import type { Location, Portal, Area, AuxInput, AuxOutput, PointStatus, AccessEvent } from '@/types/pocketbase'
 import {
@@ -106,17 +106,7 @@ const selectedAux = computed(() => {
 function armFor(a: Area) {
   return aggregateArm(areaShadowsByCode.value.get(a.code) ?? [])
 }
-const areaArmState = computed<ArmState>(() => {
-  const states = areas.value.map((a) => armFor(a).state)
-  if (!states.length) return 'unknown'
-  if (states.some((s) => s === 'partial')) return 'partial'
-  const armed = states.filter((s) => s === 'armed').length
-  const disarmed = states.filter((s) => s === 'disarmed').length
-  if (armed === states.length) return 'armed'
-  if (disarmed === states.length) return 'disarmed'
-  if (armed === 0 && disarmed === 0) return 'unknown'
-  return 'partial'
-})
+const areaArmState = computed<ArmState>(() => rollupArmStates(areas.value.map((a) => armFor(a).state)))
 const armDotClass = computed(() => {
   switch (armTone(areaArmState.value)) {
     case 'error':

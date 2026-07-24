@@ -9,10 +9,13 @@ import SoftBadge from '@/components/ui/SoftBadge.vue'
 // The "I/O" view on the Live Map — a responsive card grid peer of the Portals
 // list: every aux input (observe-only) and output (with inline on/off/pulse).
 // The list peer of the on-plan aux markers; output drive is `command`-gated.
+// `flush` drops the outer padding when embedded in a section that pads itself
+// (the all-locations overview); standalone as a view it pads itself.
 const props = defineProps<{
   auxInputs: AuxInput[]
   auxOutputs: AuxOutput[]
   statusByKey: Map<string, PointStatus>
+  flush?: boolean
 }>()
 
 const auth = useAuthStore()
@@ -30,7 +33,7 @@ function outputBadge(a: AuxOutput) {
 </script>
 
 <template>
-  <div class="p-4 space-y-5">
+  <div :class="[flush ? '' : 'p-4', 'space-y-5']">
     <!-- Inputs -->
     <div v-if="auxInputs.length">
       <div class="text-[10px] uppercase tracking-wider opacity-50 font-semibold mb-2">🔌 Inputs</div>
