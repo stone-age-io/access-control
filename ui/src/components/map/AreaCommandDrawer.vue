@@ -65,7 +65,7 @@ function armFor(a: Area) {
       <p v-if="areas.length === 0" class="text-sm opacity-50 text-center">No areas in this location.</p>
 
       <p v-if="!canCommand && areas.length" class="text-xs opacity-50 pt-1">
-        Read-only — arming needs the <span class="font-medium">Door commands</span> capability.
+        Read-only — arming needs the <span class="font-medium">Commands</span> capability.
       </p>
     </div>
 

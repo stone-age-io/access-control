@@ -37,7 +37,7 @@ const visibleSections = computed<NavSection[]>(() =>
   props.sections.filter((s) => s.items.length > 0),
 )
 
-// Profile label: the matching preset name (e.g. "Door Ops"), else "Custom".
+// Profile label: the matching preset name (e.g. "Command Ops"), else "Custom".
 const roleLabel = computed(() => presetLabel(authStore.permissions))
 
 // Longest matching prefix wins, so /cardholders/new highlights "Cardholders"

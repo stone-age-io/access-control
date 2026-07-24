@@ -150,7 +150,7 @@ onBeforeUnmount(() => {
         </p>
       </template>
       <p v-else class="text-sm opacity-50">
-        Read-only — driving this output needs the <span class="font-medium">Door commands</span> capability.
+        Read-only — driving this output needs the <span class="font-medium">Commands</span> capability.
       </p>
     </BaseCard>
 

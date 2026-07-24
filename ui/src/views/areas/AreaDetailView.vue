@@ -218,13 +218,13 @@ onBeforeUnmount(() => {
       </ul>
     </BaseCard>
 
-    <BaseCard title="Member doors">
+    <BaseCard title="Member portals">
       <p class="text-sm opacity-60 mb-3">
         Portals assigned to this area. Edit membership on the portal. While armed, a <em>forced</em>
         open (no grant/REX) raises intrusion; a <span class="badge-soft badge-soft-warning align-middle">grant disarms</span>
-        door also disarms the area on a valid credential.
+        portal also disarms the area on a valid credential.
       </p>
-      <div v-if="memberPortals.length === 0" class="text-sm opacity-50">No member doors yet.</div>
+      <div v-if="memberPortals.length === 0" class="text-sm opacity-50">No member portals yet.</div>
       <ul v-else class="divide-y divide-base-200">
         <li v-for="p in memberPortals" :key="p.id" class="flex items-center justify-between py-2">
           <router-link :to="`/portals/${p.id}`" class="link">

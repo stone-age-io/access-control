@@ -45,7 +45,7 @@ capability:
 | `enroll` | write **people** — cardholders, credentials |
 | `policy` | write **access logic** — roles, access_groups, schedules, holidays |
 | `topology` | write **hardware** — locations, controllers, portals, aux_input, aux_output |
-| `command` | issue **door commands** — grant, posture, aux-output drive |
+| `command` | issue **commands** — grant, posture, aux-output drive, area arm/disarm |
 | `operators` | manage **operator accounts**, read the **audit log**, and **hard-delete** structural records |
 
 The five names are constants in [`internal/authz`](../internal/authz/authz.go)
@@ -135,7 +135,7 @@ shows as "Custom"):
 |---|---|
 | Read-only | *(none)* |
 | Enrollment | `enroll` |
-| Door Ops | `command`, `policy` |
+| Command Ops | `command`, `policy` |
 | Facilities | `topology` |
 | Admin | all five |
 

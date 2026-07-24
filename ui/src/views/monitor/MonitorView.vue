@@ -28,7 +28,7 @@ function goToLocation(loc: Location) {
     <PageHeader
       class="shrink-0"
       title="Live Map"
-      subtitle="Monitor doors and send commands in real time."
+      subtitle="Monitor portals and send commands in real time."
     />
 
     <div class="flex-1 min-h-0">

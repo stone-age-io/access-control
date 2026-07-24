@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
     <BaseCard title="Live status &amp; controls">
       <div class="space-y-4">
         <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-6 gap-y-4">
-          <DataField label="Door">
+          <DataField label="State">
             <SoftBadge :tone="doorTone.tone" dot>{{ doorTone.text }}</SoftBadge>
           </DataField>
           <DataField label="Effective posture">
@@ -201,7 +201,7 @@ onBeforeUnmount(() => {
           </template>
           <p v-else class="text-sm opacity-50">
             Read-only — issuing grants and posture overrides needs the
-            <span class="font-medium">Door commands</span> capability.
+            <span class="font-medium">Commands</span> capability.
           </p>
         </div>
       </div>

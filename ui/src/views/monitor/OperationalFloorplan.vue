@@ -381,7 +381,7 @@ watch(
             :class="viewMode === 'list' ? 'btn-active btn-primary' : ''"
             @click="ui.setMonitorViewMode('list')"
           >
-            ☰ <span class="hidden sm:inline">Doors</span>
+            ☰ <span class="hidden sm:inline">Portals</span>
           </button>
         </div>
         <!-- Areas chip — always-visible rolled-up arm-state; opens the area command
