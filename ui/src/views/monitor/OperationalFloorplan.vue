@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import L from 'leaflet'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useFloorPlan } from '@/composables/useFloorPlan'
 import { useUIStore } from '@/stores/ui'
+import { aggregateArm, armTone, type ArmState } from '@/utils/arming'
 import type { SoftTone } from '@/utils/badges'
 import type { Location, Portal, Area, AuxInput, AuxOutput, PointStatus, AccessEvent } from '@/types/pocketbase'
 import {
@@ -26,7 +27,13 @@ type MonitorView = 'plan' | 'portals' | 'areas' | 'io'
 
 const props = defineProps<{ locationId: string }>()
 const router = useRouter()
+const route = useRoute()
 const ui = useUIStore()
+
+const MONITOR_VIEWS: MonitorView[] = ['plan', 'portals', 'areas', 'io']
+function isMonitorView(v: unknown): v is MonitorView {
+  return typeof v === 'string' && (MONITOR_VIEWS as string[]).includes(v)
+}
 
 const { initFloorPlan, renderMarkers, setSelected, invalidateSize, cleanup } = useFloorPlan()
 
@@ -94,12 +101,45 @@ const selectedAux = computed(() => {
   return { kind: pl.kind, record: rec, status: auxStatusByKey.value.get(statusKeyFor(pl.kind, rec.code)) ?? null }
 })
 
+// Rolled-up arm-state across this location's areas — drives the dot on the Areas
+// tab so armed/disarmed stays glanceable without opening the view.
+function armFor(a: Area) {
+  return aggregateArm(areaShadowsByCode.value.get(a.code) ?? [])
+}
+const areaArmState = computed<ArmState>(() => {
+  const states = areas.value.map((a) => armFor(a).state)
+  if (!states.length) return 'unknown'
+  if (states.some((s) => s === 'partial')) return 'partial'
+  const armed = states.filter((s) => s === 'armed').length
+  const disarmed = states.filter((s) => s === 'disarmed').length
+  if (armed === states.length) return 'armed'
+  if (disarmed === states.length) return 'disarmed'
+  if (armed === 0 && disarmed === 0) return 'unknown'
+  return 'partial'
+})
+const armDotClass = computed(() => {
+  switch (armTone(areaArmState.value)) {
+    case 'error':
+      return 'bg-error'
+    case 'warning':
+      return 'bg-warning'
+    default:
+      return 'bg-base-content/40'
+  }
+})
+
+// Points that exist but aren't pinned to the plan — surfaced as a hint so the
+// floor plan isn't silently missing things.
+const unplacedCount = computed(() => allPlaceables.value.filter((p) => !isPlaced(p)).length)
+
 function selectView(v: MonitorView) {
   view.value = v
   closeDrawer() // a per-item drawer from another view is stale here
   // Persist only the plan-vs-list preference; areas/io are transient selections.
   if (v === 'plan') ui.setMonitorViewMode('plan')
   else if (v === 'portals') ui.setMonitorViewMode('list')
+  // Reflect the view in the URL so a refresh / shared link lands on the same tab.
+  router.replace({ path: route.path, query: { ...route.query, view: v } }).catch(() => {})
 }
 
 function checkMobile() {
@@ -179,7 +219,7 @@ function auxIcon(item: Placeable): L.DivIcon {
   const name = escapeHtml(item.name || item.code)
   return L.divIcon({
     className: 'fp-marker',
-    html: `<span class="fp-auxpin fp-auxstate-${state}">${meta.emoji}</span><span class="fp-label">${name}</span>`,
+    html: `<span class="fp-auxpin fp-auxstate-${state}">${meta.emoji}</span><span class="fp-label fp-label-aux">${name}</span>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
   })
@@ -256,9 +296,10 @@ async function load() {
     ])
     location.value = loc
     portals.value = pts
-    // Initialize the view from the persisted plan/list preference (a location
-    // with no floor plan always starts on Portals).
-    view.value = loc.floorplan ? (ui.monitorViewMode === 'list' ? 'portals' : 'plan') : 'portals'
+    // Initialize the view: an explicit ?view= (deep link / refresh) wins, else the
+    // persisted plan/list preference (a location with no floor plan starts on Portals).
+    const pref: MonitorView = loc.floorplan ? (ui.monitorViewMode === 'list' ? 'portals' : 'plan') : 'portals'
+    view.value = isMonitorView(route.query.view) ? route.query.view : pref
     await Promise.all([loadStatuses(), loadAuxStatuses(), loadAux(), loadAreas(), loadAreaShadows()])
   } catch {
     router.push('/monitor')
@@ -463,6 +504,7 @@ watch(
           @click="selectView('areas')"
         >
           🛡️ <span class="hidden sm:inline">Areas</span>
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="armDotClass" :title="`Areas ${areaArmState}`"></span>
         </button>
         <button
           v-if="hasAux"
@@ -500,6 +542,17 @@ watch(
         class="absolute inset-0 z-0"
         @click="handleMapBgClick"
       ></div>
+
+      <!-- Unplaced-points hint — the plan can't show a point without coordinates,
+           so flag how many are missing and link to where they're arranged. -->
+      <div
+        v-if="effectiveView === 'plan' && floorplanReady && unplacedCount > 0"
+        class="absolute bottom-3 left-3 z-[400] flex items-center gap-2 rounded-lg bg-base-100/90 border border-base-300 shadow-sm px-3 py-1.5 text-xs"
+      >
+        <span class="text-warning">⚠</span>
+        <span>{{ unplacedCount }} not placed</span>
+        <router-link v-if="location" :to="`/locations/${location.id}`" class="link link-primary">Arrange</router-link>
+      </div>
 
       <!-- Portals — a clickable grid of live portal cards (opens the command drawer). -->
       <div v-if="effectiveView === 'portals'" class="absolute inset-0 overflow-y-auto p-4">
@@ -656,6 +709,10 @@ watch(
   background: oklch(var(--b1) / 0.8);
   padding: 0 4px;
   border-radius: 4px;
+}
+/* Aux pins are larger (22px) than portal dots, so nudge their label clear. */
+.fp-label-aux {
+  left: 26px;
 }
 /* A manually-overridden portal — amber label so it stands out on the plan. */
 .fp-label-override {

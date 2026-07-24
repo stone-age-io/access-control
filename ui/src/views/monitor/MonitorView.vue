@@ -27,8 +27,8 @@ function goToLocation(loc: Location) {
   <div class="flex flex-col gap-4 h-[calc(100dvh-6rem)] lg:h-[calc(100dvh-3rem)]">
     <PageHeader
       class="shrink-0"
-      title="Live Map"
-      subtitle="Monitor portals and send commands in real time."
+      title="Live View"
+      subtitle="Monitor and command portals, areas, and aux I/O in real time."
     />
 
     <div class="flex-1 min-h-0">
