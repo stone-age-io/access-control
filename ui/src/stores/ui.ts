@@ -6,7 +6,7 @@ export const useUIStore = defineStore('ui', () => {
   const theme = ref<'light' | 'dark'>('dark')
   const sidebarCompact = ref(false) // desktop compact (icons-only) mode
   // Live Map: preferred way to view a location — the Leaflet floor plan or the
-  // door-card list. Persisted so an operator who prefers one isn't re-toggling at
+  // portal list. Persisted so an operator who prefers one isn't re-toggling at
   // every building. Locations with no floor plan always show the list regardless.
   const monitorViewMode = ref<'plan' | 'list'>('plan')
 

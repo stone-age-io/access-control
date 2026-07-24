@@ -5,7 +5,6 @@ import { useRouter } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useFloorPlan } from '@/composables/useFloorPlan'
 import { useUIStore } from '@/stores/ui'
-import { aggregateArm, armTone, type ArmState } from '@/utils/arming'
 import type { SoftTone } from '@/utils/badges'
 import type { Location, Portal, Area, AuxInput, AuxOutput, PointStatus, AccessEvent } from '@/types/pocketbase'
 import {
@@ -15,9 +14,15 @@ import {
 } from '@/utils/placeable'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 import PortalCommandDrawer from '@/components/map/PortalCommandDrawer.vue'
-import AreaCommandDrawer from '@/components/map/AreaCommandDrawer.vue'
 import AuxCommandDrawer from '@/components/map/AuxCommandDrawer.vue'
-import IoCommandDrawer from '@/components/map/IoCommandDrawer.vue'
+import AreaGrid from '@/components/map/AreaGrid.vue'
+import IoGrid from '@/components/map/IoGrid.vue'
+
+// The Live Map is a single "view switcher": Floor plan / Portals / Areas / I/O
+// are peer views of the same location, one shown at a time. The slide-over
+// command drawer is reserved for a single point tapped on the plan (or a portal
+// card) — everything else is an in-place grid.
+type MonitorView = 'plan' | 'portals' | 'areas' | 'io'
 
 const props = defineProps<{ locationId: string }>()
 const router = useRouter()
@@ -34,8 +39,7 @@ const auxStatusByKey = ref<Map<string, PointStatus>>(new Map()) // aux status, k
 const areas = ref<Area[]>([]) // this location's intrusion areas
 const areaShadowsByCode = ref<Map<string, PointStatus[]>>(new Map()) // one row per controller
 const selectedId = ref<string | null>(null) // namespaced marker id (portal / aux single drawer)
-const areaDrawerOpen = ref(false)
-const ioDrawerOpen = ref(false)
+const view = ref<MonitorView>('plan')
 const alarmingIds = ref<Set<string>>(new Set()) // portal record ids flashing from a recent alarm
 const loading = ref(true)
 const isMobile = ref(false)
@@ -46,12 +50,20 @@ let unsubEvents: (() => void) | null = null
 let unsubAreas: (() => void) | null = null
 const flashTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-// Floor plan vs. list is a user choice (persisted), but a location with no
-// uploaded plan can only show the list — so the effective mode falls back to 'list'
-// there and the toggle is hidden.
 const hasFloorplan = computed(() => !!location.value?.floorplan)
-const viewMode = computed<'plan' | 'list'>(() => (hasFloorplan.value ? ui.monitorViewMode : 'list'))
 const hasAux = computed(() => auxInputs.value.length > 0 || auxOutputs.value.length > 0)
+
+// The view actually shown, clamped to what this location has (a persisted 'plan'
+// with no floor plan, or an 'areas'/'io' selection carried to a location without
+// them, falls back rather than showing an empty pane).
+const effectiveView = computed<MonitorView>(() => {
+  const v = view.value
+  const fallback: MonitorView = hasFloorplan.value ? 'plan' : 'portals'
+  if (v === 'plan' && !hasFloorplan.value) return 'portals'
+  if (v === 'areas' && !areas.value.length) return fallback
+  if (v === 'io' && !hasAux.value) return fallback
+  return v
+})
 
 // Portals + aux I/O normalized into one marker list; only placed ones render.
 const allPlaceables = computed<Placeable[]>(() => [
@@ -82,6 +94,14 @@ const selectedAux = computed(() => {
   return { kind: pl.kind, record: rec, status: auxStatusByKey.value.get(statusKeyFor(pl.kind, rec.code)) ?? null }
 })
 
+function selectView(v: MonitorView) {
+  view.value = v
+  closeDrawer() // a per-item drawer from another view is stale here
+  // Persist only the plan-vs-list preference; areas/io are transient selections.
+  if (v === 'plan') ui.setMonitorViewMode('plan')
+  else if (v === 'portals') ui.setMonitorViewMode('list')
+}
+
 function checkMobile() {
   isMobile.value = window.innerWidth < 768
 }
@@ -95,60 +115,6 @@ function onResize() {
 
 function statusFor(p: Portal): PointStatus | undefined {
   return statusByCode.value.get(p.code)
-}
-
-// Live aggregated arm-state for an area, from its per-controller shadows.
-function armFor(a: Area) {
-  return aggregateArm(areaShadowsByCode.value.get(a.code) ?? [])
-}
-
-// Roll every area up to one glanceable state for the context-bar chip: all-armed,
-// all-disarmed, none-reporting, or a mixed/converging middle ground.
-const areaSummary = computed<{ state: ArmState; label: string }>(() => {
-  const states = areas.value.map((a) => armFor(a).state)
-  if (!states.length) return { state: 'unknown', label: '' }
-  const armed = states.filter((s) => s === 'armed').length
-  const disarmed = states.filter((s) => s === 'disarmed').length
-  let state: ArmState
-  if (states.some((s) => s === 'partial')) state = 'partial'
-  else if (armed === states.length) state = 'armed'
-  else if (disarmed === states.length) state = 'disarmed'
-  else if (armed === 0 && disarmed === 0) state = 'unknown'
-  else state = 'partial' // a mix of armed + disarmed areas
-  const label =
-    state === 'armed'
-      ? 'Armed'
-      : state === 'disarmed'
-        ? 'Disarmed'
-        : state === 'unknown'
-          ? 'Unknown'
-          : `${armed}/${states.length} armed`
-  return { state, label }
-})
-
-// I/O chip summary: how many inputs are active and outputs energized right now.
-const ioSummary = computed(() => {
-  let active = 0
-  for (const a of auxInputs.value) if (auxStatusByKey.value.get(statusKeyFor('aux_input', a.code))?.state === 'active') active++
-  let on = 0
-  for (const a of auxOutputs.value) if (auxStatusByKey.value.get(statusKeyFor('aux_output', a.code))?.state === 'energized') on++
-  return { active, on }
-})
-
-// One right-edge drawer at a time. Each opener clears the other two.
-function toggleAreaDrawer() {
-  areaDrawerOpen.value = !areaDrawerOpen.value
-  if (areaDrawerOpen.value) {
-    ioDrawerOpen.value = false
-    closeDrawer()
-  }
-}
-function toggleIoDrawer() {
-  ioDrawerOpen.value = !ioDrawerOpen.value
-  if (ioDrawerOpen.value) {
-    areaDrawerOpen.value = false
-    closeDrawer()
-  }
 }
 
 function doorBadgeFor(p: Portal): { tone: SoftTone; text: string } {
@@ -282,8 +248,6 @@ async function loadAreaShadows() {
 async function load() {
   loading.value = true
   selectedId.value = null
-  areaDrawerOpen.value = false
-  ioDrawerOpen.value = false
   floorplanReady.value = false
   try {
     const [loc, pts] = await Promise.all([
@@ -292,6 +256,9 @@ async function load() {
     ])
     location.value = loc
     portals.value = pts
+    // Initialize the view from the persisted plan/list preference (a location
+    // with no floor plan always starts on Portals).
+    view.value = loc.floorplan ? (ui.monitorViewMode === 'list' ? 'portals' : 'plan') : 'portals'
     await Promise.all([loadStatuses(), loadAuxStatuses(), loadAux(), loadAreas(), loadAreaShadows()])
   } catch {
     router.push('/monitor')
@@ -302,7 +269,7 @@ async function load() {
   await nextTick()
   // Init the plan only when it's the visible view — Leaflet must measure a shown
   // (display:block) container, so we defer init until 'plan' mode is active.
-  if (viewMode.value === 'plan') loadMap()
+  if (effectiveView.value === 'plan') loadMap()
 }
 
 function loadMap() {
@@ -333,8 +300,6 @@ function renderAll() {
 
 function openDrawer(markerId: string) {
   selectedId.value = markerId
-  areaDrawerOpen.value = false // share the right edge
-  ioDrawerOpen.value = false
   if (floorplanReady.value) {
     setSelected(markerId)
     if (!isMobile.value) nextTick(invalidateSize)
@@ -398,9 +363,9 @@ async function subscribe() {
       areaShadowsByCode.value = m
     }
   })
-  // Area records carry the durable arm_override the drawer's Clear button gates on —
-  // a shadow only carries live state, not the override field. Watch the collection so
-  // an arm/disarm/clear (or entry-disarm / release sweep) keeps the drawer live.
+  // Area records carry the durable arm_override the Clear button gates on — a shadow
+  // only carries live state, not the override field. Watch the collection so an
+  // arm/disarm/clear (or entry-disarm / release sweep) keeps the Areas view live.
   unsubAreas = await pb.collection('areas').subscribe<Area>('*', (e) => {
     if (e.action !== 'update') return
     const idx = areas.value.findIndex((a) => a.id === e.record.id)
@@ -438,9 +403,9 @@ onBeforeUnmount(() => {
 })
 
 // Switching to the plan: init it the first time it's shown (deferred from load),
-// otherwise recompute Leaflet's layout — it was display:none while the list showed,
-// so its cached size is stale and tiles/markers would render mispositioned.
-watch(viewMode, (mode) => {
+// otherwise recompute Leaflet's layout — it was display:none while another view
+// showed, so its cached size is stale and tiles/markers would render mispositioned.
+watch(effectiveView, (mode) => {
   if (mode !== 'plan') return
   nextTick(() => {
     if (floorplanReady.value) {
@@ -465,57 +430,52 @@ watch(
 
 <template>
   <div class="flex flex-col h-full">
-    <!-- Context bar -->
-    <div class="flex items-center justify-between gap-3 mb-3 flex-wrap shrink-0">
-      <div class="flex items-center gap-3 min-w-0">
-        <router-link to="/monitor" class="btn btn-sm btn-ghost gap-1">← <span class="hidden sm:inline">All locations</span></router-link>
+    <!-- Header: name on its own line, one view switcher below, legend last (plan only). -->
+    <div class="mb-3 shrink-0 space-y-2">
+      <div class="flex items-center gap-2 min-w-0">
+        <router-link to="/monitor" class="btn btn-sm btn-ghost gap-1 px-2 shrink-0">
+          ← <span class="hidden sm:inline">All locations</span>
+        </router-link>
         <h2 v-if="location" class="font-bold text-lg truncate">{{ location.name || location.code }}</h2>
-        <!-- View toggle — only meaningful when there's a plan to switch to. -->
-        <div v-if="hasFloorplan" class="join shrink-0">
-          <button
-            class="join-item btn btn-sm"
-            :class="viewMode === 'plan' ? 'btn-active btn-primary' : ''"
-            @click="ui.setMonitorViewMode('plan')"
-          >
-            🗺️ <span class="hidden sm:inline">Floor plan</span>
-          </button>
-          <button
-            class="join-item btn btn-sm"
-            :class="viewMode === 'list' ? 'btn-active btn-primary' : ''"
-            @click="ui.setMonitorViewMode('list')"
-          >
-            ☰ <span class="hidden sm:inline">Portals</span>
-          </button>
-        </div>
-        <!-- Areas chip — always-visible rolled-up arm-state; opens the area command
-             drawer. Areas have no coordinates, so they live in the chrome, not on
-             the canvas (identical over plan and list). -->
+      </div>
+
+      <!-- View switcher — one segmented control; full-width on mobile so it never cramps. -->
+      <div class="join w-full sm:w-auto">
+        <button
+          v-if="hasFloorplan"
+          class="join-item btn btn-sm flex-1 sm:flex-none gap-1"
+          :class="effectiveView === 'plan' ? 'btn-active btn-primary' : ''"
+          @click="selectView('plan')"
+        >
+          🗺️ <span class="hidden sm:inline">Floor plan</span>
+        </button>
+        <button
+          class="join-item btn btn-sm flex-1 sm:flex-none gap-1"
+          :class="effectiveView === 'portals' ? 'btn-active btn-primary' : ''"
+          @click="selectView('portals')"
+        >
+          ☰ <span class="hidden sm:inline">Portals</span>
+        </button>
         <button
           v-if="areas.length"
-          class="btn btn-sm gap-1.5 shrink-0"
-          :class="areaDrawerOpen ? 'btn-active btn-primary' : ''"
-          :title="`${areas.length} area(s)`"
-          @click="toggleAreaDrawer"
+          class="join-item btn btn-sm flex-1 sm:flex-none gap-1"
+          :class="effectiveView === 'areas' ? 'btn-active btn-primary' : ''"
+          @click="selectView('areas')"
         >
           🛡️ <span class="hidden sm:inline">Areas</span>
-          <SoftBadge :tone="armTone(areaSummary.state)" dot>{{ areaSummary.label }}</SoftBadge>
         </button>
-        <!-- I/O chip — lists this location's aux inputs/outputs with live state and
-             output controls (peer of the on-plan aux markers). -->
         <button
           v-if="hasAux"
-          class="btn btn-sm gap-1.5 shrink-0"
-          :class="ioDrawerOpen ? 'btn-active btn-primary' : ''"
-          :title="`${auxInputs.length} input(s), ${auxOutputs.length} output(s)`"
-          @click="toggleIoDrawer"
+          class="join-item btn btn-sm flex-1 sm:flex-none gap-1"
+          :class="effectiveView === 'io' ? 'btn-active btn-primary' : ''"
+          @click="selectView('io')"
         >
           🔌 <span class="hidden sm:inline">I/O</span>
-          <SoftBadge v-if="ioSummary.active" tone="warning" dot>{{ ioSummary.active }} active</SoftBadge>
-          <SoftBadge v-else-if="ioSummary.on" tone="success" dot>{{ ioSummary.on }} on</SoftBadge>
         </button>
       </div>
-      <!-- Legend -->
-      <div class="flex items-center gap-3 text-xs flex-wrap">
+
+      <!-- Legend — only meaningful over the plan's colored markers. -->
+      <div v-if="effectiveView === 'plan'" class="flex items-center gap-x-3 gap-y-1 text-xs flex-wrap">
         <span class="flex items-center gap-1"><span class="lg-dot bg-success"></span>Closed</span>
         <span class="flex items-center gap-1"><span class="lg-dot bg-error"></span>Open</span>
         <span class="flex items-center gap-1"><span class="lg-dot bg-base-300"></span>Unknown</span>
@@ -531,19 +491,18 @@ watch(
     </div>
 
     <div v-else-if="location" class="relative isolate flex-1 min-h-0 bg-base-300 rounded-xl overflow-hidden border border-base-300">
-      <!-- Floor plan — kept mounted (v-show) so flipping to the list and back
-           doesn't tear down / re-init Leaflet; the viewMode watch re-measures it. -->
+      <!-- Floor plan — kept mounted (v-show) so switching views and back doesn't tear
+           down / re-init Leaflet; the effectiveView watch re-measures it. -->
       <div
         v-if="hasFloorplan"
-        v-show="viewMode === 'plan'"
+        v-show="effectiveView === 'plan'"
         id="monitor-floorplan-container"
         class="absolute inset-0 z-0"
         @click="handleMapBgClick"
       ></div>
 
-      <!-- Portal list — a peer view (always available, default when there's no plan):
-           a clickable grid of live portal cards. -->
-      <div v-if="viewMode === 'list'" class="absolute inset-0 overflow-y-auto p-4">
+      <!-- Portals — a clickable grid of live portal cards (opens the command drawer). -->
+      <div v-if="effectiveView === 'portals'" class="absolute inset-0 overflow-y-auto p-4">
         <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           <button
             v-for="p in portals"
@@ -569,6 +528,18 @@ watch(
         </div>
       </div>
 
+      <!-- Areas — arm-state card grid (peer of the Portals list). -->
+      <div v-if="effectiveView === 'areas'" class="absolute inset-0 overflow-y-auto">
+        <AreaGrid :areas="areas" :shadows="areaShadowsByCode" />
+      </div>
+
+      <!-- I/O — aux input/output card grid with inline output controls. -->
+      <div v-if="effectiveView === 'io'" class="absolute inset-0 overflow-y-auto">
+        <IoGrid :aux-inputs="auxInputs" :aux-outputs="auxOutputs" :status-by-key="auxStatusByKey" />
+      </div>
+
+      <!-- Per-item command drawer — a single point tapped on the plan (or a portal
+           card). One is open at a time; slides over whatever view is showing. -->
       <PortalCommandDrawer
         v-if="selectedPortal"
         :portal="selectedPortal"
@@ -577,8 +548,6 @@ watch(
         class="monitor-drawer"
         @close="closeDrawer"
       />
-
-      <!-- Single aux point (marker click). Inputs monitor-only; outputs controllable. -->
       <AuxCommandDrawer
         v-else-if="selectedAux"
         :kind="selectedAux.kind"
@@ -587,28 +556,6 @@ watch(
         :is-mobile="isMobile"
         class="monitor-drawer"
         @close="closeDrawer"
-      />
-
-      <!-- Area command drawer — opened from the context-bar chip, right-anchored like
-           the portal drawer (full-width on mobile). One of the drawers is open at a time. -->
-      <AreaCommandDrawer
-        v-if="areaDrawerOpen"
-        :areas="areas"
-        :shadows="areaShadowsByCode"
-        :is-mobile="isMobile"
-        class="monitor-drawer"
-        @close="areaDrawerOpen = false"
-      />
-
-      <!-- Aux I/O list drawer — opened from the "I/O" chip. -->
-      <IoCommandDrawer
-        v-if="ioDrawerOpen"
-        :aux-inputs="auxInputs"
-        :aux-outputs="auxOutputs"
-        :status-by-key="auxStatusByKey"
-        :is-mobile="isMobile"
-        class="monitor-drawer"
-        @close="ioDrawerOpen = false"
       />
     </div>
   </div>
