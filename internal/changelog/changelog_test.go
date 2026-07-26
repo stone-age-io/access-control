@@ -137,6 +137,144 @@ func TestApiUpdateAudited(t *testing.T) {
 	scenario.Test(t)
 }
 
+// An API-driven edit to an AREA is audited. Areas were added after the original
+// allowlist (migration 1750000019) and were missed, so an operator could change an
+// area's standing arm-state or its auto_schedule — both of which change intrusion
+// behaviour — with no audit row.
+//
+// Note this is distinct from the arm/disarm command routes
+// (POST /api/areas/{id}/arm|disarm|arm-clear), which were always audited: those are
+// custom routes writing their own row via commandapi.writeAudit, precisely because a
+// custom-route app.Save never trips the *Request hooks. This covers the ordinary CRUD
+// path the UI's area form uses.
+func TestAreaApiUpdateAudited(t *testing.T) {
+	app := newApp(t)
+	// areas writes require `topology` (migration 1750000019).
+	operator := seedUser(t, app, "topo@example.com", "topology")
+	token, err := operator.NewAuthToken()
+	if err != nil {
+		t.Fatalf("auth token: %v", err)
+	}
+
+	area, err := app.FindFirstRecordByData("areas", "code", "warehouse")
+	if err != nil {
+		t.Fatalf("find fixture area: %v", err)
+	}
+
+	scenario := tests.ApiScenario{
+		Name:                  "operator arms an area by editing the standing arm value",
+		Method:                http.MethodPatch,
+		URL:                   "/api/collections/areas/records/" + area.Id,
+		Body:                  strings.NewReader(`{"arm":"armed"}`),
+		Headers:               map[string]string{"Authorization": token},
+		ExpectedStatus:        http.StatusOK,
+		ExpectedContent:       []string{`"arm":"armed"`},
+		TestAppFactory:        func(t testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+		AfterTestFunc: func(t testing.TB, app *tests.TestApp, res *http.Response) {
+			rows, err := app.FindAllRecords("audit_logs")
+			if err != nil {
+				t.Fatalf("read audit_logs: %v", err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("audit rows = %d, want 1", len(rows))
+			}
+			row := rows[0]
+			if got := row.GetString("event_type"); got != "update" {
+				t.Errorf("event_type = %q, want update", got)
+			}
+			if got := row.GetString("collection_name"); got != "areas" {
+				t.Errorf("collection_name = %q, want areas", got)
+			}
+			if got := row.GetString("record_id"); got != area.Id {
+				t.Errorf("record_id = %q, want %q", got, area.Id)
+			}
+			if got := row.GetString("actor_email"); got != "topo@example.com" {
+				t.Errorf("actor_email = %q, want topo@example.com", got)
+			}
+			// The arm-state transition must be legible from the row itself, or the
+			// log cannot answer "who armed the warehouse".
+			if before := row.GetString("before"); !strings.Contains(before, "disarmed") {
+				t.Errorf("before = %q, want it to contain the prior arm 'disarmed'", before)
+			}
+			if after := row.GetString("after"); !strings.Contains(after, "armed") {
+				t.Errorf("after = %q, want it to contain 'armed'", after)
+			}
+		},
+	}
+	scenario.Test(t)
+}
+
+// TestAuditedCoversControlPlane is the regression guard for the gap that let `areas`
+// and `holiday_calendars` go unaudited: both were added to the schema by later
+// migrations and nobody remembered this allowlist. It fails on the NEXT such
+// omission rather than waiting for someone to notice a missing audit trail.
+//
+// A collection counts as control-plane — and therefore must be audited — when it has
+// a WRITE rule gated on an operator capability (`@request.auth.permissions`). That is
+// the established pattern for every operator-editable collection, so the check
+// maintains itself: a new one written the normal way is picked up automatically.
+//
+// Two categories fall out of that definition rather than needing an exemption list,
+// which is why there isn't one:
+//
+//   - The machine-written projections (`events`, `point_status`) and `audit_logs`
+//     have NIL write rules — superuser-only, written by app.Save, never via the API.
+//   - PocketBase's own collections (`_superusers`, `_otps`, …) and the demo fixtures
+//     tests.NewTestApp seeds (`demo1`, `clients`, `view1`, …) carry no capability
+//     rules at all.
+func TestAuditedCoversControlPlane(t *testing.T) {
+	app := newApp(t)
+
+	inAudited := make(map[string]bool, len(audited))
+	for _, name := range audited {
+		inAudited[name] = true
+	}
+
+	cols, err := app.FindAllCollections()
+	if err != nil {
+		t.Fatalf("FindAllCollections: %v", err)
+	}
+
+	// capabilityGated reports whether any write rule references operator
+	// capabilities, i.e. whether an operator can edit this collection via the API.
+	capabilityGated := func(c *core.Collection) bool {
+		for _, rule := range []*string{c.CreateRule, c.UpdateRule, c.DeleteRule} {
+			if rule != nil && strings.Contains(*rule, "@request.auth.permissions") {
+				return true
+			}
+		}
+		return false
+	}
+
+	var checked int
+	existing := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		existing[c.Name] = true
+		if c.System || !capabilityGated(c) {
+			continue
+		}
+		checked++
+		if !inAudited[c.Name] {
+			t.Errorf("collection %q has capability-gated writes but is not in `audited` — "+
+				"an operator can edit it through the API with no audit_logs row", c.Name)
+		}
+	}
+	// Guard the guard: if the discriminator ever stops matching (a rule-syntax change,
+	// say) this test would silently pass while checking nothing.
+	if checked < 10 {
+		t.Errorf("only %d capability-gated collections found; the discriminator looks broken", checked)
+	}
+
+	// The reverse: an entry in `audited` naming a collection that does not exist would
+	// silently bind a hook to nothing.
+	for _, name := range audited {
+		if !existing[name] {
+			t.Errorf("`audited` lists %q, which is not a collection in the schema", name)
+		}
+	}
+}
+
 // A non-admin operator may edit its own record (password/name) but must not be
 // able to escalate its own permissions — the guard hook rejects the change with a
 // 403 (even though the users updateRule lets it edit itself), and nothing is

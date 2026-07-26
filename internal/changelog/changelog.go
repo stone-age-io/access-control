@@ -29,10 +29,23 @@ const collection = "audit_logs"
 // are recorded. Deliberately excludes the machine-written projections (events,
 // point_status) and the audit sink itself. `controllers` is safe to include
 // because heartbeat updates go through app.Save (no *Request hook), not the API.
+//
+// Keep this in step with pbmigrations.readFloorCollections (1750000027), which is
+// the list of readable control-plane collections. Every entry there should appear
+// here except `events`/`point_status`; `TestAuditedCoversControlPlane` fails if a
+// collection is added to the schema and forgotten here.
 var audited = []string{
 	"cardholders", "credentials", "holidays",
 	"locations", "schedules", "controllers", "portals",
 	"access_groups", "roles", "aux_input", "aux_output", "users",
+	// areas: editing the standing `arm` value or `auto_schedule` changes intrusion
+	// behaviour. Note the operator arm/disarm ROUTES are already audited separately
+	// (commandapi.writeAudit), because a custom-route app.Save never trips these
+	// *Request hooks — this covers the ordinary CRUD edits the UI's area form makes.
+	"areas",
+	// holiday_calendars: which days a schedule treats as closed. A calendar edit can
+	// silently open or close every holiday-observing schedule at a site.
+	"holiday_calendars",
 	// badge_users is an auth tier: minting a badge login (and especially a visitor
 	// one) is a control-plane grant of access to a person, so it belongs in the
 	// operator change log alongside credentials.
