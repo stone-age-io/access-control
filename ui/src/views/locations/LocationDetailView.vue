@@ -133,6 +133,11 @@ onMounted(load)
             {{ record.notify_fire ? 'emails opted-in operators' : 'off' }}
           </SoftBadge>
         </DataField>
+        <DataField label="Floor plan on badges">
+          <SoftBadge :tone="record.badge_floorplan ? 'warning' : 'neutral'" dot>
+            {{ record.badge_floorplan ? 'visible to badge holders' : 'operators only' }}
+          </SoftBadge>
+        </DataField>
         <DataField label="Coordinates">
           <span v-if="hasCoords" class="font-mono text-sm">
             {{ record.coordinates.lat.toFixed(5) }}, {{ record.coordinates.lon.toFixed(5) }}
