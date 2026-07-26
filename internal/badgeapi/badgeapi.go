@@ -85,6 +85,24 @@ const (
 	QRCredential = "credential" // the credential value itself — a key; short-lived only
 )
 
+// Pass states. Exactly one describes a badge at any moment, and the client renders
+// one branch per state.
+//
+// This is ONE enum rather than a set of booleans on purpose. It replaced an
+// `expired bool` that was computed as "no in-window credential exists", which
+// conflated two states a person needs told apart: a cardholder who has never been
+// issued a credential saw "your pass is not currently valid", which is true but
+// unactionable and reads like a fault. Splitting them into separate booleans would
+// have left the client to combine them, and combining them wrongly is precisely the
+// bug — so the server decides, once.
+const (
+	PassValid       = "valid"         // a credential is active and in-window right now
+	PassExpired     = "expired"       // a credential exists but its window has passed
+	PassNotYetValid = "not_yet_valid" // a credential exists but its window hasn't opened
+	PassNone        = "none"          // no usable credential is issued at all
+	PassSuspended   = "suspended"     // the CARDHOLDER is suspended; the badge is withdrawn
+)
+
 const (
 	kvSnapshotTimeout = 5 * time.Second
 	// snapshotTTL bounds how stale a cached policy snapshot may be. SnapshotKV
@@ -149,9 +167,15 @@ type meResponse struct {
 	QRKind   string `json:"qrKind"`   // QRIdentifier | QRCredential
 	QRSecret bool   `json:"qrSecret"` // true when QR is a working credential, so the UI can warn
 
+	// The window of the credential PassState describes — which is the live one when
+	// valid, the soonest to open when not yet valid, and the last to close when
+	// expired. Both "" when there is no credential to describe or its bound is
+	// unbounded.
 	ValidFrom  string `json:"validFrom"`  // RFC3339, "" = unbounded
 	ValidUntil string `json:"validUntil"` // RFC3339, "" = unbounded
-	Expired    bool   `json:"expired"`    // no active, in-window credential right now
+	// PassState is the single answer to "is this badge usable right now"; see the
+	// Pass* constants. The client switches on it and must not re-derive it.
+	PassState string `json:"passState"`
 
 	Portals []badgePortal `json:"portals"`
 }
@@ -177,7 +201,7 @@ func (h *handler) me(e *core.RequestEvent) error {
 	if err != nil {
 		return e.InternalServerError("failed to load credentials", err)
 	}
-	active := activeCredential(creds, time.Now().UTC())
+	state, describe := evaluatePass(creds, cardholder.GetString("status"), time.Now().UTC())
 
 	resp := meResponse{
 		Name:        cardholder.GetString("name"),
@@ -185,18 +209,24 @@ func (h *handler) me(e *core.RequestEvent) error {
 		Kind:        kind,
 		PhotoRecord: cardholder.Id,
 		PhotoFile:   cardholder.GetString("photo"),
-		Expired:     active == nil,
+		PassState:   state,
 	}
-	if active != nil {
-		resp.ValidFrom = dateRFC3339(active, "valid_from")
-		resp.ValidUntil = dateRFC3339(active, "valid_until")
+	if describe != nil {
+		resp.ValidFrom = dateRFC3339(describe, "valid_from")
+		resp.ValidUntil = dateRFC3339(describe, "valid_until")
 	}
 
 	credValue := ""
-	if active != nil {
-		credValue = active.GetString("value")
+	if state == PassValid && describe != nil {
+		credValue = describe.GetString("value")
 	}
 	resp.QR, resp.QRKind, resp.QRSecret = qrPayload(kind, cardholder.Id, credValue)
+	if state == PassSuspended {
+		// Withdraw the whole badge face, the inert identifier included. A suspended
+		// holder's screen must not look like a working badge — that screen is what
+		// someone would hold up to a guard.
+		resp.QR, resp.QRSecret = "", false
+	}
 
 	// Door list, from the same graph the decision uses.
 	snap, err := h.snapshot(e.Request.Context())
@@ -423,6 +453,59 @@ func (h *handler) credentialsFor(cardholderID string) ([]*core.Record, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// evaluatePass reduces a cardholder's credentials to the ONE state their badge is in,
+// plus the credential whose window describes that state (nil when there is none to
+// describe). Pure, so the four-way branch that produces a person's only explanation of
+// why their badge does not work is table-tested rather than inferred from booleans.
+//
+// `creds` is expected to be the output of credentialsFor — revoked and suspended
+// credentials already removed — so "none" covers both "never issued" and "all
+// revoked". Both come out as the same sentence to the holder, and the difference is an
+// operator's business, not theirs.
+//
+// A suspended CARDHOLDER outranks everything: policy.Decide already denies them at a
+// reader, so a badge that showed a live pass would be contradicting the door.
+func evaluatePass(creds []*core.Record, cardholderStatus string, now time.Time) (state string, describe *core.Record) {
+	if cardholderStatus == "suspended" {
+		return PassSuspended, nil
+	}
+	if active := activeCredential(creds, now); active != nil {
+		return PassValid, active
+	}
+	if len(creds) == 0 {
+		return PassNone, nil
+	}
+
+	// Nothing is live, so every credential is either still to come or already gone.
+	// Describe a pass that is COMING in preference to one that has gone: "valid from
+	// Monday 09:00" is something the holder can act on, where "expired" only explains.
+	var soonest, latest *core.Record
+	for _, c := range creds {
+		if from := c.GetDateTime("valid_from"); !from.IsZero() && now.Before(from.Time()) {
+			if soonest == nil || from.Time().Before(soonest.GetDateTime("valid_from").Time()) {
+				soonest = c
+			}
+			continue
+		}
+		if until := c.GetDateTime("valid_until"); !until.IsZero() && now.After(until.Time()) {
+			if latest == nil || until.Time().After(latest.GetDateTime("valid_until").Time()) {
+				latest = c
+			}
+		}
+	}
+	switch {
+	case soonest != nil:
+		return PassNotYetValid, soonest
+	case latest != nil:
+		return PassExpired, latest
+	default:
+		// Unreachable: activeCredential treats an unparseable or absent bound as
+		// unbounded, so a credential it rejected has a real bound on one side or the
+		// other. Fall back to the state that promises nothing.
+		return PassNone, nil
+	}
 }
 
 // activeCredential picks the credential whose validity window contains now,

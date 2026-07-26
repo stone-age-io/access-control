@@ -195,7 +195,20 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   centralises the three things a caller must not get wrong — the `kind` discriminator, the throwaway password
   PocketBase demands on every auth record, and `password_set`. An optional operator-set initial password is what
   makes the tier usable **with no SMTP at all** (OTP and password-reset are both emails); it is handed over in
-  person and never mailed.
+  person and never mailed. In the UI a staff login is **one checkbox on the cardholder form** — it is 1:1 with a
+  cardholder, so it is a property of that person, not a related entity with a card of its own.
+  `POST /api/badge/visitors/{id}/revoke` ends a visit: it revokes the credential and **keeps** the login, so the
+  visit stays on the record and a repeat visitor is still recognised. Its counterpart is `bindVisitorPassRevocation`
+  (bound in `RegisterGuards`): deleting a *visitor* login revokes that cardholder's credentials first, and a failure
+  aborts the delete. A visitor's login and credential are two records holding **one pass**, minted in one
+  transaction for one visit — so unlike a staff badge, whose card must survive its login being removed, the halves
+  must die together. The revoke runs before `e.Next()` for ordering, not atomicity (PocketBase opens the delete's
+  transaction inside `OnRecordDeleteExecute`): revoked-credential-plus-surviving-login is a safe state to retry
+  from, deleted-login-plus-live-credential is the hole. `GET /api/badge/me` reports a single `passState`
+  (`valid`/`expired`/`not_yet_valid`/`none`/`suspended`) rather than an `expired` boolean, because that boolean was
+  computed as "no in-window credential" and so told a cardholder who had never been issued one that their pass was
+  "not currently valid"; a suspended cardholder gets no QR at all, since their screen must not look like a working
+  badge.
   The QR fork is the security-relevant decision: a *visitor* pass carries the credential value (it must work at a
   scanner, and lives hours), while every other badge carries the cardholder id — an identifier that opens nothing,
   because a staff badge hangs on a lanyard for years and gets photographed incidentally.
@@ -286,7 +299,10 @@ control-plane only), `1750000032` (default rate limits for the badge routes), `1
 cardholder → roles → groups, so a role is the assignable unit), and `1750000034` (**enable email+password**
 on `badge_users` alongside OTP/OAuth2, plus `password_set` and the stuffing/reset/change rate limits — 1750000030's
 "no passwords" left the whole tier inert on an install without SMTP, since every sign-in was an emailed code;
-that reasoning still holds for *visitors*, who are minted without one).
+that reasoning still holds for *visitors*, who are minted without one), and `1750000035` (badge login **lifecycle**:
+`cardholder` cascades so a deleted person leaves no orphan login that authenticates and resolves nobody; read drops
+to the ordinary operator floor so the UI can show the field read-only instead of hiding it; delete drops from
+`operators` to `enroll`, since giving a login and taking it back are one act).
 The base `1750000000` stays frozen; everything is additive. `migratecmd`
 Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
 before committing.

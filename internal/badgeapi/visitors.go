@@ -58,6 +58,7 @@ var base32Upper = base32.StdEncoding.WithPadding(base32.NoPadding)
 // registerVisitorRoutes is called from Register.
 func (h *handler) registerVisitorRoutes(se *core.ServeEvent) {
 	se.Router.POST("/api/badge/visitors", h.mintVisitor).Bind(authz.RequireOperatorAuth())
+	se.Router.POST("/api/badge/visitors/{id}/revoke", h.revokeVisitor).Bind(authz.RequireOperatorAuth())
 }
 
 type mintRequest struct {
@@ -120,6 +121,105 @@ func revokeCredentials(tx core.App, cardholderID string) error {
 		}
 	}
 	return nil
+}
+
+// --- ending a visit ---
+//
+// A visitor pass is ONE thing wearing two records: a `visitor` login and the credential
+// minted with it, in the same transaction, for the same visit. That is what makes it
+// different from a staff badge, where the login and the card have independent
+// lifecycles on purpose (removing someone's phone badge must not lock them out of the
+// building). The two routes below, plus the delete hook, keep the visitor halves
+// together:
+//
+//	POST /api/badge/visitors/{id}/revoke   end the visit, keep the record of it
+//	DELETE /api/badge_users/{id}           remove the person; the hook revokes first
+//
+// Before this, deleting a visitor login left their credential `active` — and worse,
+// invisible to internal/badgesweep, which finds credentials to expire by enumerating
+// visitor LOGINS. So the one action an operator would take to end a visit early both
+// failed to end it and disabled the sweep that would eventually have ended it.
+
+// revokeVisitorPass revokes a visitor's credentials, leaving the login in place.
+// Shared by the route and the delete hook.
+func revokeVisitorPass(app core.App, badge *core.Record) error {
+	cardholderID := badge.GetString("cardholder")
+	if cardholderID == "" {
+		return nil // nothing to revoke; a login with no cardholder opens nothing anyway
+	}
+	return revokeCredentials(app, cardholderID)
+}
+
+type revokeVisitorResponse struct {
+	BadgeUserID  string `json:"badgeUserId"`
+	CardholderID string `json:"cardholderId"`
+}
+
+// revokeVisitor ends a visit early: it revokes the credential and KEEPS the login.
+//
+// Keeping the login is the point of having this alongside delete. It preserves the
+// record that the person was here, it lets badgeapi's mint route recognise and refresh
+// them as a returning visitor rather than duplicating them, and it leaves them a badge
+// page that honestly says the pass is no longer valid instead of a dead sign-in.
+func (h *handler) revokeVisitor(e *core.RequestEvent) error {
+	if err := authz.RequireCapability(e, authz.CapEnroll); err != nil {
+		return err
+	}
+
+	badge, err := h.app.FindRecordById(BadgeCollection, e.Request.PathValue("id"))
+	if err != nil {
+		return e.NotFoundError("badge login not found", err)
+	}
+	// Deliberately visitor-only. Revoking a staff holder's credentials from a badge
+	// route would make "end this login" mean "lock this person out of the building",
+	// which is the confusion the two tiers exist to keep apart. Staff revocation stays
+	// on the credential, where an operator can see what they are turning off.
+	if badge.GetString("kind") != KindVisitor {
+		return e.BadRequestError(
+			"only a visitor pass can be revoked this way; revoke a staff credential on the credential itself", nil)
+	}
+
+	if err := revokeVisitorPass(h.app, badge); err != nil {
+		return e.InternalServerError("failed to revoke the visitor pass", err)
+	}
+
+	resp := revokeVisitorResponse{BadgeUserID: badge.Id, CardholderID: badge.GetString("cardholder")}
+	h.writeBadgeAudit(e, "update", badge.Id, map[string]any{
+		"action":     "revoke_visitor_pass",
+		"cardholder": resp.CardholderID,
+		"email":      badge.Email(),
+	})
+	h.log.Info("visitor pass revoked", "badgeUser", badge.Id, "cardholder", resp.CardholderID)
+	return e.JSON(http.StatusOK, resp)
+}
+
+// bindVisitorPassRevocation makes "the login is gone" imply "the pass is dead" for
+// visitors, wherever the delete comes from — the visitors page, the PocketBase admin
+// UI, or a cardholder delete cascading into the login.
+//
+// # Ordering, not atomicity
+//
+// The revoke runs BEFORE e.Next(), and a failure aborts the delete. PocketBase opens
+// the delete's transaction inside OnRecordDeleteExecute, i.e. after this hook's
+// pre-Next body, so the two writes are not atomic and pretending otherwise would be
+// wrong. Ordering is enough because the two failure modes are not equal: revoked
+// credential + surviving login is a safe, coherent state an operator can retry from,
+// while a deleted login + live credential is the hole this closes.
+//
+// Registered from RegisterGuards, so — like the field guard — it is bound at startup
+// and holds whether or not the badge routes (and NATS) ever came up. The collection
+// API is served regardless, and it is the collection API doing the deleting.
+func bindVisitorPassRevocation(app core.App) {
+	app.OnRecordDelete(BadgeCollection).BindFunc(func(e *core.RecordEvent) error {
+		if e.Record == nil || e.Record.GetString("kind") != KindVisitor {
+			return e.Next()
+		}
+		if err := revokeVisitorPass(e.App, e.Record); err != nil {
+			return fmt.Errorf(
+				"refusing to delete visitor login %s: could not revoke their pass first: %w", e.Record.Id, err)
+		}
+		return e.Next()
+	})
 }
 
 // mintVisitor creates a cardholder, a time-bound credential, and a `visitor` badge

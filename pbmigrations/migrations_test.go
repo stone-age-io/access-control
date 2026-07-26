@@ -839,6 +839,52 @@ func TestNotifyLocations(t *testing.T) {
 	}
 }
 
+// TestBadgeLoginLifecycle verifies migration 1750000035: the badge login as a property
+// of a cardholder rather than an entity with its own life.
+func TestBadgeLoginLifecycle(t *testing.T) {
+	app := newApp(t)
+
+	c, err := app.FindCollectionByNameOrId("badge_users")
+	if err != nil {
+		t.Fatalf("badge_users collection: %v", err)
+	}
+
+	// Cascade: an orphan login authenticates and then resolves nobody.
+	f, ok := c.Fields.GetByName("cardholder").(*core.RelationField)
+	if !ok || f == nil {
+		t.Fatal("badge_users.cardholder relation field missing")
+	}
+	if !f.CascadeDelete {
+		t.Error("badge_users.cardholder does not cascade; deleting a cardholder leaves a login for a person who no longer exists")
+	}
+
+	// Read is the operator floor (any `users` record), so the UI can show the field
+	// read-only instead of hiding it and leaving a silent hole in the page.
+	for name, rule := range map[string]*string{"ListRule": c.ListRule, "ViewRule": c.ViewRule} {
+		if rule == nil {
+			t.Errorf("badge_users.%s is nil (superuser-only)", name)
+			continue
+		}
+		// Both clauses matter: the badge tier keeps seeing exactly its own row, and
+		// the operator clause names the `users` collection so a badge token — which
+		// has no `permissions` field — can never satisfy it (see 1750000027).
+		for _, want := range []string{`id = @request.auth.id`, `@request.auth.collectionName = "users"`} {
+			if !strings.Contains(*rule, want) {
+				t.Errorf("badge_users.%s = %q, want it to contain %s", name, *rule, want)
+			}
+		}
+	}
+
+	// Issue and remove are the same act, so they take the same capability.
+	if c.DeleteRule == nil || !strings.Contains(*c.DeleteRule, "enroll") {
+		t.Errorf("badge_users.DeleteRule = %v, want enroll-gated to match CreateRule", c.DeleteRule)
+	}
+	if c.CreateRule == nil || c.DeleteRule == nil || *c.CreateRule != *c.DeleteRule {
+		t.Errorf("badge_users create/delete rules differ (%v vs %v); giving and taking back a login is one act",
+			c.CreateRule, c.DeleteRule)
+	}
+}
+
 // TestFixtureSingleLocation re-runs the fixture migration's seeding guard logic:
 // the migration no-ops when locations already exist, so a second
 // RunAllMigrations still yields exactly one hq.

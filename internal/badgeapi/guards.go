@@ -22,7 +22,12 @@ import (
 //     real holder out of their own badge.
 var protectedBadgeFields = []string{"cardholder", "kind", "password_set"}
 
-// RegisterGuards binds the field-level guard on badge_users self-update.
+// RegisterGuards binds the badge_users invariants that must hold on the plain
+// collection API, whether or not the badge routes were ever registered:
+//
+//   - the field-level guard on self-update (below), and
+//   - visitor pass revocation on delete (bindVisitorPassRevocation in visitors.go),
+//     because a deleted visitor login must never leave a live credential behind.
 //
 // # Why a hook and not a collection rule
 //
@@ -44,6 +49,8 @@ var protectedBadgeFields = []string{"cardholder", "kind", "password_set"}
 // path where the badge ROUTES are never registered: the collection API is served
 // regardless of whether NATS came up, and it is the collection API being guarded here.
 func RegisterGuards(app core.App) {
+	bindVisitorPassRevocation(app)
+
 	app.OnRecordUpdateRequest(BadgeCollection).BindFunc(func(e *core.RecordRequestEvent) error {
 		if isBadgeManager(e.Auth) {
 			return e.Next()

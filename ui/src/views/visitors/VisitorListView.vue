@@ -37,7 +37,7 @@ const { items: badges, page, totalPages, totalItems, loading, error, load, nextP
 
 // cardholder id → its most relevant credential window.
 const windows = ref<Record<string, { until: string; status: string }>>({})
-const deleting = ref(false)
+const working = ref(false)
 
 const canManage = computed(() => auth.can('enroll'))
 
@@ -103,25 +103,61 @@ function state(b: BadgeUserRecord): { label: string; tone: 'success' | 'warning'
   return { label: 'active', tone: 'success' }
 }
 
-async function remove(b: BadgeUserRecord) {
+/**
+ * End the visit early: revokes the credential, keeps the login.
+ *
+ * This is the action this page was missing. Its only action used to be a delete that
+ * explicitly did NOT revoke the pass — so the one thing an operator comes here to do
+ * (stop a visitor getting in) was the one thing neither button did.
+ *
+ * Keeping the login keeps the record that they were here, and lets a repeat visit
+ * refresh the same person rather than duplicating them.
+ */
+async function revoke(b: BadgeUserRecord) {
   const ok = await confirm({
-    title: 'Delete visitor login?',
-    message: `Remove the badge login for ${b.email}?`,
+    title: 'Revoke this pass?',
+    message: `End the visit for ${b.expand?.cardholder?.name || b.email}?`,
     details:
-      'Their credential is NOT revoked by this — revoke it on the credential itself if the pass should stop working. This only removes their ability to view the badge.',
-    confirmText: 'Delete login',
+      'Their pass stops opening doors immediately, including their QR code. They keep their sign-in, and their badge will say the pass is no longer valid.',
+    confirmText: 'Revoke pass',
     variant: 'warning',
   })
   if (!ok) return
-  deleting.value = true
+  working.value = true
   try {
-    await pb.collection('badge_users').delete(b.id)
-    toast.success('Visitor login deleted')
+    await pb.send(`/api/badge/visitors/${b.id}/revoke`, { method: 'POST' })
+    toast.success('Visitor pass revoked')
     await reload()
   } catch (err: any) {
-    toast.error(err?.message || 'Failed to delete visitor login')
+    toast.error(err?.response?.message || err?.message || 'Failed to revoke the pass')
   } finally {
-    deleting.value = false
+    working.value = false
+  }
+}
+
+/**
+ * Remove the person entirely. The server revokes their credential first (badgeapi's
+ * delete hook), so unlike before there is no way for this to leave a live pass behind.
+ */
+async function remove(b: BadgeUserRecord) {
+  const ok = await confirm({
+    title: 'Delete this visitor?',
+    message: `Delete ${b.expand?.cardholder?.name || b.email}?`,
+    details:
+      'Their pass is revoked and their sign-in is removed. The cardholder record and the visit history stay, so revoke instead if they may return.',
+    confirmText: 'Delete visitor',
+    variant: 'danger',
+  })
+  if (!ok) return
+  working.value = true
+  try {
+    await pb.collection('badge_users').delete(b.id)
+    toast.success('Visitor deleted')
+    await reload()
+  } catch (err: any) {
+    toast.error(err?.message || 'Failed to delete the visitor')
+  } finally {
+    working.value = false
   }
 }
 
@@ -174,14 +210,20 @@ onMounted(reload)
         </template>
 
         <template #cell-actions="{ item }">
-          <button
-            v-if="canManage"
-            class="btn btn-ghost btn-xs text-error"
-            :disabled="deleting"
-            @click.stop="remove(item)"
-          >
-            Delete
-          </button>
+          <div v-if="canManage" class="flex justify-end gap-1">
+            <!-- Revoke is the common case, so it leads and Delete stays quieter. -->
+            <button
+              v-if="state(item).label === 'active'"
+              class="btn btn-ghost btn-xs"
+              :disabled="working"
+              @click.stop="revoke(item)"
+            >
+              Revoke
+            </button>
+            <button class="btn btn-ghost btn-xs text-error" :disabled="working" @click.stop="remove(item)">
+              Delete
+            </button>
+          </div>
         </template>
       </ResponsiveList>
 

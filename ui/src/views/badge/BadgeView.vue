@@ -6,7 +6,7 @@ import { useBadgeAuthStore } from '@/stores/badgeAuth'
 import { useBrandingStore } from '@/stores/branding'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import QrCode from '@/components/ui/QrCode.vue'
-import type { BadgeMe, BadgePortal } from '@/types/badge'
+import type { BadgeMe, BadgePassState, BadgePortal } from '@/types/badge'
 
 /**
  * The badge itself: photo, name, QR code, validity, and the doors this person may
@@ -34,12 +34,53 @@ const results = ref<Record<string, { ok: boolean; message: string }>>({})
 const remotePortals = computed<BadgePortal[]>(() => (me.value?.portals || []).filter((p) => p.remoteUnlock))
 const viewOnlyPortals = computed<BadgePortal[]>(() => (me.value?.portals || []).filter((p) => !p.remoteUnlock))
 
-const validUntilLabel = computed(() => {
-  const raw = me.value?.validUntil
+function dateLabel(raw?: string): string {
   if (!raw) return ''
   const d = new Date(raw)
   return isNaN(d.getTime()) ? '' : d.toLocaleString()
+}
+const validFromLabel = computed(() => dateLabel(me.value?.validFrom))
+const validUntilLabel = computed(() => dateLabel(me.value?.validUntil))
+
+/**
+ * The pass banner: one message per server-decided state, and nothing at all when the
+ * pass is valid. Deliberately a lookup rather than a chain of v-ifs over several
+ * booleans — the bug this replaced was exactly that kind of chain telling someone who
+ * had never been issued a credential that their pass was "not currently valid".
+ *
+ * `null` means "say nothing", which is only the valid case.
+ */
+const passNotice = computed<{ text: string; tone: 'warning' | 'error' } | null>(() => {
+  const state: BadgePassState = me.value?.passState || 'none'
+  switch (state) {
+    case 'valid':
+      return null
+    case 'none':
+      return {
+        text: 'No pass has been issued to you yet. Contact your host or reception.',
+        tone: 'warning',
+      }
+    case 'not_yet_valid':
+      return {
+        text: validFromLabel.value
+          ? `Your pass starts ${validFromLabel.value}.`
+          : 'Your pass has not started yet.',
+        tone: 'warning',
+      }
+    case 'expired':
+      return {
+        text: validUntilLabel.value
+          ? `Your pass expired ${validUntilLabel.value}. Contact your host to renew it.`
+          : 'Your pass has expired. Contact your host to renew it.',
+        tone: 'warning',
+      }
+    case 'suspended':
+      return { text: 'Your badge is suspended. Contact your host.', tone: 'error' }
+  }
 })
+
+/** Only a valid pass may drive a door. Everything else is read-only. */
+const passUsable = computed(() => me.value?.passState === 'valid')
 
 async function load() {
   loading.value = true
@@ -110,21 +151,36 @@ async function unlock(portal: BadgePortal) {
 }
 
 /**
- * Turn a policy reason code into something a visitor can act on. Unmapped codes fall
- * through to the generic message rather than showing an internal string — the codes
- * are a stable API contract, not user-facing copy.
+ * Turn a decision reason code into something the holder can act on. Unmapped codes fall
+ * through to the generic message rather than showing an internal string.
+ *
+ * The keys are the STABLE codes from internal/policy/policy.go — they are a public
+ * contract, so this map has to spell them exactly. It previously invented its own
+ * (`deny_schedule`, `deny_credential_expired`, `deny_posture_lockdown`), none of which
+ * exist, so every denial fell through to "Not allowed right now". The two non-policy
+ * codes below come from badgeapi's own pre-checks.
  */
 function reasonText(reason?: string): string {
   switch (reason) {
-    case 'deny_schedule':
+    case 'deny_schedule_closed':
       return 'Not within your allowed hours'
-    case 'deny_credential_expired':
-    case 'deny_credential_not_yet_valid':
-      return 'Your pass is not currently valid'
-    case 'deny_posture_lockdown':
+    case 'deny_expired':
+      return 'Your pass has expired'
+    case 'deny_not_yet_valid':
+      return 'Your pass has not started yet'
+    case 'deny_revoked':
+      return 'Your pass is no longer active'
+    case 'deny_unknown_credential':
+      return 'Your pass is not recognised — contact your host'
+    case 'deny_no_access':
+      return 'Your badge does not open this door'
+    case 'deny_lockdown':
       return 'This door is in lockdown'
-    case 'deny_posture_disabled':
+    case 'deny_point_disabled':
       return 'This door is out of service'
+    case 'deny_unknown_point':
+      return 'This door is no longer available'
+    // badgeapi's own checks, ahead of the policy decision.
     case 'remote_unlock_not_allowed':
       return 'This door cannot be opened remotely'
     case 'no_credential':
@@ -241,12 +297,22 @@ onMounted(load)
 
             <div v-if="me.kind === 'visitor'" class="badge badge-outline">Visitor</div>
 
-            <!-- Expired: say so plainly instead of showing a dead code. -->
-            <div v-if="me.expired" class="alert alert-warning py-2 text-sm w-full">
-              <span>Your pass is not currently valid. Contact your host.</span>
+            <!-- Why this badge does not work, when it does not. Says nothing at all
+                 when the pass is valid. -->
+            <div
+              v-if="passNotice"
+              class="alert py-2 text-sm w-full"
+              :class="passNotice.tone === 'error' ? 'alert-error' : 'alert-warning'"
+            >
+              <span>{{ passNotice.text }}</span>
             </div>
 
-            <template v-else-if="me.qr">
+            <!-- The QR is whatever the server sent: the credential value for a live
+                 visitor pass, an inert identifier for a staff badge, nothing at all for
+                 a suspended one. A staff badge keeps showing its identifier while a
+                 credential is pending — it identifies the person, which is true
+                 regardless, and it says so below. -->
+            <template v-if="me.qr">
               <QrCode :value="me.qr" :size="200" />
               <p v-if="me.qrSecret" class="text-xs text-base-content/60">
                 This code opens doors — treat it like a key and do not share a screenshot.
@@ -256,7 +322,7 @@ onMounted(load)
               </p>
             </template>
 
-            <div v-if="validUntilLabel" class="text-xs text-base-content/50">
+            <div v-if="passUsable && validUntilLabel" class="text-xs text-base-content/50">
               Valid until {{ validUntilLabel }}
             </div>
           </div>
@@ -269,7 +335,7 @@ onMounted(load)
             <div v-for="p in remotePortals" :key="p.id" class="space-y-1">
               <button
                 class="btn btn-primary w-full justify-between"
-                :disabled="unlocking[p.id] || me.expired"
+                :disabled="unlocking[p.id] || !passUsable"
                 @click="unlock(p)"
               >
                 <span class="text-left">
@@ -294,7 +360,13 @@ onMounted(load)
         <div v-if="viewOnlyPortals.length" class="card bg-base-100 shadow-sm">
           <div class="card-body gap-2">
             <h2 class="card-title text-base">Your other doors</h2>
-            <p class="text-xs text-base-content/60">Present your badge at these in person.</p>
+            <p class="text-xs text-base-content/60">
+              {{
+                passUsable
+                  ? 'Present your badge at these in person.'
+                  : 'These doors are on your badge, but need a valid pass to open.'
+              }}
+            </p>
             <ul class="text-sm space-y-1">
               <li v-for="p in viewOnlyPortals" :key="p.id" class="flex justify-between gap-2">
                 <span>{{ p.name }}</span>

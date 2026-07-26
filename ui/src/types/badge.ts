@@ -14,6 +14,24 @@ export type BadgeQrKind =
 
 export type BadgeKind = 'holder' | 'visitor'
 
+/**
+ * Whether this badge is usable right now, and if not, why. Decided server-side
+ * (badgeapi's evaluatePass) and rendered as one branch — never re-derived here. It
+ * replaced an `expired` boolean that reported "no credential has ever been issued" as
+ * "your pass is not currently valid".
+ */
+export type BadgePassState =
+  /** A credential is active and in-window. */
+  | 'valid'
+  /** A credential exists but its window has passed. */
+  | 'expired'
+  /** A credential exists but its window has not opened yet. */
+  | 'not_yet_valid'
+  /** No usable credential is issued at all — nothing has expired; nothing exists. */
+  | 'none'
+  /** The cardholder is suspended, so the badge is withdrawn regardless of credentials. */
+  | 'suspended'
+
 /** One door on this badge. */
 export interface BadgePortal {
   /** PocketBase portal record id — what POST /api/badge/unlock/{id} takes. */
@@ -47,11 +65,15 @@ export interface BadgeMe {
   qrKind: BadgeQrKind
   /** True when `qr` is a working credential, so the UI can warn the holder. */
   qrSecret: boolean
-  /** RFC3339, or '' when unbounded. */
+  /**
+   * The window of the credential `passState` describes — the live one when valid, the
+   * soonest to open when not yet valid, the last to close when expired. RFC3339, or ''
+   * when there is nothing to describe or the bound is unbounded.
+   */
   validFrom: string
   validUntil: string
-  /** True when no active, in-window credential exists right now. */
-  expired: boolean
+  /** Whether the badge works right now, and if not, why. */
+  passState: BadgePassState
   portals: BadgePortal[]
 }
 
@@ -120,4 +142,10 @@ export interface MintVisitorResponse {
   badgeUrl: string
   /** True when an existing visitor was refreshed rather than a duplicate created. */
   reused: boolean
+}
+
+/** POST /api/badge/visitors/{id}/revoke (operator-only) */
+export interface RevokeVisitorResponse {
+  badgeUserId: string
+  cardholderId: string
 }

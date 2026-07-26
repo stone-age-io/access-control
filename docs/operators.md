@@ -127,6 +127,7 @@ so they call `authz.RequireCapability` per handler:
 | `GET /api/models` | any operator | enum/options metadata for the UI |
 | `POST /api/simulate` | any operator | access simulator — a decision oracle; operator-only |
 | `POST /api/badge/visitors` | `enroll` | mint a visitor: cardholder + time-bound credential + badge login |
+| `POST /api/badge/visitors/{id}/revoke` | `enroll` | end a visit: revoke the pass, keep the login |
 | `POST /api/badge/holders` | `enroll` | issue (or re-issue) a **staff** badge login for an existing cardholder |
 
 The badge tier has three routes of its own, gated by the **`badge_users`** collection
@@ -219,7 +220,17 @@ Keeping those tiers apart takes two deliberate choices, both easy to get wrong:
    guard below. It binds a `*Request` hook, so it constrains API traffic only — accessd's
    own `app.Save` writes (the issue and password routes, the visitor mint) set these
    fields deliberately. It is registered at startup rather than in `OnServe`, because the
-   collection API is served whether or not the badge routes ever came up.
+   collection API is served whether or not the badge routes ever came up — as is the
+   visitor-pass revocation hook bound alongside it, for the same reason.
+
+Reading `badge_users` is on the ordinary operator floor: any operator may see whether a
+person has a login, and `enroll` is what it takes to change one. A badge holder still
+sees only their own row — the rule is `id = @request.auth.id || @request.auth.collectionName = "users"`,
+and the second clause can never match a badge token. Nothing in the row is secret (email,
+`kind`, `password_set`, the cardholder id; the password hash and token key are system
+fields the API never serialises), and gating *read* only bought a UI that had to hide the
+field from operators without `enroll` — a blank space that cannot say "not allowed to
+look".
 
 Badge-tier routes live in `internal/badgeapi` and are authorized by
 `policy.Decide` (what that person's own credential opens, right now) rather than by
@@ -232,23 +243,43 @@ different places:
 
 | | **Visitor** | **Staff holder** |
 |---|---|---|
-| Where | **Visitors → New Visitor Pass** | **Cardholder detail → Badge login → Issue login** |
+| Where | **Visitors → New Visitor Pass** | **Cardholder form → Badge login** (a checkbox) |
 | Route | `POST /api/badge/visitors` | `POST /api/badge/holders` |
 | Creates | cardholder + time-bound credential + login, in one transaction | *only* the login — the cardholder and credential already exist |
 | Access from | a curated `visitor_preset` role, chosen at mint | the roles already on that cardholder |
 | QR encodes | the credential value (works at a scanner) | the cardholder id (opens nothing) |
 | Usual sign-in | emailed one-time code | password |
+| Ending it | **Revoke** (pass dies, login kept) or **Delete** (both) | untick the checkbox — the credential is untouched |
 
 A staff badge is deliberately *not* created by enrollment: most cardholders never need
 a login, and issuing one to everybody would put a phone-openable surface on people who
-only ever tap a card. It is a separate, explicit act on the person's record.
+only ever tap a card. It is one checkbox on the person's own form, because a login is
+1:1 with a cardholder — a property of that person rather than a related entity.
 
-**A badge login is not access.** It controls who may *see* a badge and use remote
-unlock. Their credentials work at every door they are entitled to whether or not a
-login exists, and removing a login revokes nothing. To actually revoke access, set
-`credentials.status = revoked` (or disable the cardholder) — that is what propagates
-through the mirror to the edge. Issuing needs `enroll`; **removing needs `operators`**,
-since deleting an account is closer to account administration than to enrollment.
+**For a staff holder, a badge login is not access.** It controls who may *see* a badge
+and use remote unlock. Their credentials work at every door they are entitled to whether
+or not a login exists, and removing a login revokes nothing. To actually revoke access,
+set `credentials.status = revoked` (or suspend the cardholder) — that is what propagates
+through the mirror to the edge. Issuing and removing both need `enroll`: giving a login
+and taking it back are the same act ([`1750000035`](../pbmigrations/1750000035_badge_login_lifecycle.go)).
+
+**A visitor pass is the exception, and it is not an oversight.** A visitor's login and
+credential are minted together, in one transaction, for one visit — they are two records
+holding one thing. So deleting a visitor login **revokes their credential**, enforced by
+a hook in [`internal/badgeapi`](../internal/badgeapi/visitors.go) rather than by the UI,
+so it holds from the Visitors page, the PocketBase admin UI, and a cardholder delete
+cascading into the login alike. Ending a visit early has its own verb — **Revoke** —
+which kills the pass and keeps the login, so the visit stays on the record and a repeat
+visitor is recognised rather than duplicated.
+
+> Before this, deleting a visitor login left the credential `active` *and* removed it
+> from [`internal/badgesweep`](../internal/badgesweep)'s view, since the sweep finds
+> credentials to expire by enumerating visitor logins. The one action an operator would
+> take to end a visit both failed to end it and disabled the job that eventually would.
+
+**A login with no credential** signs in and honestly reports that no pass has been
+issued. Roles and effective access are not enough on their own; the cardholder page says
+so where the fix is one click away.
 
 ### Sign-in methods
 
@@ -274,9 +305,9 @@ A holder sets or changes their own password from the badge page. The `password_s
 flag records whether they have one, which decides whether the current password must be
 supplied to change it: a holder who signed in by one-time code is setting a *first*
 password and has nothing to prove, while one who already has a password must supply it
-so that a stolen session cannot silently lock them out of their own badge. Re-issuing
-from the cardholder page resets that password — the operator's path for someone who is
-locked out and has no working mail. Note that **changing a password signs out every
+so that a stolen session cannot silently lock them out of their own badge. Setting a
+password from the cardholder form replaces the existing one — the operator's path for
+someone who is locked out and has no working mail. Note that **changing a password signs out every
 device**, including the one making the change (PocketBase rotates the record's token
 key); the badge UI re-authenticates silently, so this is only visible on a holder's
 other phones.
