@@ -5,9 +5,10 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { useFileUrl } from '@/composables/useFileUrl'
+import { withCardholderPassword } from '@/utils/cardholderPassword'
 import { useAuthStore } from '@/stores/auth'
 import type { Cardholder, CardholderStatus, Role } from '@/types/pocketbase'
-import type { BadgeUser, IssueHolderResponse } from '@/types/badge'
+import type { BadgeInviteResponse, BadgeKind } from '@/types/badge'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
@@ -30,6 +31,12 @@ const form = ref({
   email: '',
   status: 'active' as CardholderStatus,
   roles: [] as string[],
+  // Badge-tier fields. They live in `form` with everything else because that is what
+  // they are — columns on this row, not a related record. `kind` is read-only here
+  // (a visitor is minted on the Visitors page) but must round-trip, or saving a
+  // visitor from this form would silently demote them to an ordinary cardholder.
+  badge_login: false,
+  kind: '' as BadgeKind | '',
 })
 
 const roles = ref<Role[]>([])
@@ -93,77 +100,59 @@ function removePhoto() {
 }
 
 // --- badge login -----------------------------------------------------------
-// A badge login is 1:1 with a cardholder, so it belongs on this form as a property of
-// the person: one checkbox for "can view their badge on a phone". It used to be a card
-// with its own inline form on the DETAIL page, which made a boolean look like a related
-// entity and put a write surface on a read-only page.
+// One checkbox: "can view their badge on a phone". A badge login is 1:1 with a person
+// because it IS the person — `badge_login` is a field on this record, gating the
+// collection's AuthRule — so it belongs on this form as a property rather than as a
+// related entity with a lifecycle of its own.
 //
-// It lives outside `form` because it is not a cardholder field — it is a separate
-// record, reconciled after the save through POST /api/badge/holders (which owns the
-// `kind`, throwaway-password and `password_set` semantics) or a plain delete.
+// It used to be a second record in a `badge_users` collection, reconciled after the save
+// through POST /api/badge/holders. That route existed to centralise three things a caller
+// must not get wrong (the `kind` discriminator, the throwaway password PocketBase demands
+// on an auth record, and `password_set`); all three moved into the schema and a server
+// hook, so the checkbox is now part of the ordinary update the collection rules govern.
 //
-// Both directions need `enroll` (migration 1750000035 made them symmetric): whoever may
-// hand out a badge login may take it back.
+// Both directions need `enroll`: whoever may hand out a badge login may take it back.
 const canEnroll = computed(() => auth.can('enroll'))
 
-const badge = ref<BadgeUser | null>(null)
-const wantsBadge = ref(false)
+// A login signs in by email — it is the sole identity field, and the only route an OTP
+// or a reset can arrive by. Stated as a computed rather than a validation error because
+// the honest UI is a disabled checkbox with a reason next to it. The server enforces the
+// same rule (badgeapi.bindLoginRequiresEmail).
+const canHaveBadge = computed(() => !!form.value.email.trim())
+const isVisitor = computed(() => form.value.kind === 'visitor')
+
+// An optional initial password, handed over in person. This is what makes the badge tier
+// usable on an install with NO SMTP at all, since OTP and password-reset are both emails.
+// Never mailed — see the invite text.
 const badgePassword = ref('')
 const badgeSendInvite = ref(false)
+const hasPassword = ref(false)
 
-// A login signs in by email, so there must be one. Stated as a computed rather than a
-// validation error because the honest UI is a disabled checkbox with a reason.
-const canHaveBadge = computed(() => !!form.value.email.trim())
-const badgeIsVisitor = computed(() => badge.value?.kind === 'visitor')
-
-async function loadBadge() {
-  if (!recordId) return
-  try {
-    badge.value = await pb
-      .collection('badge_users')
-      .getFirstListItem<BadgeUser>(`cardholder = "${recordId}"`)
-  } catch {
-    badge.value = null // absence is the normal case, not an error
-  }
-  wantsBadge.value = !!badge.value
-}
+// Turning the checkbox off must not leave a stale password to send along with it.
+watch(
+  () => form.value.badge_login,
+  (on) => {
+    if (!on) {
+      badgePassword.value = ''
+      badgeSendInvite.value = false
+    }
+  },
+)
 
 /**
- * Apply the badge-login intent after the cardholder itself is saved.
+ * Email the holder where their badge lives. A separate call, after the save, because
+ * enabling a login and telling someone about it are genuinely separate acts: a rollout
+ * to 500 people flips the flag by import and mails later, and an operator handing a
+ * password over at a desk wants no mail at all.
  *
- * Runs AFTER, and reports its own failure without failing the save: the cardholder edit
- * is the operator's main intent and has already committed, so a mail or permission
- * problem on the login must not be reported as "failed to save cardholder". Returns a
- * message to show, or ''.
+ * Reports its own failure without failing the save — the login works either way, and the
+ * operator can always say it in person. Returns a message to show, or ''.
  */
-async function reconcileBadge(cardholderId: string): Promise<string> {
-  if (!canEnroll.value) return ''
-
-  // Removing: a visitor's pass is revoked with their login by the server hook, which is
-  // why this needs no revoke call of its own.
-  if (!wantsBadge.value) {
-    if (!badge.value) return ''
-    await pb.collection('badge_users').delete(badge.value.id)
-    badge.value = null
-    return ''
-  }
-
-  // Nothing to do: an existing login, no new password, no invite requested.
-  if (badge.value && !badgePassword.value && !badgeSendInvite.value) return ''
-
-  const res = await pb.send<IssueHolderResponse>('/api/badge/holders', {
+async function sendInvite(cardholderId: string): Promise<string> {
+  const res = await pb.send<BadgeInviteResponse>(`/api/badge/invite/${cardholderId}`, {
     method: 'POST',
-    body: {
-      cardholder: cardholderId,
-      email: form.value.email.trim(),
-      password: badgePassword.value,
-      sendInvite: badgeSendInvite.value,
-    },
   })
-  badgePassword.value = ''
-  if (badgeSendInvite.value && !res.inviteSent) {
-    // Not a failure — the login works regardless. Say it, because the operator now has
-    // to hand the sign-in details over themselves.
+  if (!res.sent) {
     return 'The badge login was saved, but the invite email could not be sent. Give them the sign-in details in person.'
   }
   return ''
@@ -176,7 +165,6 @@ const { markClean } = useUnsavedChanges(() => ({
   ...form.value,
   photoName: photoFile.value?.name || '',
   photoRemoved: photoRemoved.value,
-  wantsBadge: wantsBadge.value,
   badgePassword: badgePassword.value,
   badgeSendInvite: badgeSendInvite.value,
 }))
@@ -203,7 +191,10 @@ async function loadRecord() {
       email: c.email || '',
       status: (c.status || 'active') as CardholderStatus,
       roles: [...(c.roles || [])],
+      badge_login: !!c.badge_login,
+      kind: (c.kind || '') as BadgeKind | '',
     }
+    hasPassword.value = !!c.password_set
     photoFile.value = null
     photoRemoved.value = false
     markClean()
@@ -239,6 +230,23 @@ async function handleSubmit() {
       status: form.value.status,
       roles: form.value.roles,
     }
+    // Only touched by an operator who may: without `enroll` the checkbox is not
+    // rendered, and sending these would be refused by the collection rule anyway.
+    if (canEnroll.value) {
+      data.badge_login = form.value.badge_login
+      data.kind = form.value.kind
+      if (form.value.badge_login && badgePassword.value) {
+        // PocketBase accepts a password on an auth record from anyone matching the
+        // collection's ManageRule (`enroll`), with no old-password proof — which is
+        // exactly the "operator sets it in person" case. passwordConfirm is required.
+        data.password = badgePassword.value
+        data.passwordConfirm = badgePassword.value
+        // The holder now knows their password, so a later self-service change must
+        // demand the current one. Getting this backwards would let a stolen session
+        // change it unchallenged.
+        data.password_set = true
+      }
+    }
     // Mutually exclusive by construction: picking a file clears photoRemoved, and
     // removing clears the file. A File makes the SDK send multipart; null clears
     // the stored file over plain JSON.
@@ -250,21 +258,26 @@ async function handleSubmit() {
       await pb.collection('cardholders').update(recordId!, data)
       toast.success('Cardholder updated')
     } else {
-      const created = await pb.collection('cardholders').create<Cardholder>(data)
+      // cardholders is an auth collection, so the create REQUEST needs a password
+      // even for someone who will never sign in. See utils/cardholderPassword.
+      const created = await pb.collection('cardholders').create<Cardholder>(withCardholderPassword(data))
       id = created.id
       toast.success('Cardholder created')
     }
 
-    // The cardholder is saved; the login is a second record, so its failure is reported
-    // separately rather than as a failed save.
-    try {
-      const warning = await reconcileBadge(id!)
-      if (warning) toast.error(warning)
-    } catch (err: any) {
-      toast.error(
-        `The cardholder was saved, but their badge login was not: ${err?.response?.message || err?.message || 'unknown error'}`,
-      )
+    // The save is done — badge login included, since it is the same record. Only the
+    // invite is a separate act, and its failure must not read as a failed save.
+    if (canEnroll.value && form.value.badge_login && badgeSendInvite.value) {
+      try {
+        const warning = await sendInvite(id!)
+        if (warning) toast.error(warning)
+      } catch (err: any) {
+        toast.error(
+          `Saved, but the invite email could not be sent: ${err?.response?.message || err?.message || 'unknown error'}`,
+        )
+      }
     }
+    badgePassword.value = ''
 
     markClean()
     router.push(`/cardholders/${id}`)
@@ -279,8 +292,6 @@ onMounted(async () => {
   await loadOptions()
   if (isEdit.value) {
     await loadRecord()
-    await loadBadge()
-    markClean() // loadBadge sets wantsBadge, which the dirty check watches
   }
 })
 </script>
@@ -352,34 +363,36 @@ onMounted(async () => {
         </div>
       </BaseCard>
 
-      <!-- Badge login: one property of this person, not a related entity. -->
+      <!-- Badge login: one field on this person, not a related entity. -->
       <BaseCard v-if="canEnroll" title="Badge login">
         <div class="space-y-4">
           <label class="label cursor-pointer justify-start gap-3 p-0" :class="{ 'opacity-50': !canHaveBadge }">
             <input
-              v-model="wantsBadge"
+              v-model="form.badge_login"
               type="checkbox"
               class="checkbox"
-              :disabled="!canHaveBadge || badgeIsVisitor"
+              :disabled="!canHaveBadge"
             />
             <span class="label-text">Can view their badge on a phone</span>
           </label>
           <p class="text-xs text-base-content/60 -mt-2">
             Lets this person sign in to see their badge and use remote unlock where a door allows it.
-            It grants no access of its own — their credentials decide that, and they keep working either way.
+            It grants no access of its own — their credentials decide that, and they keep working
+            whether this is on or off.
           </p>
 
           <p v-if="!canHaveBadge" class="text-xs text-warning">
-            Add an email address above first — it is the sign-in identity for the badge.
+            Add an email address above first — it is the sign-in identity, and how a one-time code
+            would reach them.
           </p>
-          <p v-else-if="badgeIsVisitor" class="text-xs text-warning">
-            This person holds a <strong>visitor</strong> pass. Manage it from the Visitors page, so their
-            pass and their login stay in step.
+          <p v-else-if="isVisitor" class="text-xs text-base-content/60">
+            This person is a <strong>visitor</strong>. Their pass is managed on the Visitors page;
+            turning this off here only removes their sign-in, it does not end the visit.
           </p>
 
-          <template v-if="wantsBadge && canHaveBadge && !badgeIsVisitor">
+          <template v-if="form.badge_login && canHaveBadge">
             <FormField
-              :label="badge?.password_set ? 'Replace their password' : 'Password'"
+              :label="hasPassword ? 'Replace their password' : 'Password'"
               hint="Optional. Hand it over in person — it is never emailed. Set one if this install has no mail server, since an emailed code would otherwise be the only way in. They can change it from their badge."
             >
               <input
@@ -396,16 +409,15 @@ onMounted(async () => {
               <span class="label-text">Email them where to sign in (never includes the password)</span>
             </label>
 
-            <p v-if="badge" class="text-xs text-base-content/50">
-              Signs in as <code>{{ badge.email }}</code
-              >{{ badge.password_set ? ' with a password or an emailed code.' : ' with an emailed code.' }}
+            <p class="text-xs text-base-content/50">
+              Signs in as <code>{{ form.email.trim() }}</code
+              >{{ hasPassword || badgePassword ? ' with a password or an emailed code.' : ' with an emailed code.' }}
             </p>
           </template>
 
-          <!-- Unreachable for a visitor: the checkbox is disabled for them. -->
-          <p v-else-if="!wantsBadge && badge" class="text-xs text-warning">
-            Saving will remove their badge login. Their credentials keep working — to revoke
-            access, revoke the credential.
+          <p v-else-if="!form.badge_login && hasPassword" class="text-xs text-warning">
+            Saving will stop them signing in. Their credentials keep working — to take away
+            access at the door, revoke the credential.
           </p>
         </div>
       </BaseCard>

@@ -28,6 +28,8 @@ edge controllers (`access-controller`) watch that keyspace and decide locally.
   sign-in, capabilities, collection-rule matrix, and the `audit_logs` change log.
 - [`docs/hardware.md`](docs/hardware.md) — physical I/O: supported boards, pin
   maps, relay/input polarity, transports, and how to add a board.
+- [`demo/README.md`](demo/README.md) — dev/demo tooling: an idempotent seed script for a
+  believable multi-site company, and rule-router rules that keep the event feed live.
 
 ## Layout
 
@@ -52,6 +54,7 @@ internal/natsx/         NATS connection + KV helpers
 internal/webui/         the compiled management UI, //go:embed-ed into accessd
 pbmigrations/           PocketBase collections (schema-in-code)
 ui/                     Vue 3 + Vite management UI source (PocketBase-backed CRUD)
+demo/                   dev-only: seed.ps1 (demo data) + access-demo.yaml (rule-router event simulator)
 ```
 
 ## Web UI

@@ -5,13 +5,18 @@ import { badgePb } from '@/utils/badgePb'
 /**
  * Badge-tier auth store — sign-in for cardholders and visitors, NOT operators.
  *
- * Entirely separate from stores/auth.ts: a different auth collection
- * (`badge_users`), a different PocketBase client, a different localStorage key, and
- * no `permissions` concept at all. A badge holder has no capabilities; what they can
- * do is decided server-side by policy.Decide against their own credential.
+ * Entirely separate from stores/auth.ts even though both sign in real people: a
+ * different auth collection (`cardholders`, not `users`), a different PocketBase client,
+ * a different localStorage key, and no `permissions` concept at all. A badge holder has
+ * no capabilities; what they can do is decided server-side by policy.Decide against
+ * their own credential.
  *
- * Three sign-in methods, all enabled on the collection (migrations 1750000030 and
- * 1750000034):
+ * The separation has to survive the collections being collapsed, because one human can
+ * legitimately be both: the security guard who badges in AND runs the console is two
+ * accounts in two privilege domains, and a token issued for a phone must never be
+ * usable as a console token.
+ *
+ * Three sign-in methods, all enabled on the collection:
  *
  *   - OTP      — a code emailed to the address on the badge. The visitor path.
  *   - Password — email + password, for a staff holder who signs in for years and
@@ -48,19 +53,19 @@ export const useBadgeAuthStore = defineStore('badgeAuth', () => {
    * a caller which addresses have badges would turn this into an enumeration oracle.
    */
   async function requestOtp(address: string): Promise<string> {
-    const res = await badgePb.collection('badge_users').requestOTP(address)
+    const res = await badgePb.collection('cardholders').requestOTP(address)
     return res.otpId
   }
 
   /** Step 2: exchange the otpId + emailed code for a session. */
   async function verifyOtp(otpId: string, code: string) {
-    const authData = await badgePb.collection('badge_users').authWithOTP(otpId, code)
+    const authData = await badgePb.collection('cardholders').authWithOTP(otpId, code)
     record.value = authData.record as unknown as Record<string, any>
   }
 
   /** Email + password sign-in, for a holder whose badge has one. */
   async function loginWithPassword(address: string, password: string) {
-    const authData = await badgePb.collection('badge_users').authWithPassword(address, password)
+    const authData = await badgePb.collection('cardholders').authWithPassword(address, password)
     record.value = authData.record as unknown as Record<string, any>
   }
 
@@ -70,7 +75,7 @@ export const useBadgeAuthStore = defineStore('badgeAuth', () => {
    * requestOtp.
    */
   async function requestPasswordReset(address: string) {
-    await badgePb.collection('badge_users').requestPasswordReset(address)
+    await badgePb.collection('cardholders').requestPasswordReset(address)
   }
 
   /**
@@ -95,14 +100,14 @@ export const useBadgeAuthStore = defineStore('badgeAuth', () => {
 
   /** OAuth2 sign-in for a contractor or staff member with an existing identity. */
   async function loginWithOAuth2(provider: string) {
-    const authData = await badgePb.collection('badge_users').authWithOAuth2({ provider })
+    const authData = await badgePb.collection('cardholders').authWithOAuth2({ provider })
     record.value = authData.record as unknown as Record<string, any>
   }
 
   /** Which OAuth2 providers the install has configured, if any. */
   async function listOAuth2Providers(): Promise<{ name: string; displayName: string }[]> {
     try {
-      const methods = await badgePb.collection('badge_users').listAuthMethods()
+      const methods = await badgePb.collection('cardholders').listAuthMethods()
       return (methods.oauth2?.providers || []).map((p: any) => ({
         name: p.name,
         displayName: p.displayName || p.name,
@@ -126,7 +131,7 @@ export const useBadgeAuthStore = defineStore('badgeAuth', () => {
     if (!badgePb.authStore.isValid || !badgePb.authStore.record) return
     record.value = badgePb.authStore.record as unknown as Record<string, any>
     try {
-      const authData = await badgePb.collection('badge_users').authRefresh()
+      const authData = await badgePb.collection('cardholders').authRefresh()
       record.value = authData.record as unknown as Record<string, any>
     } catch {
       logout()

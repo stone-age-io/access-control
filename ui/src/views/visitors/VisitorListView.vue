@@ -5,7 +5,7 @@ import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { usePagination } from '@/composables/usePagination'
 import { useAuthStore } from '@/stores/auth'
-import type { BaseRecord, Cardholder, Credential } from '@/types/pocketbase'
+import type { Cardholder, Credential } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import ListLayout from '@/components/ui/ListLayout.vue'
@@ -14,26 +14,25 @@ import ListPagination from '@/components/ui/ListPagination.vue'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 
 /**
- * Visitor passes: the `visitor` records of the badge auth collection, with each
- * one's current credential window.
+ * Visitor passes: the cardholders with `kind = "visitor"`, each with its current
+ * credential window.
  *
- * Validity lives on the CREDENTIAL, not on the badge login, so it is fetched
- * separately per cardholder rather than being a column on the badge record — one
- * source of truth for expiry, which is the same field the edge enforces.
+ * A visitor is not a different kind of THING from a cardholder — it is a cardholder with
+ * a time-bound pass — so this page is a filtered view of the same collection the
+ * Cardholders page lists, and `kind` is the only thing separating them. It used to join
+ * a separate `badge_users` login to its cardholder through a relation and an expand,
+ * which is why every row needed two records to render.
+ *
+ * Validity lives on the CREDENTIAL, not on the person, so it is fetched separately —
+ * one source of truth for expiry, and the same field the edge enforces.
  */
-interface BadgeUserRecord extends BaseRecord {
-  email: string
-  kind: string
-  cardholder: string
-  expand?: { cardholder?: Cardholder }
-}
 
 const toast = useToast()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
 
 const { items: badges, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
-  usePagination<BadgeUserRecord>('badge_users', 50)
+  usePagination<Cardholder>('cardholders', 50)
 
 // cardholder id → its most relevant credential window.
 const windows = ref<Record<string, { until: string; status: string }>>({})
@@ -41,7 +40,7 @@ const working = ref(false)
 
 const canManage = computed(() => auth.can('enroll'))
 
-const columns: Column<BadgeUserRecord>[] = [
+const columns: Column<Cardholder>[] = [
   { key: 'name', label: 'Visitor' },
   { key: 'email', label: 'Email' },
   { key: 'validUntil', label: 'Valid until' },
@@ -50,7 +49,7 @@ const columns: Column<BadgeUserRecord>[] = [
 ]
 
 function queryOpts() {
-  return { filter: 'kind = "visitor"', sort: '-created', expand: 'cardholder' }
+  return { filter: 'kind = "visitor"', sort: '-created' }
 }
 
 async function reload() {
@@ -64,7 +63,7 @@ async function reload() {
  * than one request per row.
  */
 async function loadWindows() {
-  const ids = badges.value.map((b) => b.cardholder).filter(Boolean)
+  const ids = badges.value.map((b) => b.id).filter(Boolean)
   if (!ids.length) {
     windows.value = {}
     return
@@ -86,16 +85,16 @@ async function loadWindows() {
   }
 }
 
-function untilLabel(b: BadgeUserRecord): string {
-  const w = windows.value[b.cardholder]
+function untilLabel(b: Cardholder): string {
+  const w = windows.value[b.id]
   if (!w?.until) return '—'
   const d = new Date(w.until)
   return isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
 
 /** Expired / revoked / active, derived from the credential, never from the login. */
-function state(b: BadgeUserRecord): { label: string; tone: 'success' | 'warning' | 'neutral' } {
-  const w = windows.value[b.cardholder]
+function state(b: Cardholder): { label: string; tone: 'success' | 'warning' | 'neutral' } {
+  const w = windows.value[b.id]
   if (!w) return { label: 'no pass', tone: 'neutral' }
   if (w.status === 'revoked') return { label: 'revoked', tone: 'neutral' }
   if (w.status === 'suspended') return { label: 'suspended', tone: 'warning' }
@@ -104,19 +103,16 @@ function state(b: BadgeUserRecord): { label: string; tone: 'success' | 'warning'
 }
 
 /**
- * End the visit early: revokes the credential, keeps the login.
+ * End the visit early: revokes the credential, keeps the person.
  *
- * This is the action this page was missing. Its only action used to be a delete that
- * explicitly did NOT revoke the pass — so the one thing an operator comes here to do
- * (stop a visitor getting in) was the one thing neither button did.
- *
- * Keeping the login keeps the record that they were here, and lets a repeat visit
- * refresh the same person rather than duplicating them.
+ * This is the primary action on this page. Keeping the record keeps the fact that they
+ * were here, and lets a repeat visit refresh the same person rather than duplicating
+ * them — which is why revoke exists alongside delete rather than instead of it.
  */
-async function revoke(b: BadgeUserRecord) {
+async function revoke(b: Cardholder) {
   const ok = await confirm({
     title: 'Revoke this pass?',
-    message: `End the visit for ${b.expand?.cardholder?.name || b.email}?`,
+    message: `End the visit for ${b.name || b.email}?`,
     details:
       'Their pass stops opening doors immediately, including their QR code. They keep their sign-in, and their badge will say the pass is no longer valid.',
     confirmText: 'Revoke pass',
@@ -136,22 +132,28 @@ async function revoke(b: BadgeUserRecord) {
 }
 
 /**
- * Remove the person entirely. The server revokes their credential first (badgeapi's
- * delete hook), so unlike before there is no way for this to leave a live pass behind.
+ * Remove the person entirely, pass included: `credentials.user` cascades (migration
+ * 1750000036), so there is no way for this to leave a working credential behind — which
+ * is what a delete used to do when the login was a separate record it could remove on
+ * its own.
+ *
+ * Deliberately the secondary action. Deleting a visitor destroys the record that they
+ * visited at all, and an operator reaching for a button on this page almost always means
+ * "stop them getting in", not "erase the visit".
  */
-async function remove(b: BadgeUserRecord) {
+async function remove(b: Cardholder) {
   const ok = await confirm({
     title: 'Delete this visitor?',
-    message: `Delete ${b.expand?.cardholder?.name || b.email}?`,
+    message: `Delete ${b.name || b.email}?`,
     details:
-      'Their pass is revoked and their sign-in is removed. The cardholder record and the visit history stay, so revoke instead if they may return.',
+      'Their pass and their sign-in are deleted with them, and the record that they visited is gone. Revoke instead if they may return.',
     confirmText: 'Delete visitor',
     variant: 'danger',
   })
   if (!ok) return
   working.value = true
   try {
-    await pb.collection('badge_users').delete(b.id)
+    await pb.collection('cardholders').delete(b.id)
     toast.success('Visitor deleted')
     await reload()
   } catch (err: any) {
@@ -189,10 +191,10 @@ onMounted(reload)
     <BaseCard :no-padding="true">
       <ResponsiveList :items="badges" :columns="columns" :loading="loading">
         <template #cell-name="{ item }">
-          <span class="font-medium">{{ item.expand?.cardholder?.name || '—' }}</span>
+          <span class="font-medium">{{ item.name || '—' }}</span>
         </template>
         <template #card-name="{ item }">
-          <span class="text-sm font-bold text-primary truncate">{{ item.expand?.cardholder?.name || '—' }}</span>
+          <span class="text-sm font-bold text-primary truncate">{{ item.name || '—' }}</span>
         </template>
 
         <template #cell-validUntil="{ item }">

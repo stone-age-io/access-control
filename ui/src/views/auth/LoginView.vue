@@ -1,64 +1,153 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
-import { useToast } from '@/composables/useToast'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useBrandingStore } from '@/stores/branding'
 import BrandLogo from '@/components/common/BrandLogo.vue'
+import OperatorSignIn from './OperatorSignIn.vue'
+import BadgeSignIn from './BadgeSignIn.vue'
 
+/**
+ * The one sign-in page, for both tiers.
+ *
+ * # Why a selector rather than one form
+ *
+ * PocketBase authenticates per collection, so something has to choose between `users`
+ * (the operator console) and `cardholders` (a badge). Two candidates were rejected:
+ *
+ *   - Auto-detect from the address. One human can legitimately hold an account in BOTH
+ *     tiers — the security guard who badges in and also runs the console is the obvious
+ *     case — so a guess would silently sign them into the wrong privilege domain. It
+ *     would also split every failed attempt across two rate-limit buckets, and leak
+ *     which tier an address belongs to.
+ *   - Try one, fall back to the other. Same leak, same double-counting, plus a confusing
+ *     error when both fail.
+ *
+ * So the choice is explicit. It is two entries and not three: a visitor and a staff
+ * cardholder are the same collection, so a visitor never has to know they are a
+ * "visitor" in order to sign in.
+ *
+ * # Deep link and memory
+ *
+ * `?as=badge` / `?as=operator` selects a tier directly, which is what invite emails link
+ * to. Otherwise the last choice is remembered per browser: whichever tier a device is
+ * used for, it is almost always used for that one again, so a lobby tablet and an
+ * operator's laptop each land on the right form without a click.
+ */
+const route = useRoute()
 const router = useRouter()
-const authStore = useAuthStore()
-const toast = useToast()
+const branding = useBrandingStore()
 
-const email = ref('')
-const password = ref('')
-const loading = ref(false)
+type Tier = 'operator' | 'badge'
 
-async function handleLogin() {
-  loading.value = true
-  try {
-    await authStore.login(email.value, password.value)
-    router.push('/')
-  } catch (err: any) {
-    toast.error(err?.message || 'Login failed')
-  } finally {
-    loading.value = false
-  }
+/** Where the remembered choice lives. Namespaced so it cannot collide with a token. */
+const TIER_KEY = 'stone-access:login-tier'
+
+function isTier(v: unknown): v is Tier {
+  return v === 'operator' || v === 'badge'
 }
+
+/**
+ * Precedence: the URL, then the remembered choice, then operator. Operator is the
+ * default for a first visit because a fresh install is set up by an operator before
+ * anyone holds a badge.
+ */
+function initialTier(): Tier {
+  const fromUrl = route.query.as
+  if (isTier(fromUrl)) return fromUrl
+  try {
+    const remembered = localStorage.getItem(TIER_KEY)
+    if (isTier(remembered)) return remembered
+  } catch {
+    // Private browsing or a storage-blocked context; the default is fine.
+  }
+  return 'operator'
+}
+
+const tier = ref<Tier>(initialTier())
+
+// Remember the choice, and keep the URL honest so a reload or a shared link lands in the
+// same place. `replace` so the selector does not fill up the back button.
+watch(tier, (next) => {
+  try {
+    localStorage.setItem(TIER_KEY, next)
+  } catch {
+    // Not being able to remember is not worth surfacing.
+  }
+  if (route.query.as !== next) {
+    router.replace({ query: { ...route.query, as: next } })
+  }
+})
+
+// A link may change `?as=` without remounting this component.
+watch(
+  () => route.query.as,
+  (v) => {
+    if (isTier(v) && v !== tier.value) tier.value = v
+  },
+)
+
+onMounted(() => {
+  if (route.query.as !== tier.value) {
+    router.replace({ query: { ...route.query, as: tier.value } })
+  }
+})
+
+const subtitle = computed(() =>
+  tier.value === 'badge' ? 'Sign in to view your badge' : 'Sign in to the control plane',
+)
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-base-200 p-4">
-    <div class="card w-full max-w-sm bg-base-100 shadow-xl border border-base-300">
-      <div class="card-body">
-        <div class="flex flex-col items-center mb-6">
-          <div class="text-primary mb-2"><BrandLogo :size="48" /></div>
-          <h2 class="text-2xl font-bold tracking-tight">Stone Access</h2>
-          <p class="text-sm opacity-60">Sign in to the control plane</p>
-        </div>
+  <div class="min-h-screen flex items-center justify-center p-4 bg-base-200">
+    <div class="w-full max-w-sm">
+      <div class="flex flex-col items-center gap-3 mb-6">
+        <BrandLogo :size="56" />
+        <h1 class="text-lg font-semibold">{{ branding.appName }}</h1>
+        <p class="text-sm text-base-content/60 text-center">{{ subtitle }}</p>
+      </div>
 
-        <form @submit.prevent="handleLogin" class="space-y-4">
-          <div class="form-control">
-            <label class="label"><span class="label-text">Email</span></label>
-            <input v-model="email" type="email" placeholder="admin@example.com" class="input input-bordered" required />
-          </div>
-
-          <div class="form-control">
-            <label class="label"><span class="label-text">Password</span></label>
-            <input v-model="password" type="password" placeholder="••••••••" class="input input-bordered" required />
-          </div>
-
-          <div class="form-control mt-6">
-            <button type="submit" class="btn btn-primary w-full" :disabled="loading">
-              <span v-if="loading" class="loading loading-spinner"></span>
-              <span v-else>Sign In</span>
+      <div class="card bg-base-100 shadow-sm">
+        <div class="card-body gap-4">
+          <!-- The tier selector. role=tablist so it reads as a choice between two
+               destinations rather than two unrelated buttons. -->
+          <div role="tablist" class="tabs tabs-boxed">
+            <button
+              role="tab"
+              type="button"
+              class="tab flex-1"
+              :class="{ 'tab-active': tier === 'badge' }"
+              :aria-selected="tier === 'badge'"
+              @click="tier = 'badge'"
+            >
+              My badge
+            </button>
+            <button
+              role="tab"
+              type="button"
+              class="tab flex-1"
+              :class="{ 'tab-active': tier === 'operator' }"
+              :aria-selected="tier === 'operator'"
+              @click="tier = 'operator'"
+            >
+              Operator
             </button>
           </div>
-        </form>
 
-        <p class="text-center text-xs opacity-50 mt-4">
-          Sign in with your operator account. Superusers use the PocketBase dashboard (/_/).
-        </p>
+          <!-- Keyed so switching tiers discards the other form's state: a half-typed
+               password must not survive into the other tier's field. -->
+          <BadgeSignIn v-if="tier === 'badge'" key="badge" />
+          <OperatorSignIn v-else key="operator" />
+        </div>
       </div>
+
+      <p class="text-xs text-base-content/50 text-center mt-6">
+        <template v-if="tier === 'badge'">
+          Managing this system? Choose <span class="font-medium">Operator</span> above.
+        </template>
+        <template v-else>
+          Here to see your own badge? Choose <span class="font-medium">My badge</span> above.
+        </template>
+      </p>
     </div>
   </div>
 </template>

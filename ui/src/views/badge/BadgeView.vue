@@ -91,7 +91,7 @@ async function load() {
   } catch (err: any) {
     if (err?.status === 401) {
       badgeAuth.logout()
-      router.push('/badge/login')
+      router.push({ name: 'Login', query: { as: 'badge' } })
       return
     }
     loadError.value = 'Could not load your badge. Try again in a moment.'
@@ -246,7 +246,7 @@ async function savePassword() {
 
 async function signOut() {
   badgeAuth.logout()
-  router.push('/badge/login')
+  router.push({ name: 'Login', query: { as: 'badge' } })
 }
 
 onMounted(load)

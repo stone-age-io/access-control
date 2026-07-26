@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { withCardholderPassword } from '@/utils/cardholderPassword'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -392,7 +393,9 @@ async function runImport() {
     if (op.action === 'error') continue
     try {
       if (op.action === 'create') {
-        const rec = await pb.collection('cardholders').create<Cardholder>(op.createData!)
+        // cardholders is an auth collection: the create request needs a password even
+        // for a row that will never sign in. See utils/cardholderPassword.
+        const rec = await pb.collection('cardholders').create<Cardholder>(withCardholderPassword(op.createData!))
         op.resolvedId = rec.id
         res.chCreated++
       } else if (op.action === 'update') {

@@ -15,25 +15,22 @@ const OPERATORS = 'operators' // operator accounts + audit log
 const COMMAND = 'command' // issue door commands (grant/posture)
 
 const routes: RouteRecordRaw[] = [
+  // ONE sign-in page for both tiers, with an explicit selector (see LoginView).
+  // `badge: true` keeps it out of the operator guard: a badge holder arriving here is
+  // not a half-authenticated operator, and must never be redirected as one.
   {
     path: '/login',
     name: 'Login',
     component: () => import('@/views/auth/LoginView.vue'),
-    meta: { requiresAuth: false, title: 'Sign in' },
+    meta: { requiresAuth: false, badge: true, title: 'Sign in' },
   },
+  // Kept as a redirect, not deleted: invite emails sent before the pages merged point
+  // here, and a badge link that 404s is a support call from someone who cannot get in.
+  { path: '/badge/login', redirect: { name: 'Login', query: { as: 'badge' } } },
 
   // --- Badge tier (cardholders + visitors, NOT operators) ---
-  // Its own routes, its own layout (no operator chrome), its own auth store and
-  // PocketBase client. `badge: true` takes them out of the operator guard entirely:
-  // a badge holder is not a half-authenticated operator, and must never be bounced
-  // to /login. Lazy-loaded, so a visitor's phone never downloads the operator
-  // console.
-  {
-    path: '/badge/login',
-    name: 'BadgeLogin',
-    component: () => import('@/views/badge/BadgeLoginView.vue'),
-    meta: { requiresAuth: false, badge: true, title: 'Badge sign-in' },
-  },
+  // Its own layout (no operator chrome), its own auth store and PocketBase client, and
+  // lazy-loaded so a visitor's phone never downloads the operator console.
   {
     path: '/badge',
     name: 'Badge',
@@ -178,12 +175,24 @@ router.beforeEach((to, from, next) => {
   if (to.meta.badge) {
     const badgeAuth = useBadgeAuthStore()
     if (to.meta.badgeAuth && !badgeAuth.isAuthenticated) {
-      next('/badge/login')
+      next({ name: 'Login', query: { as: 'badge' } })
       return
     }
-    if (to.path === '/badge/login' && badgeAuth.isAuthenticated) {
-      next('/badge')
-      return
+    // /login is shared by both tiers, so skipping it when already signed in has to
+    // respect which tier is being asked for.
+    if (to.name === 'Login') {
+      const wantsBadge = to.query.as === 'badge'
+      if (wantsBadge && badgeAuth.isAuthenticated) {
+        next('/badge')
+        return
+      }
+      // An OPERATOR is deliberately not bounced to / when ?as=badge is present: signing
+      // a visitor in at a kiosk the operator is already logged into is a normal flow,
+      // and redirecting them to the console would make it impossible.
+      if (!wantsBadge && useAuthStore().isAuthenticated) {
+        next('/')
+        return
+      }
     }
     next()
     return
@@ -192,11 +201,6 @@ router.beforeEach((to, from, next) => {
   const authStore = useAuthStore()
   if (to.meta.requiresAuth !== false && !authStore.isAuthenticated) {
     next('/login')
-    return
-  }
-  // Already signed in — skip the login page.
-  if (to.path === '/login' && authStore.isAuthenticated) {
-    next('/')
     return
   }
   // Capability gate: a route may require a specific operator capability. On an

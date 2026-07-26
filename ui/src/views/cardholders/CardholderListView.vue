@@ -27,10 +27,21 @@ const { items: cardholders, page, totalPages, totalItems, loading, error, load, 
 const searchQuery = ref('')
 const deleting = ref(false)
 
+/**
+ * Visitors are excluded, because they have their own top-level page.
+ *
+ * They are the same collection — a visitor is a cardholder with `kind = "visitor"` — so
+ * without this every guest would appear in both lists, and the same person showing up
+ * twice under two different headings is how an operator learns to distrust a console.
+ * Written as `kind != "visitor"` rather than a list of wanted kinds, so an ordinary
+ * cardholder (blank `kind`) is included by default.
+ */
+const NOT_A_VISITOR = 'kind != "visitor"'
+
 function queryOpts() {
   const q = searchQuery.value.trim().replace(/["\\]/g, '')
-  const filter = q ? `name ~ "${q}" || email ~ "${q}" || external_id ~ "${q}"` : ''
-  return { sort: 'name', expand: 'roles', filter }
+  const search = q ? ` && (name ~ "${q}" || email ~ "${q}" || external_id ~ "${q}")` : ''
+  return { sort: 'name', expand: 'roles', filter: NOT_A_VISITOR + search }
 }
 
 function reload() {

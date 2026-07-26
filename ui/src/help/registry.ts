@@ -177,10 +177,22 @@ const TOPICS: Record<string, HelpTopic> = {
     icon: '🪪',
     sections: [
       { body: 'A cardholder is a person in the system. Their roles determine what they can open; their credentials are the cards/PINs they present.' },
+      { heading: 'Cardholders and visitors', body: 'Both are cardholders — a visitor is one with a time-bound pass, listed on its own page so a lobby full of guests does not bury your staff. This page excludes them for that reason. The same person can be either over time; a returning visitor is recognised rather than duplicated.' },
       { heading: 'Status', body: 'A disabled cardholder is denied everywhere, regardless of credentials or roles — the check happens before the grant walk.' },
-      { heading: 'Badge login', body: 'A checkbox on the cardholder form, because it is one property of the person: whether they can view their badge on a phone and use remote unlock at doors that allow it. It is separate from access — their credentials work at every door they are entitled to whether or not a login exists, and removing a login revokes nothing. To revoke access, revoke the credential. (A visitor is the exception: their login and their pass are one thing, managed from the Visitors page.)' },
+      { heading: 'Badge login', body: 'A checkbox on the cardholder form, because it is one field on the person: whether they can sign in to view their badge on a phone and use remote unlock at doors that allow it. It is separate from access — their credentials work at every door they are entitled to whether or not they can sign in, and turning the checkbox off revokes nothing. To take away access at the door, revoke the credential.' },
       { heading: 'A login with no credential', body: 'The badge signs in and honestly says no pass has been issued yet. Roles and effective access are not enough on their own — a person needs a credential to open anything, in person or remotely.' },
       { heading: 'Passwords', body: 'A badge holder normally signs in with a password, or an emailed one-time code. Setting an initial password is optional but is the only way in on an install with no mail server — hand it over in person, it is never emailed. They can change it themselves from their badge page.' },
+    ],
+  },
+  visitors: {
+    title: 'Visitors',
+    icon: '👋',
+    sections: [
+      { body: 'A visitor is a cardholder with a pass that expires. Issuing one creates the person, a time-bound credential, and their sign-in in a single step, and emails them where to view their badge.' },
+      { heading: 'Revoke vs delete', body: 'Revoke ends the visit: the pass stops opening doors immediately, including the QR code, and the person stays on the record so a return visit refreshes them instead of creating a duplicate. Delete removes the person, their pass, and the fact that they visited. Reach for revoke.' },
+      { heading: 'Expiry is enforced at the door', body: 'A pass stops working the moment its window closes, whether or not anything here is clicked — the controller checks the dates itself, offline included. Marking expired passes revoked is housekeeping so that "active" means what you think it means.' },
+      { heading: 'The QR code', body: 'A visitor’s QR carries their actual credential value, so a scanner can read it — which is why the pass is short-lived. A staff badge’s QR carries only an identifier that opens nothing, because a lanyard badge gets photographed for years.' },
+      { heading: 'Roles offered', body: 'Only roles marked as a visitor preset can be chosen here, so issuing a pass can never hand out more than an operator has curated for guests.' },
     ],
   },
   credentials: {

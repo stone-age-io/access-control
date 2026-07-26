@@ -1,3 +1,5 @@
+import type { BadgeKind } from './badge'
+
 // TypeScript interfaces for the stone-access PocketBase collections.
 //
 // HAND-MAINTAINED — the Go migrations in pbmigrations/ are the source of truth
@@ -242,6 +244,20 @@ export interface Cardholder extends BaseRecord {
    * `pb.files.getURL()` directly — without a file token the request 403s.
    */
   photo: string
+
+  // --- badge tier ---
+  // `cardholders` is an AUTH collection: one person is one record whether or not they
+  // ever sign in. These are the fields that make it a badge, and `email` above doubles
+  // as the sign-in identity. See @/types/badge for the shapes the badge routes return.
+  /** May this person sign in to see their badge? Gates the collection's AuthRule. */
+  badge_login?: boolean
+  /** Which badge shape. '' means an ordinary cardholder. */
+  kind?: BadgeKind | ''
+  /** True when the holder knows their own password; false = emailed code only. */
+  password_set?: boolean
+  /** Set by PocketBase itself on a first successful OTP sign-in. */
+  verified?: boolean
+
   expand?: { roles?: Role[] }
 }
 

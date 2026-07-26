@@ -78,43 +78,29 @@ export interface BadgeMe {
 }
 
 /**
- * A badge_users record as an operator sees it. Only operators holding `enroll` may
- * list this collection (migration 1750000030), so it never reaches a badge client.
+ * The badge-tier fields on a cardholder record.
+ *
+ * There is no separate login record any more: a cardholder who may sign in is one with
+ * `badge_login` set. So these are fields on the same row the Cardholders pages already
+ * read and write, which is why issuing a badge login needs no bespoke route — it is an
+ * ordinary PATCH the collection rules already govern.
  */
-export interface BadgeUser {
-  id: string
-  email: string
-  cardholder: string
-  kind: BadgeKind
+export interface CardholderBadgeFields {
+  /** May this person sign in to see their badge? The gate behind the AuthRule. */
+  badge_login?: boolean
+  /** Which badge shape. Blank means an ordinary cardholder (see 1750000000). */
+  kind?: BadgeKind | ''
   /** True when the holder knows their password; false = OTP/OAuth only. */
   password_set?: boolean
+  /** PocketBase sets this itself on a first successful OTP sign-in. */
   verified?: boolean
-  created?: string
-  updated?: string
 }
 
-/** POST /api/badge/holders (operator-only) */
-export interface IssueHolderRequest {
-  /** cardholders record id. */
-  cardholder: string
-  /** Optional; defaults server-side to the cardholder's own email. */
-  email?: string
-  /** Optional; empty leaves the login OTP/OAuth-only. */
-  password?: string
-  /** Email the holder where to sign in. Never carries the password. */
-  sendInvite?: boolean
-}
-
-export interface IssueHolderResponse {
-  badgeUserId: string
-  cardholderId: string
+/** POST /api/badge/invite/{cardholderId} (operator + `enroll`) */
+export interface BadgeInviteResponse {
+  /** False when SMTP is unconfigured or the send failed; the login still works. */
+  sent: boolean
   email: string
-  passwordSet: boolean
-  /** False when an existing login was updated rather than a new one created. */
-  created: boolean
-  /** False when SMTP is unconfigured or the send failed; issuing still succeeded. */
-  inviteSent: boolean
-  badgeUrl: string
 }
 
 /** POST /api/badge/visitors (operator-only) */
@@ -132,7 +118,6 @@ export interface MintVisitorRequest {
 
 export interface MintVisitorResponse {
   cardholderId: string
-  badgeUserId: string
   credentialId: string
   email: string
   validFrom: string
@@ -146,6 +131,5 @@ export interface MintVisitorResponse {
 
 /** POST /api/badge/visitors/{id}/revoke (operator-only) */
 export interface RevokeVisitorResponse {
-  badgeUserId: string
   cardholderId: string
 }

@@ -7,7 +7,6 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useFileUrl } from '@/composables/useFileUrl'
 import { policyKey } from '@/utils/policyKey'
 import type { Cardholder, Credential, Role, AccessGroup, Portal } from '@/types/pocketbase'
-import type { BadgeUser } from '@/types/badge'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
@@ -24,9 +23,9 @@ const { confirm } = useConfirm()
 // cardholders.photo is a protected file — its URL needs a session file token.
 const { url: fileUrl } = useFileUrl()
 
-// No capability gate on reading the login: since migration 1750000035 any operator may
-// read badge_users, so the field renders for everyone rather than vanishing for
-// operators without `enroll` — a blank space cannot say "not allowed to look".
+// No capability gate on reading the badge login: it is a field on this very record, so
+// any operator who can see the cardholder can see it. That is deliberate — a blank space
+// cannot say "not allowed to look".
 const recordId = route.params.id as string
 const record = ref<Cardholder | null>(null)
 const credentials = ref<Credential[]>([])
@@ -62,36 +61,24 @@ const effectiveAccess = computed<EffectivePortal[]>(() => {
 const credentialSearch = (c: Credential) => [c.value, c.label, c.type].filter(Boolean).join(' ')
 const effectiveSearch = (ea: EffectivePortal) => [ea.portal.code, ea.portal.name, ...ea.groups].filter(Boolean).join(' ')
 
-// --- badge login (badge_users) ---
+// --- badge login ---
 //
-// A badge login is 1:1 with a cardholder, so it is shown here as a PROPERTY of the
-// person — one read-only field — and edited on the cardholder form like every other
-// field on this page. It used to be a card of its own with an inline issue/reset form,
-// which made a one-line boolean look like a related entity and put a write surface on a
-// read-only page.
+// A field on this record, not a related entity: `cardholders` is itself the badge tier's
+// auth collection, so "has a badge login" is `badge_login` on the row already loaded
+// above. Shown here read-only and edited on the cardholder form like every other field.
 //
-// It is not access: their credentials work whether or not one exists. See
+// It is not access: their credentials work whether or not they can sign in. See
 // docs/operators.md.
-const badge = ref<BadgeUser | null>(null)
-
-async function loadBadge() {
-  try {
-    badge.value = await pb
-      .collection('badge_users')
-      .getFirstListItem<BadgeUser>(`cardholder = "${recordId}"`)
-  } catch {
-    badge.value = null // absence is the normal case, not an error
-  }
-}
+const hasBadgeLogin = computed(() => !!record.value?.badge_login)
 
 /**
- * The sign-in methods actually available on this login, in the order they are offered.
- * `password_set` is what distinguishes a real password from the throwaway PocketBase
- * requires on every auth record.
+ * The sign-in methods actually available, in the order they are offered. `password_set`
+ * is what distinguishes a password the holder knows from the random one every record
+ * carries because PocketBase requires a non-blank password on an auth record.
  */
 const badgeMethods = computed<string[]>(() => {
-  if (!badge.value) return []
-  return badge.value.password_set ? ['Password', 'Emailed code'] : ['Emailed code']
+  if (!hasBadgeLogin.value) return []
+  return record.value?.password_set ? ['Password', 'Emailed code'] : ['Emailed code']
 })
 
 /**
@@ -101,7 +88,7 @@ const badgeMethods = computed<string[]>(() => {
  * operator to notice that "Credentials 0" and "Effective access 3" contradict a working
  * badge.
  */
-const badgeHasNoCredential = computed(() => !!badge.value && credentials.value.length === 0)
+const badgeHasNoCredential = computed(() => hasBadgeLogin.value && credentials.value.length === 0)
 
 async function load() {
   loading.value = true
@@ -114,7 +101,6 @@ async function load() {
     ])
     record.value = c
     credentials.value = creds
-    await loadBadge()
   } catch (err: any) {
     toast.error(err?.message || 'Failed to load cardholder')
     router.push('/cardholders')
@@ -128,12 +114,14 @@ async function handleDelete() {
   const confirmed = await confirm({
     title: 'Delete Cardholder',
     message: `Delete cardholder "${title.value}"?`,
-    // Accurate on both counts: a credential is a REQUIRED reference, so PocketBase
-    // refuses the delete outright while any exist, and the badge login cascades away
-    // with the person (migration 1750000035).
+    // Their credentials go with them (migration 1750000036 makes credentials.user
+    // cascade), which is what an operator means by "delete this person" — a credential
+    // outliving its holder is a key that opens doors and resolves to nobody. Their sign-in
+    // goes too, because it is the same record. Say the card count, since that is the part
+    // that surprises.
     details: credentials.value.length
-      ? 'Delete or reassign their credentials first — a credential cannot be left without a holder.'
-      : 'Their badge login is removed with them. This cannot be undone.',
+      ? `Their ${credentials.value.length} credential${credentials.value.length === 1 ? '' : 's'} will be deleted with them and will stop opening doors. This cannot be undone.`
+      : 'This cannot be undone.',
     confirmText: 'Delete',
     variant: 'danger',
   })
@@ -200,10 +188,10 @@ onMounted(load)
             {{ record.status || 'active' }}
           </SoftBadge>
         </DataField>
-        <!-- 1:1 with this cardholder, so it reads as a field. Edited on the form. -->
+        <!-- A field on this record, not a related entity. Edited on the form. -->
         <DataField label="Badge login">
-          <span v-if="badge" class="flex flex-wrap items-center gap-1">
-            <span class="truncate">{{ badge.email }}</span>
+          <span v-if="hasBadgeLogin" class="flex flex-wrap items-center gap-1">
+            <span class="truncate">{{ record.email }}</span>
             <SoftBadge v-for="m in badgeMethods" :key="m" :tone="m === 'Password' ? 'success' : 'neutral'">
               {{ m }}
             </SoftBadge>

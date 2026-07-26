@@ -32,9 +32,12 @@ const sections: NavSectionCap[] = [
   {
     title: 'People & Access',
     items: [
+      // Three peers, not a parent with two children. Cardholders and Visitors are the
+      // same collection split by `kind`, and Credentials is what actually opens a door —
+      // indenting either under Cardholders suggested a containment that does not exist.
       { label: 'Cardholders', icon: '🪪', path: '/cardholders' },
-      { label: 'Credentials', icon: '🎫', path: '/credentials', child: true },
-      { label: 'Visitors', icon: '👋', path: '/visitors', child: true },
+      { label: 'Visitors', icon: '👋', path: '/visitors' },
+      { label: 'Credentials', icon: '🎫', path: '/credentials' },
       { label: 'Roles', icon: '🏷️', path: '/roles' },
       { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
     ],

@@ -176,7 +176,7 @@ never emailed — only the raise. There is no `notify.*` config block and no
 > **The badge tier has no config either.** The badge routes
 > ([`internal/badgeapi`](../internal/badgeapi)) and the visitor-credential sweep
 > ([`internal/badgesweep`](../internal/badgesweep)) are **always started** and need no
-> settings — they are inert until an operator creates a `badge_users` record, and
+> settings — they are inert until an operator ticks **Badge login** on a cardholder, and
 > remote unlock additionally needs a door to opt in via `allow_remote_unlock`
 > (default off). What *is* configurable lives in PocketBase settings rather than
 > here: SMTP, OAuth2 providers, and the rate limits below.

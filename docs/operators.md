@@ -126,11 +126,15 @@ so they call `authz.RequireCapability` per handler:
 | `POST /api/areas/{id}/arm` · `/disarm` · `/arm-clear` | `command` | set/clear an area's durable `arm_override` |
 | `GET /api/models` | any operator | enum/options metadata for the UI |
 | `POST /api/simulate` | any operator | access simulator — a decision oracle; operator-only |
-| `POST /api/badge/visitors` | `enroll` | mint a visitor: cardholder + time-bound credential + badge login |
-| `POST /api/badge/visitors/{id}/revoke` | `enroll` | end a visit: revoke the pass, keep the login |
-| `POST /api/badge/holders` | `enroll` | issue (or re-issue) a **staff** badge login for an existing cardholder |
+| `POST /api/badge/visitors` | `enroll` | mint a visitor: cardholder + time-bound credential, in one transaction |
+| `POST /api/badge/visitors/{id}/revoke` | `enroll` | end a visit: revoke the pass, keep the person |
+| `POST /api/badge/invite/{id}` | `enroll` | email a badge holder where to sign in (never the password) |
 
-The badge tier has three routes of its own, gated by the **`badge_users`** collection
+There is deliberately **no** route for "give this cardholder a badge login": it is a
+field on the cardholder (`badge_login`), so it is an ordinary record update the
+collection rules already govern.
+
+The badge tier has three routes of its own, gated by the **`cardholders`** collection
 rather than by capability — see [Non-operator auth tiers](#non-operator-auth-tiers):
 
 | Route | Who | Purpose |
@@ -179,14 +183,30 @@ shows as "Custom"):
 
 ## Non-operator auth tiers
 
-stone-access has more than one auth collection. `users` is the **operator** tier
-this document describes; `_superusers` is the break-glass admin; `badge_users`
-(migration [`1750000030`](../pbmigrations/1750000030_badge_users.go)) is the
-**badge tier** — cardholders and visitors who sign in to view their own badge and,
-where permitted, remotely unlock a door. A badge record is *not* an operator: it
-holds no `permissions` field and must never read the policy graph.
+stone-access has more than one auth collection. `users` is the **operator** tier this
+document describes; `_superusers` is the break-glass admin; and **`cardholders`** —
+the collection holding the people the PACS is about — is itself the **badge tier**.
+A cardholder with `badge_login` set can sign in to view their own badge and, where
+permitted, remotely unlock a door. A cardholder is *not* an operator: the record holds no
+`permissions` field and must never read the policy graph.
 
-Keeping those tiers apart takes two deliberate choices, both easy to get wrong:
+That the badge tier and a policy-graph node are the **same collection** is what makes the
+rules below load-bearing rather than merely tidy. One row is simultaneously the thing a
+holder authenticates as and the entry point to the access graph
+(cardholder → roles → groups → portals), so a rule that admits a badge token to the wrong
+verb is a self-service grant of doors.
+
+> **Why one collection and not two.** The badge tier began as a separate `badge_users`
+> collection with a 1:1 relation back to `cardholders`. Every complicated part of it was
+> the relation: a unique index so one person could not hold two logins, a cascade delete
+> so a deleted person left no orphan login that authenticates and resolves nobody, a
+> field guard so a holder could not repoint the relation at someone else and inherit
+> their doors, and a delete hook so a visitor's two halves died together. None of those
+> describe a rule about badges — they describe the join. Collapsing the records deleted
+> all four. See [`internal/badgeapi`](../internal/badgeapi/badgeapi.go)'s package doc for
+> what it cost.
+
+Keeping the two tiers apart takes three deliberate choices, all easy to get wrong:
 
 1. **Collection read rules name the collection, not "any auth."** The floor is
    `@request.auth.collectionName = "users"`, not `@request.auth.id != ""`. The
@@ -202,35 +222,29 @@ Keeping those tiers apart takes two deliberate choices, both easy to get wrong:
    `apis.RequireAuth("users")` *alone* is also wrong — PocketBase's check is plain
    collection-name membership with no superuser exemption, so it would lock out the
    break-glass account. `RequireOperatorAuth` names both.
-3. **A self-scoped update rule still needs a field guard.** `badge_users` lets a holder
-   PATCH their own record (`id = @request.auth.id || …`), which is reasonable — but a
-   collection rule selects which **records** may be written and says nothing about which
-   **fields**, and there is no rule syntax that expresses "this record, but not these
-   columns". Without a further guard, "may edit my own record" means "may edit every
-   non-system field on it", and three of them are load-bearing:
+3. **Reads are self-scoped; writes exclude the badge tier entirely.** `cardholders` is
+   read by `id = @request.auth.id || @request.auth.collectionName = "users"` — an operator
+   sees everyone, a holder sees exactly their own row — while create/update/delete name
+   only the operator collection plus a capability, with **no self clause at all**.
 
-   | Field | What editing it would buy |
-   |---|---|
-   | `cardholder` | **whose** credentials `/api/badge/me` and `/api/badge/unlock` resolve — repoint it at anyone and inherit every door they can open |
-   | `kind` | whether the QR carries the credential value (`visitor`) or an inert identifier — flipping it turns a lanyard badge into a real key |
-   | `password_set` | whether a password change must prove the current one — clearing it lets a stolen session lock the real holder out |
+   That asymmetry is the whole boundary, and it is why there is no field-level guard on
+   this collection. A PocketBase rule selects which **records** may be written and says
+   nothing about which **fields**, so a self-write clause here would mean "may edit every
+   non-system field on my own row", including `roles` (a grant at the reader), `status`
+   (un-suspending yourself), and `kind` (whether the QR carries a working credential).
+   Rather than guard each one, the tier simply cannot write its own record;
+   `POST /api/badge/password` is how a holder changes the one thing they may, and it is an
+   `app.Save` that bypasses collection rules by design.
 
-   [`badgeapi.RegisterGuards`](../internal/badgeapi/guards.go) rejects those changes from
-   anyone but a superuser or an `enroll` operator, mirroring the privilege-escalation
-   guard below. It binds a `*Request` hook, so it constrains API traffic only — accessd's
-   own `app.Save` writes (the issue and password routes, the visitor mint) set these
-   fields deliberately. It is registered at startup rather than in `OnServe`, because the
-   collection API is served whether or not the badge routes ever came up — as is the
-   visitor-pass revocation hook bound alongside it, for the same reason.
+   The **self-read** clause is not cosmetic. PocketBase checks a **protected file**
+   download against the record's own `ViewRule`, and `cardholders.photo` is protected — so
+   without it a holder's own badge renders with no face on it. It also means the operator
+   UI can show the badge-login field to *any* operator and gate only the editing, instead
+   of hiding it behind `enroll` as a blank space that cannot say "not allowed to look".
 
-Reading `badge_users` is on the ordinary operator floor: any operator may see whether a
-person has a login, and `enroll` is what it takes to change one. A badge holder still
-sees only their own row — the rule is `id = @request.auth.id || @request.auth.collectionName = "users"`,
-and the second clause can never match a badge token. Nothing in the row is secret (email,
-`kind`, `password_set`, the cardholder id; the password hash and token key are system
-fields the API never serialises), and gating *read* only bought a UI that had to hide the
-field from operators without `enroll` — a blank space that cannot say "not allowed to
-look".
+Nothing in a cardholder row is secret to an operator (the password hash and token key are
+system fields the API never serialises), so `enroll` gates *changing* a login, never
+seeing one.
 
 Badge-tier routes live in `internal/badgeapi` and are authorized by
 `policy.Decide` (what that person's own credential opens, right now) rather than by
@@ -244,38 +258,50 @@ different places:
 | | **Visitor** | **Staff holder** |
 |---|---|---|
 | Where | **Visitors → New Visitor Pass** | **Cardholder form → Badge login** (a checkbox) |
-| Route | `POST /api/badge/visitors` | `POST /api/badge/holders` |
-| Creates | cardholder + time-bound credential + login, in one transaction | *only* the login — the cardholder and credential already exist |
+| Route | `POST /api/badge/visitors` | none — it is a field update |
+| Creates | the person + a time-bound credential, in one transaction | nothing; the person already exists |
 | Access from | a curated `visitor_preset` role, chosen at mint | the roles already on that cardholder |
 | QR encodes | the credential value (works at a scanner) | the cardholder id (opens nothing) |
 | Usual sign-in | emailed one-time code | password |
-| Ending it | **Revoke** (pass dies, login kept) or **Delete** (both) | untick the checkbox — the credential is untouched |
+| Ending it | **Revoke** (pass dies, person kept) or **Delete** (both) | untick the checkbox — the credential is untouched |
 
-A staff badge is deliberately *not* created by enrollment: most cardholders never need
-a login, and issuing one to everybody would put a phone-openable surface on people who
-only ever tap a card. It is one checkbox on the person's own form, because a login is
-1:1 with a cardholder — a property of that person rather than a related entity.
+A staff badge login is deliberately *not* granted by enrollment: most cardholders never
+need one, and giving everybody a login would put a phone-openable surface on people who
+only ever tap a card. It is one checkbox on the person's own form, because it is one
+**field** on that person — `badge_login`, which backs the collection's auth rule — rather
+than a related entity with a lifecycle of its own.
+
+Every cardholder is an auth record, including the majority who never sign in. Being an
+auth record is not being an account: a record without `badge_login` fails the collection's
+auth rule, and carries a random password nobody has ever seen (PocketBase requires a
+non-blank one; [`badgeapi.RegisterGuards`](../internal/badgeapi/guards.go) fills it). A
+cardholder with **no email** — a contractor, a hourly worker, a "Loading Dock Spare" card —
+cannot sign in by any method at all, since email is the sole identity field and the only
+route an emailed code can arrive by.
 
 **For a staff holder, a badge login is not access.** It controls who may *see* a badge
 and use remote unlock. Their credentials work at every door they are entitled to whether
 or not a login exists, and removing a login revokes nothing. To actually revoke access,
 set `credentials.status = revoked` (or suspend the cardholder) — that is what propagates
-through the mirror to the edge. Issuing and removing both need `enroll`: giving a login
-and taking it back are the same act ([`1750000035`](../pbmigrations/1750000035_badge_login_lifecycle.go)).
+through the mirror to the edge. Giving a login and taking it back are the same act, so
+both are `enroll`.
 
-**A visitor pass is the exception, and it is not an oversight.** A visitor's login and
-credential are minted together, in one transaction, for one visit — they are two records
-holding one thing. So deleting a visitor login **revokes their credential**, enforced by
-a hook in [`internal/badgeapi`](../internal/badgeapi/visitors.go) rather than by the UI,
-so it holds from the Visitors page, the PocketBase admin UI, and a cardholder delete
-cascading into the login alike. Ending a visit early has its own verb — **Revoke** —
-which kills the pass and keeps the login, so the visit stays on the record and a repeat
-visitor is recognised rather than duplicated.
+**Ending a visit is Revoke, not Delete.** Revoke kills the pass and keeps the person, so
+the visit stays on the record and a returning visitor is recognised rather than
+duplicated. Delete removes the person *and their credentials* — `credentials.user`
+cascades ([`1750000036`](../pbmigrations/1750000036_credential_cascade.go)), because a
+credential outliving its holder is a key that opens doors and resolves to nobody. The
+cascade runs through the ordinary delete path, so the KV mirror prunes those
+`cred.{value}` keys; it cannot leave a working key at the edge.
 
-> Before this, deleting a visitor login left the credential `active` *and* removed it
-> from [`internal/badgesweep`](../internal/badgesweep)'s view, since the sweep finds
-> credentials to expire by enumerating visitor logins. The one action an operator would
-> take to end a visit both failed to end it and disabled the job that eventually would.
+> Two bugs the collapse removed. While the login was a separate record, deleting a
+> visitor login left the credential `active` **and** removed it from
+> [`internal/badgesweep`](../internal/badgesweep)'s view, since the sweep finds expired
+> passes by enumerating visitors — the one action an operator would take to end a visit
+> both failed to end it and disabled the job that eventually would. Separately, deleting
+> a *cardholder* always failed outright: `credentials.user` is a required relation and
+> PocketBase refuses to delete its target, so the delete button did not work for anyone
+> who had ever been issued a card.
 
 **A login with no credential** signs in and honestly reports that no pass has been
 issued. Roles and effective access are not enough on their own; the cardholder page says
@@ -283,9 +309,8 @@ so where the fix is one click away.
 
 ### Sign-in methods
 
-All three are enabled on `badge_users`
-(migrations [`1750000030`](../pbmigrations/1750000030_badge_users.go) and
-[`1750000034`](../pbmigrations/1750000034_badge_password_auth.go)):
+All three are enabled on `cardholders`
+([`1750000000`](../pbmigrations/1750000000_collections.go)):
 
 | Method | For | Needs SMTP |
 |---|---|---|
@@ -296,6 +321,25 @@ All three are enabled on `badge_users`
 > **Without SMTP, a password is the only way in.** OTP and the forgot-password link are
 > both emails. On an install with no mail server, set an initial password when you issue
 > the login and hand it over in person — otherwise the badge tier is inert.
+
+Both tiers share **one sign-in page** at `/login`, with an explicit two-way selector
+(*My badge* / *Operator*) that is deep-linkable as `?as=badge` — what the invite mail
+links to — and remembered per browser, so a lobby tablet and an operator's laptop each
+land on the right form. The choice is explicit rather than guessed from the address
+because one person can legitimately hold an account in **both** tiers: the security guard
+who badges in and also runs the console. Guessing would sign them into the wrong
+privilege domain, split their failed attempts across two rate-limit buckets, and leak
+which tier an address belongs to. It is two entries and not three — a visitor and a staff
+cardholder are the same collection, so a visitor never has to know they are a "visitor".
+
+> **A subtlety worth knowing about, since PocketBase does it silently.** On a *first*
+> successful one-time code, PocketBase marks the record verified and — unless MFA is on —
+> **randomises its password**, as a defence against account pre-hijacking on an open-signup
+> collection. That defence does not apply here (only an `enroll` operator can create a
+> cardholder, so there is no attacker-authored record to disarm) and it destroyed exactly
+> the operator-set password the SMTP-less install depends on. `bindOTPPasswordPreservation`
+> in [`internal/badgeapi`](../internal/badgeapi/guards.go) marks such a record verified
+> before that branch runs, which skips it.
 
 An initial password is **optional and never emailed**: mail is stored indefinitely,
 forwarded, and synced to devices, so a door-opening password sent by mail would outlive
