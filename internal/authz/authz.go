@@ -21,9 +21,9 @@ import (
 //
 //   - apis.RequireAuth() with NO argument admits a record from ANY auth
 //     collection. That was harmless while `users` was the only one, but it widens
-//     silently the moment a second auth tier exists (badge_users, migration
-//     1750000030). /api/simulate is the sharp case — a decision oracle over the
-//     entire policy graph.
+//     silently the moment a second auth tier exists — and one does: `cardholders`
+//     is itself an auth collection (the badge tier). /api/simulate is the sharp
+//     case — a decision oracle over the entire policy graph.
 //   - apis.RequireAuth("users") ALONE is also wrong: PocketBase's requireAuth is a
 //     plain collection-name membership test with no superuser exemption, so it
 //     would lock out the break-glass account that RequireCapability deliberately

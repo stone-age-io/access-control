@@ -95,7 +95,7 @@ async function load() {
   try {
     const [c, creds] = await Promise.all([
       pb.collection('cardholders').getOne<Cardholder>(recordId, {
-        expand: 'roles,roles.access_groups,roles.access_groups.portals',
+        expand: 'roles,roles.access_groups,roles.access_groups.portals,operator',
       }),
       pb.collection('credentials').getFullList<Credential>({ filter: `user = "${recordId}"`, sort: 'value' }),
     ])
@@ -197,6 +197,18 @@ onMounted(load)
             </SoftBadge>
           </span>
           <span v-else class="opacity-40">None</span>
+        </DataField>
+        <!-- The same human's console account, when there is one. A pointer only: it lets
+             them view this badge from their profile menu and grants nothing. -->
+        <DataField label="Operator account">
+          <router-link
+            v-if="record.expand?.operator"
+            :to="`/operators/${record.expand.operator.id}`"
+            class="link link-primary truncate"
+          >
+            {{ record.expand.operator.email }}
+          </router-link>
+          <span v-else class="opacity-40">Not an operator</span>
         </DataField>
       </div>
 

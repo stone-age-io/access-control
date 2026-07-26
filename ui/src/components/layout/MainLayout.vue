@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import AppSidebar, { type NavItem, type NavSection } from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
 import HelpPanel from '@/components/ui/HelpPanel.vue'
+import OperatorBadgeModal from '@/components/common/OperatorBadgeModal.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -78,10 +79,25 @@ const visibleSections = computed<NavSection[]>(() =>
 // the building — it sat under Facility, where it read as a thing you configure. Door
 // placards moved the other way, to a print action on the Portals list, since they are
 // generated FROM portals. Gated on `command`, because scanning issues a door grant.
+// "My badge" is ungated: reading one's own badge needs no capability, and whether there
+// IS one is decided by the server (a cardholder with this operator in its `operator`
+// field). Shown to everyone rather than probed for at load — the modal explains the
+// unlinked case, which costs nothing until someone opens it.
 const accountItems = computed<NavItemCap[]>(() =>
-  ([{ label: 'Scan to Unlock', icon: '📷', path: '/portals/scan', capability: 'command' }] as NavItemCap[])
-    .filter((i) => !i.capability || authStore.can(i.capability)),
+  (
+    [
+      { label: 'My badge', icon: '🪪', path: '', action: 'my-badge' },
+      { label: 'Scan to Unlock', icon: '📷', path: '/portals/scan', capability: 'command' },
+    ] as NavItemCap[]
+  ).filter((i) => !i.capability || authStore.can(i.capability)),
 )
+
+// The badge modal, opened from the account dropdown. Lives here rather than in the
+// sidebar because the sidebar's job is navigation, not owning a dialog.
+const badgeOpen = ref(false)
+function onAccountAction(name: string) {
+  if (name === 'my-badge') badgeOpen.value = true
+}
 </script>
 
 <template>
@@ -101,10 +117,13 @@ const accountItems = computed<NavItemCap[]>(() =>
     <!-- Sidebar -->
     <div class="drawer-side z-40">
       <label for="sidebar-drawer" class="drawer-overlay"></label>
-      <AppSidebar :sections="visibleSections" :account-items="accountItems" />
+      <AppSidebar :sections="visibleSections" :account-items="accountItems" @action="onAccountAction" />
     </div>
 
     <!-- Contextual help: slide-over panel (opened from the header icon on mobile, the inline button on desktop) -->
     <HelpPanel />
+
+    <!-- This operator's own badge, if a cardholder record points at their account. -->
+    <OperatorBadgeModal v-model:open="badgeOpen" />
   </div>
 </template>

@@ -12,7 +12,13 @@ import { useBrandingStore } from '@/stores/branding'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import { presetLabel } from '@/utils/capabilities'
 
-export interface NavItem { label: string; icon: string; path: string; child?: boolean }
+/**
+ * A nav entry. `path` navigates; `action` instead emits an `action` event, for account
+ * entries that open something in place (the badge modal) rather than going somewhere.
+ * Exactly one of the two is meaningful — an entry with an `action` needs no route, and
+ * giving it one would make the click ambiguous.
+ */
+export interface NavItem { label: string; icon: string; path: string; child?: boolean; action?: string }
 export interface NavSection { title?: string; items: NavItem[] }
 
 const props = withDefaults(
@@ -29,6 +35,15 @@ const props = withDefaults(
   }>(),
   { home: '/', accountItems: () => [] },
 )
+
+const emit = defineEmits<{ action: [string] }>()
+
+/** An account entry that opens something in place. Closes the menu first, as a route would. */
+function runAction(name: string) {
+  closeDropdown()
+  closeDrawer()
+  emit('action', name)
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -184,8 +199,11 @@ async function handleLogout() {
           <span class="text-base-content/40 text-lg leading-none pr-1">⋮</span>
         </div>
         <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box shadow-lg border border-base-300 w-56 p-1 mb-1 z-50">
-          <li v-for="item in accountItems" :key="item.path">
-            <router-link :to="item.path" @click="closeDropdown(); closeDrawer()">
+          <li v-for="item in accountItems" :key="item.action || item.path">
+            <a v-if="item.action" @click="runAction(item.action)">
+              <span>{{ item.icon }}</span><span>{{ item.label }}</span>
+            </a>
+            <router-link v-else :to="item.path" @click="closeDropdown(); closeDrawer()">
               <span>{{ item.icon }}</span><span>{{ item.label }}</span>
             </router-link>
           </li>
@@ -197,17 +215,27 @@ async function handleLogout() {
       <!-- Compact: avatar + direct logout (the w-56 menu would overflow the rail).
            Account items become icon buttons rather than disappearing at this width. -->
       <template v-else>
-        <router-link
-          v-for="item in accountItems"
-          :key="item.path"
-          :to="item.path"
-          class="flex items-center justify-center w-full p-2 rounded-lg hover:bg-base-200 transition-all tooltip tooltip-right"
-          :data-tip="item.label"
-          :aria-label="item.label"
-          @click="closeDrawer"
-        >
-          <span class="text-lg">{{ item.icon }}</span>
-        </router-link>
+        <template v-for="item in accountItems" :key="item.action || item.path">
+          <button
+            v-if="item.action"
+            class="flex items-center justify-center w-full p-2 rounded-lg hover:bg-base-200 transition-all tooltip tooltip-right"
+            :data-tip="item.label"
+            :aria-label="item.label"
+            @click="runAction(item.action)"
+          >
+            <span class="text-lg">{{ item.icon }}</span>
+          </button>
+          <router-link
+            v-else
+            :to="item.path"
+            class="flex items-center justify-center w-full p-2 rounded-lg hover:bg-base-200 transition-all tooltip tooltip-right"
+            :data-tip="item.label"
+            :aria-label="item.label"
+            @click="closeDrawer"
+          >
+            <span class="text-lg">{{ item.icon }}</span>
+          </router-link>
+        </template>
         <div class="flex items-center justify-center w-full p-2 rounded-lg bg-base-200/50">
           <div class="avatar placeholder">
             <div class="bg-neutral text-neutral-content rounded-full w-8">

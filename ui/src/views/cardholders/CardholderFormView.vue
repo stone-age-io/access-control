@@ -7,7 +7,7 @@ import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import { useFileUrl } from '@/composables/useFileUrl'
 import { withCardholderPassword } from '@/utils/cardholderPassword'
 import { useAuthStore } from '@/stores/auth'
-import type { Cardholder, CardholderStatus, Role } from '@/types/pocketbase'
+import type { Cardholder, CardholderStatus, Role, User } from '@/types/pocketbase'
 import type { BadgeInviteResponse, BadgeKind } from '@/types/badge'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
@@ -37,9 +37,20 @@ const form = ref({
   // visitor from this form would silently demote them to an ordinary cardholder.
   badge_login: false,
   kind: '' as BadgeKind | '',
+  // The operator account of the same human, if any (1750000040). A pointer, not a
+  // merge: the two records stay two authorities. It lives on THIS side because the
+  // `users` collection is self-writable, so a field there could be repointed by its
+  // own owner to inherit someone else's badge.
+  operator: '',
 })
 
 const roles = ref<Role[]>([])
+const operators = ref<User[]>([])
+/** Operator ids already claimed by some OTHER cardholder (one account, one badge). */
+const linkedOperators = ref<Set<string>>(new Set())
+const operatorTaken = computed(
+  () => !!form.value.operator && linkedOperators.value.has(form.value.operator),
+)
 const loading = ref(false)
 const loadingRecord = ref(false)
 const errors = ref<Record<string, string>>({})
@@ -173,9 +184,23 @@ const kvKey = computed(() => (recordId ? `user.${recordId}` : ''))
 
 async function loadOptions() {
   try {
-    roles.value = await pb.collection('roles').getFullList<Role>({ sort: 'code' })
+    const [rs, ops, linked] = await Promise.all([
+      pb.collection('roles').getFullList<Role>({ sort: 'code' }),
+      pb.collection('users').getFullList<User>({ sort: 'email' }),
+      // Which operators are already spoken for, so the form can say so before the
+      // unique index refuses the save. Not a permission check — just a better message.
+      pb.collection('cardholders').getFullList<Cardholder>({
+        filter: 'operator != ""',
+        fields: 'id,operator',
+      }),
+    ])
+    roles.value = rs
+    operators.value = ops
+    linkedOperators.value = new Set(
+      linked.filter((c) => c.id !== recordId).map((c) => c.operator || ''),
+    )
   } catch (err: any) {
-    toast.error(err?.message || 'Failed to load roles')
+    toast.error(err?.message || 'Failed to load options')
   }
 }
 
@@ -193,6 +218,7 @@ async function loadRecord() {
       roles: [...(c.roles || [])],
       badge_login: !!c.badge_login,
       kind: (c.kind || '') as BadgeKind | '',
+      operator: c.operator || '',
     }
     hasPassword.value = !!c.password_set
     photoFile.value = null
@@ -235,6 +261,7 @@ async function handleSubmit() {
     if (canEnroll.value) {
       data.badge_login = form.value.badge_login
       data.kind = form.value.kind
+      data.operator = form.value.operator
       if (form.value.badge_login && badgePassword.value) {
         // PocketBase accepts a password on an auth record from anyone matching the
         // collection's ManageRule (`enroll`), with no old-password proof — which is
@@ -419,6 +446,25 @@ onMounted(async () => {
             Saving will stop them signing in. Their credentials keep working — to take away
             access at the door, revoke the credential.
           </p>
+
+          <!-- The two tiers stay two records; this only says they are the same human, so
+               an operator can see their own badge from the console without a second
+               sign-in. It grants nothing in either direction. -->
+          <FormField
+            label="Operator account"
+            hint="If this person also signs in to the console, link their operator account here. It lets them view this badge from their profile menu. It grants no console access and no door access — both are decided where they already are."
+          >
+            <select v-model="form.operator" class="select select-bordered">
+              <option value="">Not an operator</option>
+              <option v-for="o in operators" :key="o.id" :value="o.id">
+                {{ o.email }}{{ o.name ? ` — ${o.name}` : '' }}
+              </option>
+            </select>
+            <p v-if="operatorTaken" class="text-xs text-warning mt-1">
+              That operator is already linked to another cardholder. One account, one badge —
+              saving will be refused.
+            </p>
+          </FormField>
         </div>
       </BaseCard>
 
