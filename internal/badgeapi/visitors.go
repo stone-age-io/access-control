@@ -16,12 +16,32 @@ import (
 	"github.com/stone-age-io/access-control/internal/authz"
 )
 
-// This file holds the one OPERATOR route in this package: minting a visitor.
+// This file holds the OPERATOR routes in this package: minting a visitor and ending
+// their visit.
 //
-// It lives here rather than in internal/commandapi because everything it creates is
-// badge-tier (a cardholder, a time-bound credential, a `visitor` badge login) and it
-// shares this package's constants. It is gated completely differently from the other
-// two routes — operator collection + `enroll` capability, never a badge token.
+//	POST /api/badge/visitors             mint: cardholder + time-bound credential
+//	POST /api/badge/visitors/{id}/revoke end the visit, keep the record of it
+//
+// They live here rather than in internal/commandapi because everything they touch is
+// badge-tier, and they share this package's constants. Both are gated completely
+// differently from the holder routes — operator collection + `enroll` capability,
+// never a badge token.
+//
+// # Revoke is the end-of-visit verb, not delete
+//
+// A visitor is a cardholder with `kind = visitor` and a credential whose window closes.
+// Ending the visit means revoking the credential and KEEPING the person: it preserves
+// the record that they were here, it lets the mint route recognise and refresh them as
+// a returning visitor rather than duplicating them, and it leaves them a badge page
+// that honestly says the pass is over instead of a dead sign-in.
+//
+// Deleting the person is a separate, later, retention decision — and it now works
+// properly, because `credentials.user` cascades (1750000036), so removing a visitor
+// removes their card with them. Before the collapse this was the tangled part of the
+// design: the login was a second record, so "delete the visitor" deleted the login and
+// left the credential live and — worse — invisible to internal/badgesweep, which finds
+// expired passes by enumerating visitors. A delete hook existed purely to revoke first.
+// With one record there are no halves to keep in step, so the hook is gone.
 //
 // # Why the credential value is generated server-side
 //
@@ -72,7 +92,6 @@ type mintRequest struct {
 
 type mintResponse struct {
 	CardholderID string `json:"cardholderId"`
-	BadgeUserID  string `json:"badgeUserId"`
 	CredentialID string `json:"credentialId"`
 	Email        string `json:"email"`
 	ValidFrom    string `json:"validFrom"`
@@ -85,15 +104,16 @@ type mintResponse struct {
 	// email: the visitor types their address and PocketBase emails them an OTP, so
 	// nothing sensitive lands in a URL, a browser history, or a referrer header.
 	BadgeURL string `json:"badgeUrl"`
-	// Reused is true when this was a repeat visitor: the existing cardholder and
-	// badge login were refreshed and their previous credential revoked, rather than a
-	// duplicate person being created. Surfaced so the UI can say so plainly.
+	// Reused is true when this was a repeat visitor: the existing cardholder was
+	// refreshed and their previous credential revoked, rather than a duplicate person
+	// being created. Surfaced so the UI can say so plainly.
 	Reused bool `json:"reused"`
 }
 
-// findVisitorBadgeByEmail returns the badge login for an address, or nil when there
-// is none. Auth collections carry a unique email index, so there is at most one.
-func (h *handler) findVisitorBadgeByEmail(address string) (*core.Record, error) {
+// findCardholderByEmail returns the cardholder for an address, or nil when there is
+// none. cardholders is an auth collection, so email carries a unique index and there
+// is at most one.
+func (h *handler) findCardholderByEmail(address string) (*core.Record, error) {
 	rec, err := h.app.FindAuthRecordByEmail(BadgeCollection, address)
 	if err != nil {
 		// PocketBase returns an error for "not found"; treat that as absence rather
@@ -123,108 +143,49 @@ func revokeCredentials(tx core.App, cardholderID string) error {
 	return nil
 }
 
-// --- ending a visit ---
-//
-// A visitor pass is ONE thing wearing two records: a `visitor` login and the credential
-// minted with it, in the same transaction, for the same visit. That is what makes it
-// different from a staff badge, where the login and the card have independent
-// lifecycles on purpose (removing someone's phone badge must not lock them out of the
-// building). The two routes below, plus the delete hook, keep the visitor halves
-// together:
-//
-//	POST /api/badge/visitors/{id}/revoke   end the visit, keep the record of it
-//	DELETE /api/badge_users/{id}           remove the person; the hook revokes first
-//
-// Before this, deleting a visitor login left their credential `active` — and worse,
-// invisible to internal/badgesweep, which finds credentials to expire by enumerating
-// visitor LOGINS. So the one action an operator would take to end a visit early both
-// failed to end it and disabled the sweep that would eventually have ended it.
-
-// revokeVisitorPass revokes a visitor's credentials, leaving the login in place.
-// Shared by the route and the delete hook.
-func revokeVisitorPass(app core.App, badge *core.Record) error {
-	cardholderID := badge.GetString("cardholder")
-	if cardholderID == "" {
-		return nil // nothing to revoke; a login with no cardholder opens nothing anyway
-	}
-	return revokeCredentials(app, cardholderID)
-}
+// --- POST /api/badge/visitors/{id}/revoke ---
 
 type revokeVisitorResponse struct {
-	BadgeUserID  string `json:"badgeUserId"`
 	CardholderID string `json:"cardholderId"`
 }
 
-// revokeVisitor ends a visit early: it revokes the credential and KEEPS the login.
-//
-// Keeping the login is the point of having this alongside delete. It preserves the
-// record that the person was here, it lets badgeapi's mint route recognise and refresh
-// them as a returning visitor rather than duplicating them, and it leaves them a badge
-// page that honestly says the pass is no longer valid instead of a dead sign-in.
+// revokeVisitor ends a visit early: it revokes the credentials and KEEPS the person.
+// See the file header for why that is the end-of-visit verb rather than delete.
 func (h *handler) revokeVisitor(e *core.RequestEvent) error {
 	if err := authz.RequireCapability(e, authz.CapEnroll); err != nil {
 		return err
 	}
 
-	badge, err := h.app.FindRecordById(BadgeCollection, e.Request.PathValue("id"))
+	ch, err := h.app.FindRecordById(BadgeCollection, e.Request.PathValue("id"))
 	if err != nil {
-		return e.NotFoundError("badge login not found", err)
+		return e.NotFoundError("cardholder not found", err)
 	}
-	// Deliberately visitor-only. Revoking a staff holder's credentials from a badge
-	// route would make "end this login" mean "lock this person out of the building",
-	// which is the confusion the two tiers exist to keep apart. Staff revocation stays
-	// on the credential, where an operator can see what they are turning off.
-	if badge.GetString("kind") != KindVisitor {
+	// Deliberately visitor-only. Revoking an enrolled cardholder's credentials from a
+	// visitor route would make one button mean "lock this person out of the building",
+	// which is the confusion the two kinds exist to keep apart. Staff revocation stays
+	// on the credential, where an operator can see exactly what they are turning off.
+	if ch.GetString("kind") != KindVisitor {
 		return e.BadRequestError(
 			"only a visitor pass can be revoked this way; revoke a staff credential on the credential itself", nil)
 	}
 
-	if err := revokeVisitorPass(h.app, badge); err != nil {
+	if err := revokeCredentials(h.app, ch.Id); err != nil {
 		return e.InternalServerError("failed to revoke the visitor pass", err)
 	}
 
-	resp := revokeVisitorResponse{BadgeUserID: badge.Id, CardholderID: badge.GetString("cardholder")}
-	h.writeBadgeAudit(e, "update", badge.Id, map[string]any{
-		"action":     "revoke_visitor_pass",
-		"cardholder": resp.CardholderID,
-		"email":      badge.Email(),
+	h.writeBadgeAudit(e, "update", ch.Id, map[string]any{
+		"action": "revoke_visitor_pass",
+		"email":  ch.Email(),
 	})
-	h.log.Info("visitor pass revoked", "badgeUser", badge.Id, "cardholder", resp.CardholderID)
-	return e.JSON(http.StatusOK, resp)
+	h.log.Info("visitor pass revoked", "cardholder", ch.Id)
+	return e.JSON(http.StatusOK, revokeVisitorResponse{CardholderID: ch.Id})
 }
 
-// bindVisitorPassRevocation makes "the login is gone" imply "the pass is dead" for
-// visitors, wherever the delete comes from — the visitors page, the PocketBase admin
-// UI, or a cardholder delete cascading into the login.
-//
-// # Ordering, not atomicity
-//
-// The revoke runs BEFORE e.Next(), and a failure aborts the delete. PocketBase opens
-// the delete's transaction inside OnRecordDeleteExecute, i.e. after this hook's
-// pre-Next body, so the two writes are not atomic and pretending otherwise would be
-// wrong. Ordering is enough because the two failure modes are not equal: revoked
-// credential + surviving login is a safe, coherent state an operator can retry from,
-// while a deleted login + live credential is the hole this closes.
-//
-// Registered from RegisterGuards, so — like the field guard — it is bound at startup
-// and holds whether or not the badge routes (and NATS) ever came up. The collection
-// API is served regardless, and it is the collection API doing the deleting.
-func bindVisitorPassRevocation(app core.App) {
-	app.OnRecordDelete(BadgeCollection).BindFunc(func(e *core.RecordEvent) error {
-		if e.Record == nil || e.Record.GetString("kind") != KindVisitor {
-			return e.Next()
-		}
-		if err := revokeVisitorPass(e.App, e.Record); err != nil {
-			return fmt.Errorf(
-				"refusing to delete visitor login %s: could not revoke their pass first: %w", e.Record.Id, err)
-		}
-		return e.Next()
-	})
-}
+// --- POST /api/badge/visitors ---
 
-// mintVisitor creates a cardholder, a time-bound credential, and a `visitor` badge
-// login in ONE transaction — a half-minted visitor (a cardholder with no credential,
-// or a credential with no way to see it) is worse than a clean failure.
+// mintVisitor creates the visitor and their time-bound credential in ONE transaction —
+// a half-minted visitor (a person with no pass, or a pass nobody can see) is worse than
+// a clean failure.
 func (h *handler) mintVisitor(e *core.RequestEvent) error {
 	if err := authz.RequireCapability(e, authz.CapEnroll); err != nil {
 		return err
@@ -289,17 +250,20 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 		return e.InternalServerError("failed to generate a credential", err)
 	}
 
-	// A repeat visitor is the SAME PERSON, and the badge collection has a unique
-	// email index — so reuse rather than trying (and failing) to create a second
-	// login for the same address. Looked up before the transaction so the operator
-	// gets a specific error instead of a constraint violation.
-	existing, err := h.findVisitorBadgeByEmail(req.Email)
+	// A repeat visitor is the SAME PERSON, and cardholders carries a unique email
+	// index — so reuse rather than trying (and failing) to create a second record for
+	// the same address. Looked up before the transaction so the operator gets a
+	// specific error instead of a constraint violation.
+	existing, err := h.findCardholderByEmail(req.Email)
 	if err != nil {
-		return e.InternalServerError("failed to check for an existing badge", err)
+		return e.InternalServerError("failed to check for an existing cardholder", err)
 	}
+	// Refusing to convert a staff cardholder into a visitor is the point: `kind` decides
+	// whether the QR carries the credential VALUE, so flipping an enrolled person to
+	// `visitor` would turn their lanyard badge into a working key.
 	if existing != nil && existing.GetString("kind") != KindVisitor {
 		return e.BadRequestError(
-			"that email already belongs to a non-visitor badge; use enrollment for a cardholder", nil)
+			"that email already belongs to an enrolled cardholder; issue their access through enrollment", nil)
 	}
 
 	var resp mintResponse
@@ -317,21 +281,23 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 			return err
 		}
 
-		// --- cardholder + badge login: reuse for a repeat visitor, else create ---
-		var ch, bu *core.Record
+		// --- the visitor: reuse for a repeat, else create. ONE record. ---
+		//
+		// This is where the collapse shows most plainly. It used to create a
+		// cardholder and then a `badge_users` login pointing back at it, and the
+		// reuse branch had to resolve the relation and could fail on a login whose
+		// cardholder had gone. There is one row now, so there is one branch.
+		var ch *core.Record
 		if existing != nil {
-			bu = existing
-			ch, err = tx.FindRecordById("cardholders", bu.GetString("cardholder"))
-			if err != nil {
-				return fmt.Errorf("existing badge has no cardholder: %w", err)
-			}
+			ch = existing
 			// Refresh the identity and access for THIS visit. The role is replaced,
 			// not added to: a visit grants exactly the preset chosen now.
 			ch.Set("name", req.Name)
 			ch.Set("status", "active")
 			ch.Set("roles", []string{role.Id})
+			ch.Set("badge_login", true)
 			if err := tx.Save(ch); err != nil {
-				return fmt.Errorf("update cardholder: %w", err)
+				return fmt.Errorf("update visitor: %w", err)
 			}
 			// The previous visit's QR must stop working — otherwise a returning
 			// visitor's old code would still be presentable until it aged out.
@@ -345,34 +311,22 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 			}
 			ch = core.NewRecord(cardholders)
 			ch.Set("name", req.Name)
-			ch.Set("email", req.Email)
+			ch.SetEmail(req.Email)
 			ch.Set("status", "active")
 			ch.Set("roles", []string{role.Id})
+			ch.Set("kind", KindVisitor)
+			ch.Set("badge_login", true)
+			// The OTP round-trip proves control of the address, which is the only
+			// identity check a visitor gets. Marking it up front also keeps
+			// PocketBase from randomising the password on that first code (see
+			// bindOTPPasswordPreservation) — moot here, since a visitor is minted
+			// with no password to lose, but it keeps the two paths consistent.
+			ch.SetVerified(true)
+			// No password is set: bindPasswordFill supplies an unguessable random
+			// one and leaves `password_set` false, so a visitor never has to invent
+			// or manage a password for a one-day pass. OTP is their route in.
 			if err := tx.Save(ch); err != nil {
-				return fmt.Errorf("create cardholder: %w", err)
-			}
-
-			badgeUsers, err := tx.FindCollectionByNameOrId(BadgeCollection)
-			if err != nil {
-				return err
-			}
-			bu = core.NewRecord(badgeUsers)
-			bu.SetEmail(req.Email)
-			bu.Set("cardholder", ch.Id)
-			bu.Set("kind", KindVisitor)
-			bu.SetVerified(true) // the OTP round-trip proves control of the address
-			// PocketBase requires a non-blank password even though this collection
-			// has password auth DISABLED (the field validator is independent of the
-			// auth method). It is unusable for sign-in and nobody is ever told it —
-			// random rather than a constant, so it cannot become a de-facto shared
-			// secret if password auth is ever switched back on.
-			throwaway, err := newVisitorCredentialValue()
-			if err != nil {
-				return err
-			}
-			bu.SetPassword(throwaway)
-			if err := tx.Save(bu); err != nil {
-				return fmt.Errorf("create badge login: %w", err)
+				return fmt.Errorf("create visitor: %w", err)
 			}
 		}
 
@@ -395,12 +349,11 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 
 		resp = mintResponse{
 			CardholderID: ch.Id,
-			BadgeUserID:  bu.Id,
 			CredentialID: cred.Id,
 			Email:        req.Email,
 			ValidFrom:    from.Format(time.RFC3339),
 			ValidUntil:   until.Format(time.RFC3339),
-			BadgeURL:     "/badge",
+			BadgeURL:     "/login?as=badge",
 			Reused:       existing != nil,
 		}
 		return nil
@@ -491,7 +444,7 @@ func (h *handler) auditMint(e *core.RequestEvent, resp mintResponse, roleCode st
 	rec := core.NewRecord(col)
 	rec.Set("event_type", "create")
 	rec.Set("collection_name", BadgeCollection)
-	rec.Set("record_id", resp.BadgeUserID)
+	rec.Set("record_id", resp.CardholderID)
 	if e.Auth != nil {
 		rec.Set("actor_id", e.Auth.Id)
 		rec.Set("actor_email", e.Auth.Email())
@@ -515,6 +468,6 @@ func (h *handler) auditMint(e *core.RequestEvent, resp mintResponse, roleCode st
 		"validUntil": resp.ValidUntil,
 	})
 	if err := h.app.Save(rec); err != nil {
-		h.log.Error("failed to write visitor mint audit row", "badgeUser", resp.BadgeUserID, "error", err)
+		h.log.Error("failed to write visitor mint audit row", "cardholder", resp.CardholderID, "error", err)
 	}
 }

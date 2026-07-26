@@ -178,76 +178,126 @@ func deref(s *string) string {
 	return *s
 }
 
-// TestBadgeUsers verifies migration 1750000030: the badge auth tier. The rules are
-// the point — an auth collection's DEFAULT create rule is open signup, which would
-// let anyone mint themselves a badge login.
-func TestBadgeUsers(t *testing.T) {
+// TestCardholderAuthCollection verifies that `cardholders` is the badge tier: one
+// collection holding both the person and their login (1750000000).
+//
+// The rules are the point. An auth collection's DEFAULT create rule is OPEN SIGNUP,
+// which here would let anyone mint themselves a person record in a physical access
+// control system; and because this same collection is the policy graph's entry point
+// (cardholder -> roles -> groups -> portals), a write rule that admitted a badge token
+// would be a self-service grant of doors.
+func TestCardholderAuthCollection(t *testing.T) {
 	app := newApp(t)
 
-	c, err := app.FindCollectionByNameOrId("badge_users")
-	if err != nil {
-		t.Fatalf("badge_users collection: %v", err)
-	}
-	if !c.IsAuth() {
-		t.Fatal("badge_users is not an auth collection")
-	}
-
-	// Open signup must be closed, and minting must require an operator capability.
-	if c.CreateRule == nil || *c.CreateRule == "" {
-		t.Fatalf("badge_users.CreateRule = %v, want enroll-gated (empty string is OPEN SIGNUP)", c.CreateRule)
-	}
-	for _, want := range []string{`"enroll"`, `@request.auth.collectionName = "users"`} {
-		if !strings.Contains(*c.CreateRule, want) {
-			t.Errorf("badge_users.CreateRule = %q, want it to contain %s", *c.CreateRule, want)
-		}
-	}
-	// A badge holder must only ever see its own record — never another badge user's.
-	if c.ListRule == nil || !strings.Contains(*c.ListRule, "id = @request.auth.id") {
-		t.Errorf("badge_users.ListRule = %v, want self-scoped", c.ListRule)
-	}
-
-	// OTP must stay on whatever else is enabled: it is what makes an emailed badge
-	// link more than a bare bearer token, and it is the visitor's only sign-in path.
-	// (Password auth was off in this migration and is turned on by 1750000034 — see
-	// TestBadgePasswordAuth.)
-	if !c.OTP.Enabled {
-		t.Error("badge_users OTP is disabled; the visitor invite flow depends on it")
-	}
-
-	// The cardholder link must be required and unique — one login per person, and
-	// never a login that speaks for nobody.
-	f, ok := c.Fields.GetByName("cardholder").(*core.RelationField)
-	if !ok || f == nil {
-		t.Fatal("badge_users.cardholder relation field missing")
-	}
-	if !f.Required {
-		t.Error("badge_users.cardholder is not required")
-	}
-	cardholders, err := app.FindCollectionByNameOrId("cardholders")
+	c, err := app.FindCollectionByNameOrId("cardholders")
 	if err != nil {
 		t.Fatalf("cardholders collection: %v", err)
 	}
-	if f.CollectionId != cardholders.Id {
-		t.Errorf("badge_users.cardholder targets %q, want cardholders (%q)", f.CollectionId, cardholders.Id)
-	}
-	var unique bool
-	for _, idx := range c.Indexes {
-		if strings.Contains(idx, "UNIQUE") && strings.Contains(idx, "cardholder") {
-			unique = true
-		}
-	}
-	if !unique {
-		t.Errorf("badge_users has no unique index on cardholder; indexes = %v", c.Indexes)
+	if !c.IsAuth() {
+		t.Fatal("cardholders is not an auth collection; the badge tier has nothing to sign in to")
 	}
 
-	if k, ok := c.Fields.GetByName("kind").(*core.SelectField); !ok || k == nil {
-		t.Error("badge_users.kind select field missing")
-	} else {
-		for _, want := range []string{"holder", "visitor"} {
-			if !slicesContains(k.Values, want) {
-				t.Errorf("badge_users.kind missing value %q (have %v)", want, k.Values)
+	// --- create must never be open signup ---
+	if c.CreateRule == nil || *c.CreateRule == "" {
+		t.Fatalf("cardholders.CreateRule = %v, want enroll-gated (empty string is OPEN SIGNUP)", c.CreateRule)
+	}
+	if !strings.Contains(*c.CreateRule, "enroll") {
+		t.Errorf("cardholders.CreateRule = %q, want it to require the enroll capability", *c.CreateRule)
+	}
+
+	// --- writes must exclude the badge tier entirely ---
+	// No self clause, which is what let the old badge_users field guard be deleted: a
+	// holder who cannot PATCH their own row cannot escalate through it.
+	for name, rule := range map[string]*string{
+		"UpdateRule": c.UpdateRule,
+		"DeleteRule": c.DeleteRule,
+	} {
+		if rule == nil {
+			continue // superuser-only is stricter still
+		}
+		if strings.Contains(*rule, "id = @request.auth.id") {
+			t.Errorf("cardholders.%s = %q allows self-write; a holder could grant themselves roles", name, *rule)
+		}
+	}
+
+	// --- reads: the operator floor OR self ---
+	// The self clause is load-bearing beyond the API: PocketBase checks a PROTECTED
+	// file download against the record's ViewRule, and cardholders.photo is protected
+	// (1750000029). Without it a holder's own badge renders with no face on it.
+	for name, rule := range map[string]*string{"ListRule": c.ListRule, "ViewRule": c.ViewRule} {
+		if rule == nil {
+			t.Errorf("cardholders.%s is nil; operators cannot read the people list", name)
+			continue
+		}
+		for _, want := range []string{`id = @request.auth.id`, `@request.auth.collectionName = "users"`} {
+			if !strings.Contains(*rule, want) {
+				t.Errorf("cardholders.%s = %q, want it to contain %s", name, *rule, want)
 			}
 		}
+	}
+
+	// --- AuthRule: being a person is not having an account ---
+	// Every cardholder is an auth record carrying a random password nobody has seen, so
+	// this rule is the only thing separating the two.
+	if c.AuthRule == nil || *c.AuthRule == "" {
+		t.Fatalf("cardholders.AuthRule = %v, want it gated on badge_login (empty = any record may sign in)", c.AuthRule)
+	}
+	for _, want := range []string{"badge_login = true", "active"} {
+		if !strings.Contains(*c.AuthRule, want) {
+			t.Errorf("cardholders.AuthRule = %q, want it to contain %s", *c.AuthRule, want)
+		}
+	}
+	// NOT `verified`: PocketBase writes that field itself on a first OTP sign-in, and
+	// requestOTP does not consult the AuthRule at all -- so a verified-gated rule opens
+	// itself on first use.
+	if strings.Contains(*c.AuthRule, "verified") {
+		t.Error("cardholders.AuthRule gates on `verified`, which PocketBase sets itself during OTP sign-in")
+	}
+
+	// --- auth methods: all three coexist ---
+	// Password matters most where SMTP does not exist: with OTP as the only method,
+	// every sign-in is an emailed code and the tier is inert.
+	if !c.PasswordAuth.Enabled {
+		t.Error("cardholders password auth is disabled; the tier is inert on an install with no SMTP")
+	}
+	if len(c.PasswordAuth.IdentityFields) != 1 || c.PasswordAuth.IdentityFields[0] != "email" {
+		t.Errorf("cardholders identity fields = %v, want [email]", c.PasswordAuth.IdentityFields)
+	}
+	if !c.OTP.Enabled {
+		t.Error("cardholders OTP is disabled; it is the visitor's only sign-in path")
+	}
+	if !c.OAuth2.Enabled {
+		t.Error("cardholders OAuth2 is disabled; all three methods are meant to coexist")
+	}
+
+	// --- email stays OPTIONAL ---
+	// It is UNIQUE, so requiring it would force a synthetic address onto every
+	// contractor, hourly worker and non-person card that has no inbox, and would
+	// hard-fail an LDAP/CSV import with a sparse email column.
+	if f, ok := c.Fields.GetByName("email").(*core.EmailField); !ok || f == nil {
+		t.Error("cardholders.email is not an email field")
+	} else if f.Required {
+		t.Error("cardholders.email is required; a cardholder with no inbox could not be enrolled")
+	}
+
+	// --- badge fields ---
+	for _, name := range []string{"badge_login", "password_set", "kind"} {
+		if c.Fields.GetByName(name) == nil {
+			t.Errorf("cardholders.%s field missing", name)
+		}
+	}
+	if k, ok := c.Fields.GetByName("kind").(*core.SelectField); ok && k != nil {
+		for _, want := range []string{"holder", "visitor"} {
+			if !slicesContains(k.Values, want) {
+				t.Errorf("cardholders.kind missing value %q (have %v)", want, k.Values)
+			}
+		}
+	}
+
+	// ManageRule lets an enroll operator reset a stuck login without the old password,
+	// and is also what unhides `email` for them in list responses.
+	if c.ManageRule == nil || !strings.Contains(*c.ManageRule, "enroll") {
+		t.Errorf("cardholders.ManageRule = %v, want enroll-gated", c.ManageRule)
 	}
 }
 
@@ -315,9 +365,9 @@ func TestBadgeRateLimits(t *testing.T) {
 
 	// OTP mints an email per call and the caller is a guest, so an @auth-only rule
 	// would never fire.
-	otp, ok := find("badge_users:requestOTP")
+	otp, ok := find("cardholders:requestOTP")
 	if !ok {
-		t.Fatalf("no rate limit rule for badge_users OTP requests; rules = %+v", rl.Rules)
+		t.Fatalf("no rate limit rule for badge-tier OTP requests; rules = %+v", rl.Rules)
 	}
 	if otp.Audience == core.RateLimitRuleAudienceAuth {
 		t.Error("OTP rule is scoped to @auth, but an OTP requester has no token yet — it would never apply")
@@ -335,160 +385,76 @@ func TestBadgeRateLimits(t *testing.T) {
 	}
 }
 
-// TestBadgePasswordAuth verifies migration 1750000034: email+password sign-in on the
-// badge tier, plus the `password_set` flag and the limits that make passwords
-// defensible.
-func TestBadgePasswordAuth(t *testing.T) {
+// TestBadgeHolderCannotReadPolicyGraph is the end-to-end version of
+// TestReadFloorExcludesNonOperatorAuth against the REAL badge tier.
+//
+// It matters more now than it did, because the badge tier and the operator tier share a
+// collection. `cardholders` is simultaneously the thing a holder signs in as and a node
+// in the policy graph an operator reads, so the read floor is carrying two jobs at once:
+// admit operators to everything, and admit a holder to exactly one row. If it slipped to
+// the old auth-collection-agnostic form (`@request.auth.id != ""`), a lobby visitor
+// could list `credentials` — whose `value` field is the credential secret in plaintext —
+// and enumerate every card in the building.
+func TestBadgeHolderCannotReadPolicyGraph(t *testing.T) {
 	app := newApp(t)
 
-	c, err := app.FindCollectionByNameOrId("badge_users")
+	cardholders, err := app.FindCollectionByNameOrId("cardholders")
 	if err != nil {
-		t.Fatalf("badge_users collection: %v", err)
-	}
-
-	if !c.PasswordAuth.Enabled {
-		t.Error("badge_users password auth is disabled; without it the tier is inert on an install with no SMTP")
-	}
-	// Email only — badge_users has no username, and a second identity field would be
-	// a second way to name the same person.
-	if len(c.PasswordAuth.IdentityFields) != 1 || c.PasswordAuth.IdentityFields[0] != "email" {
-		t.Errorf("badge_users identity fields = %v, want [email]", c.PasswordAuth.IdentityFields)
-	}
-	// The other two methods must survive: OTP is the visitor path, OAuth2 the
-	// bring-your-own-identity one.
-	if !c.OTP.Enabled {
-		t.Error("enabling passwords disabled OTP; all three methods are meant to coexist")
-	}
-	if !c.OAuth2.Enabled {
-		t.Error("enabling passwords disabled OAuth2; all three methods are meant to coexist")
-	}
-
-	if c.Fields.GetByName("password_set") == nil {
-		t.Fatal("badge_users.password_set field missing")
-	}
-	// Existing logins were created with a throwaway nobody has seen, so the flag must
-	// start false — true would demand an old-password proof they cannot give.
-	all, err := app.FindAllRecords("badge_users")
-	if err != nil {
-		t.Fatalf("FindAllRecords badge_users: %v", err)
-	}
-	for _, r := range all {
-		if r.GetBool("password_set") {
-			t.Errorf("badge login %q has password_set = true after the migration; want false", r.Id)
-		}
-	}
-
-	// Password auth reopens a credential-stuffing surface, so it ships with limits.
-	rl := app.Settings().RateLimits
-	find := func(label string) (core.RateLimitRule, bool) {
-		for _, r := range rl.Rules {
-			if r.Label == label {
-				return r, true
-			}
-		}
-		return core.RateLimitRule{}, false
-	}
-	for _, tc := range []struct {
-		label string
-		why   string
-	}{
-		{"badge_users:authWithPassword", "credential stuffing against the badge tier"},
-		{"badge_users:requestPasswordReset", "a reset mail bomb"},
-		{"POST /api/badge/password", "guessing the current password from a stolen session"},
-	} {
-		r, ok := find(tc.label)
-		if !ok {
-			t.Errorf("no rate limit rule %q — nothing bounds %s", tc.label, tc.why)
-			continue
-		}
-		if r.MaxRequests <= 0 || r.Duration <= 0 {
-			t.Errorf("rule %q = %+v, want positive MaxRequests and Duration", tc.label, r)
-		}
-	}
-	// The two pre-token endpoints must not be @auth-scoped, or the rule never fires.
-	for _, label := range []string{"badge_users:authWithPassword", "badge_users:requestPasswordReset"} {
-		if r, ok := find(label); ok && r.Audience == core.RateLimitRuleAudienceAuth {
-			t.Errorf("rule %q is scoped to @auth, but its caller has no token yet — it would never apply", label)
-		}
-	}
-}
-
-// TestBadgeUserCannotReadPolicyGraph is the end-to-end version of
-// TestReadFloorExcludesNonOperatorAuth against the REAL badge collection. The
-// throwaway-collection test proves the general rule; this one proves the actual
-// tier this feature ships, including that a badge holder cannot enumerate other
-// badge holders.
-func TestBadgeUserCannotReadPolicyGraph(t *testing.T) {
-	app := newApp(t)
-
-	badgeCol, err := app.FindCollectionByNameOrId("badge_users")
-	if err != nil {
-		t.Fatalf("badge_users collection: %v", err)
+		t.Fatalf("cardholders collection: %v", err)
 	}
 	alice, err := app.FindFirstRecordByData("cardholders", "external_id", "alice")
 	if err != nil {
 		t.Fatalf("fixture cardholder alice not found: %v", err)
 	}
 
-	badge := core.NewRecord(badgeCol)
-	badge.SetEmail("visitor@test.dev")
-	badge.Set("cardholder", alice.Id)
-	badge.Set("kind", "visitor")
-	// PocketBase requires a non-blank password on an auth record even when the
-	// collection has password auth DISABLED — the field validator is independent of
-	// the auth-method option. It is unusable for sign-in, so anything creating a
-	// badge login sets an unguessable throwaway (see internal/badgeapi).
-	badge.SetPassword("unused-password-not-a-sign-in-path")
-	if err := app.Save(badge); err != nil {
-		t.Fatalf("save badge user: %v", err)
+	// A visitor: a cardholder with a badge login, which is all a badge token is.
+	visitor := core.NewRecord(cardholders)
+	visitor.SetEmail("visitor@test.dev")
+	visitor.Set("name", "Lobby Visitor")
+	visitor.Set("status", "active")
+	visitor.Set("kind", "visitor")
+	visitor.Set("badge_login", true)
+	// PocketBase requires a non-blank password on every auth record. accessd fills one
+	// automatically (badgeapi.RegisterGuards); this package does not bind those hooks.
+	visitor.SetPassword("unused-password-not-a-sign-in-path")
+	if err := app.Save(visitor); err != nil {
+		t.Fatalf("save visitor: %v", err)
 	}
 
-	// The credential VALUE is the credential secret — this is the row that must
-	// never be listable by the badge tier.
-	for _, name := range []string{"credentials", "cardholders", "portals", "areas", "events"} {
+	// The credential VALUE is the credential secret -- that row above all must never be
+	// listable by the badge tier.
+	for _, name := range []string{"credentials", "portals", "areas", "events", "roles", "access_groups"} {
 		c, err := app.FindCollectionByNameOrId(name)
 		if err != nil {
 			t.Errorf("%s collection: %v", name, err)
 			continue
 		}
-		ok, err := app.CanAccessRecord(alice, &core.RequestInfo{Auth: badge, Method: "GET"}, c.ListRule)
+		ok, err := app.CanAccessRecord(alice, &core.RequestInfo{Auth: visitor, Method: "GET"}, c.ListRule)
 		if err != nil {
 			t.Fatalf("%s: CanAccessRecord error: %v", name, err)
 		}
 		if ok {
-			t.Errorf("a badge_users record can list %s — the policy graph is exposed to the badge tier", name)
+			t.Errorf("a badge holder can list %s -- the policy graph is exposed to the badge tier", name)
 		}
 	}
 
-	// A second badge user must be invisible to the first: the self-scoped rule is
-	// evaluated against the OTHER record, which is what a list request would do.
-	// Build the peer's cardholder here rather than relying on a second fixture
-	// person, so this half always runs.
-	cardholders, err := app.FindCollectionByNameOrId("cardholders")
+	// And the sharp one for a shared collection: another PERSON must be invisible. The
+	// rule is evaluated against the other record, which is what a list request does.
+	ok, err := app.CanAccessRecord(alice, &core.RequestInfo{Auth: visitor, Method: "GET"}, cardholders.ListRule)
 	if err != nil {
-		t.Fatalf("cardholders collection: %v", err)
-	}
-	peer := core.NewRecord(cardholders)
-	peer.Set("name", "Peer Person")
-	peer.Set("status", "active")
-	if err := app.Save(peer); err != nil {
-		t.Fatalf("save peer cardholder: %v", err)
-	}
-
-	other := core.NewRecord(badgeCol)
-	other.SetEmail("other@test.dev")
-	other.Set("cardholder", peer.Id)
-	other.Set("kind", "holder")
-	other.SetPassword("unused-password-not-a-sign-in-path")
-	if err := app.Save(other); err != nil {
-		t.Fatalf("save second badge user: %v", err)
-	}
-	ok, err := app.CanAccessRecord(other, &core.RequestInfo{Auth: badge, Method: "GET"}, badgeCol.ListRule)
-	if err != nil {
-		t.Fatalf("badge_users peer check: CanAccessRecord error: %v", err)
+		t.Fatalf("cardholders peer check: CanAccessRecord error: %v", err)
 	}
 	if ok {
-		t.Error("a badge_users record can read another badge_users record; want self-scoped only")
+		t.Error("a badge holder can read another cardholder; want self-scoped only")
+	}
+	// Self must still pass, or the badge cannot render its own photo (protected files
+	// are checked against the ViewRule).
+	ok, err = app.CanAccessRecord(visitor, &core.RequestInfo{Auth: visitor, Method: "GET"}, cardholders.ViewRule)
+	if err != nil {
+		t.Fatalf("cardholders self check: CanAccessRecord error: %v", err)
+	}
+	if !ok {
+		t.Error("a badge holder cannot read their OWN cardholder record; their badge would have no photo")
 	}
 }
 
@@ -836,52 +802,6 @@ func TestNotifyLocations(t *testing.T) {
 	}
 	if f.CollectionId != locations.Id {
 		t.Errorf("users.notify_locations targets %q, want locations (%q)", f.CollectionId, locations.Id)
-	}
-}
-
-// TestBadgeLoginLifecycle verifies migration 1750000035: the badge login as a property
-// of a cardholder rather than an entity with its own life.
-func TestBadgeLoginLifecycle(t *testing.T) {
-	app := newApp(t)
-
-	c, err := app.FindCollectionByNameOrId("badge_users")
-	if err != nil {
-		t.Fatalf("badge_users collection: %v", err)
-	}
-
-	// Cascade: an orphan login authenticates and then resolves nobody.
-	f, ok := c.Fields.GetByName("cardholder").(*core.RelationField)
-	if !ok || f == nil {
-		t.Fatal("badge_users.cardholder relation field missing")
-	}
-	if !f.CascadeDelete {
-		t.Error("badge_users.cardholder does not cascade; deleting a cardholder leaves a login for a person who no longer exists")
-	}
-
-	// Read is the operator floor (any `users` record), so the UI can show the field
-	// read-only instead of hiding it and leaving a silent hole in the page.
-	for name, rule := range map[string]*string{"ListRule": c.ListRule, "ViewRule": c.ViewRule} {
-		if rule == nil {
-			t.Errorf("badge_users.%s is nil (superuser-only)", name)
-			continue
-		}
-		// Both clauses matter: the badge tier keeps seeing exactly its own row, and
-		// the operator clause names the `users` collection so a badge token — which
-		// has no `permissions` field — can never satisfy it (see 1750000027).
-		for _, want := range []string{`id = @request.auth.id`, `@request.auth.collectionName = "users"`} {
-			if !strings.Contains(*rule, want) {
-				t.Errorf("badge_users.%s = %q, want it to contain %s", name, *rule, want)
-			}
-		}
-	}
-
-	// Issue and remove are the same act, so they take the same capability.
-	if c.DeleteRule == nil || !strings.Contains(*c.DeleteRule, "enroll") {
-		t.Errorf("badge_users.DeleteRule = %v, want enroll-gated to match CreateRule", c.DeleteRule)
-	}
-	if c.CreateRule == nil || c.DeleteRule == nil || *c.CreateRule != *c.DeleteRule {
-		t.Errorf("badge_users create/delete rules differ (%v vs %v); giving and taking back a login is one act",
-			c.CreateRule, c.DeleteRule)
 	}
 }
 

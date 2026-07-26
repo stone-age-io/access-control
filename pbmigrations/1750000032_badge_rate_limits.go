@@ -15,11 +15,13 @@ import (
 //     evaluation plus an audit row.
 //   - The OTP request endpoint mints an email per call. Unlimited, it is both a mail
 //     bomb aimed at a visitor and a way to burn an install's SMTP quota.
+//   - Password sign-in is a credential-stuffing target. A person mistyping their own
+//     password needs a few tries; a script wants thousands.
 //
 // PocketBase's limiter is settings-driven (core.RateLimitRule) and bound globally to
 // every route, so it covers accessd's custom routes too — no per-route middleware
 // needed. Matching is by label, in this order: an exact "METHOD /path", a bare
-// "/path", a collection tag like "badge_users:requestOTP", and — for any rule whose
+// "/path", a collection tag like "cardholders:requestOTP", and — for any rule whose
 // label ends in '/' — a path PREFIX. That last form is what lets one rule cover
 // /api/badge/unlock/{portalId} for every portal id, so keeping the badge routes
 // under a shared /api/badge/ prefix is load-bearing here.
@@ -46,6 +48,13 @@ func init() {
 }
 
 // badgeRateLimitRules are the rules this migration owns.
+//
+// The collection-tag rules name `cardholders`, which is the badge tier's auth
+// collection (it is both the person and the login — see 1750000000). Addressed by
+// TAG rather than path because PocketBase checks the tag first and it survives any
+// change to the auth route paths. Their audience is "all", not "auth": a caller at
+// any of them has no token yet — they are asking for the means to get one — so an
+// @auth rule would never fire.
 func badgeRateLimitRules() []core.RateLimitRule {
 	return []core.RateLimitRule{
 		// Actuating a door: someone standing at a door needs a handful of tries, not
@@ -63,14 +72,37 @@ func badgeRateLimitRules() []core.RateLimitRule {
 			MaxRequests: 60,
 			Duration:    60,
 		},
-		// OTP request — one email per call. Addressed by COLLECTION TAG rather than
-		// path: PocketBase checks "badge_users:requestOTP" first and the tag survives
-		// any change to the auth route paths. Audience is "all" because the caller has
-		// no token yet (they are requesting the means to get one), so a @auth rule
-		// would never fire — this is the anti-mail-bomb rule.
+		// OTP request — one email per call. The anti-mail-bomb rule.
 		{
-			Label:       "badge_users:requestOTP",
+			Label:       "cardholders:requestOTP",
 			Audience:    core.RateLimitRuleAudienceAll,
+			MaxRequests: 5,
+			Duration:    60,
+		},
+		// The credential-stuffing rule.
+		{
+			Label:       "cardholders:authWithPassword",
+			Audience:    core.RateLimitRuleAudienceAll,
+			MaxRequests: 10,
+			Duration:    60,
+		},
+		// One email per call, so the same mail-bomb concern as requestOTP — and
+		// tighter, because unlike a sign-in code nobody legitimately needs several
+		// reset mails a minute.
+		{
+			Label:       "cardholders:requestPasswordReset",
+			Audience:    core.RateLimitRuleAudienceAll,
+			MaxRequests: 3,
+			Duration:    60,
+		},
+		// POST /api/badge/password checks the CURRENT password before changing it
+		// (see internal/badgeapi/password.go), which makes it an oracle for guessing
+		// that password from a stolen session. Audience "auth" because the caller is
+		// signed in by definition, and low because changing a password is a
+		// once-in-a-while act.
+		{
+			Label:       "POST /api/badge/password",
+			Audience:    core.RateLimitRuleAudienceAuth,
 			MaxRequests: 5,
 			Duration:    60,
 		},
@@ -78,8 +110,9 @@ func badgeRateLimitRules() []core.RateLimitRule {
 }
 
 func badgeRateLimitLabels() []string {
-	labels := make([]string, 0, 3)
-	for _, r := range badgeRateLimitRules() {
+	rules := badgeRateLimitRules()
+	labels := make([]string, 0, len(rules))
+	for _, r := range rules {
 		labels = append(labels, r.Label)
 	}
 	return labels

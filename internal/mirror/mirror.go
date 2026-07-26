@@ -6,9 +6,14 @@
 // This is deliberately dumb: one record in, one key out. No aggregation, no
 // whole-policy rebuild, no debounce — a 5k-row CSV import is 5k independent
 // puts, and a single revocation is one small key write.
+//
+// The one piece of cleverness is idempotence: a put whose payload matches what KV
+// already holds is skipped, because it would wake every controller's watch to say
+// nothing. See Publisher.unchanged.
 package mirror
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -167,12 +172,50 @@ func (p *Publisher) publish(app core.App, r *core.Record) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
+	if p.unchanged(ctx, key, val) {
+		p.log.Debug("mirror publish: payload unchanged, skipping put", "key", key)
+		return
+	}
 	if _, err := p.kv.Put(ctx, key, val); err != nil {
 		p.log.Error("mirror publish: KV put failed", "key", key, "error", err)
 		return
 	}
 	p.m.IncKVApply("put")
 	p.log.Debug("mirrored record", "key", key)
+}
+
+// unchanged reports whether the KV already holds exactly this payload for this key, so
+// publish can skip a put that would say nothing new.
+//
+// # Why this matters at the edge
+//
+// A KV put bumps the key's revision and delivers a watch update whether or not the
+// bytes differ. Every controller's PolicyStore then parses the value, fires
+// SetOnChange, and drives a PortalManager plus AreaManager reconcile. So a record edit
+// that changes nothing the edge can see still costs a fleet-wide reconcile — and most
+// edits to a policy record are exactly that, because the mirrored wire shape is a
+// narrow projection of the row. `policykv.User` is three fields out of a cardholder's
+// dozen; `floorplan_position`, `notify_on_alarm`, `name` and every auth field are all
+// invisible to it.
+//
+// It became load-bearing when `cardholders` became an auth collection: PocketBase
+// writes the record itself during some auth flows (a first OTP sign-in flips
+// `verified`), which would otherwise make people signing in to look at their badge a
+// source of policy churn on every controller in the estate.
+//
+// Comparing the MARSHALED payload rather than the record is what makes this safe: it
+// is the exact byte string that would be written, so "unchanged" cannot mean anything
+// other than "the edge would see no difference".
+//
+// Fail-safe in the direction of publishing: any error reading the current value —
+// missing key, transport failure — returns false, so the put goes ahead. A redundant
+// put is a wasted reconcile; a skipped necessary one is a stale policy at the door.
+func (p *Publisher) unchanged(ctx context.Context, key string, val []byte) bool {
+	entry, err := p.kv.Get(ctx, key)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(entry.Value(), val)
 }
 
 func (p *Publisher) del(key string) {

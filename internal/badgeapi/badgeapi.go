@@ -1,17 +1,54 @@
-// Package badgeapi serves the BADGE TIER: the two routes a cardholder or visitor
-// signed into the `badge_users` auth collection (migration 1750000030) may call.
+// Package badgeapi serves the BADGE TIER: the routes a cardholder or visitor signed
+// into the `cardholders` auth collection may call.
 //
 //	GET  /api/badge/me                 this person's badge — photo, QR, doors
 //	POST /api/badge/unlock/{portalId}  remote unlock, authorized by policy.Decide
+//	POST /api/badge/password           set or change one's own password
 //
-// Both are bound to `badge_users` alone. They are NOT operator routes and share no
-// authorization with internal/commandapi: a badge record has no `permissions`
-// field, so capability checks are meaningless here.
+// All three are bound to `cardholders` alone. They are NOT operator routes and share
+// no authorization with internal/commandapi: a cardholder has no `permissions` field,
+// so capability checks are meaningless here.
 //
-// The package also serves ONE operator route, POST /api/badge/visitors (visitors.go),
-// which mints a visitor: cardholder + time-bound credential + `visitor` login. It is
-// gated the opposite way — operator collection plus the `enroll` capability — and is
-// kept here because everything it creates is badge-tier.
+// The package also serves the OPERATOR routes that mint and end a visit
+// (visitors.go), gated the opposite way — operator collection plus the `enroll`
+// capability — and kept here because everything they touch is badge-tier.
+//
+// # One collection, two views
+//
+// `cardholders` is BOTH the person and the login. There is no separate login record:
+// a cardholder who may sign in is one with `badge_login` set, and the same row is
+// what `credentials.user` points at and what the KV mirror publishes as `user.{id}`.
+// Two tiers read the same substrate through different lenses — an operator sees the
+// policy graph, a holder sees one badge — and the substrate is shared rather than
+// copied.
+//
+// It started as a second auth collection (`badge_users`) with a 1:1 relation to
+// `cardholders`. Everything that made that version complicated was the relation
+// itself: a unique index to stop two logins for one person, a cascade delete to stop
+// an orphan login authenticating and resolving nobody, a field guard to stop a holder
+// repointing the relation at someone else and inheriting their doors, and a delete
+// hook to keep a visitor's two halves dying together. Collapsing the two records
+// deletes all four, because none of them describe a rule about badges — they were all
+// describing the join.
+//
+// What the collapse costs, stated plainly:
+//
+//   - Every person is now an auth record, including the majority who never sign in.
+//     `badge_login` is the gate (it backs the collection's AuthRule), and a record
+//     without it carries a random password nobody has seen. Being an auth record is
+//     not being an account.
+//   - Auth-flow writes now land on a MIRRORED collection, so they could wake every
+//     controller's policy watch. Sign-in itself never writes the record (OTP, MFA and
+//     login-alert state live in PocketBase's own `_otps`/`_mfas`/`_authOrigins`);
+//     the only write is a first OTP flipping `verified`. internal/mirror skips a KV
+//     put whose payload is unchanged, so even that one is absorbed.
+//   - `policykv.User` is a hand-built three-field struct — id, status, roles — so no
+//     auth field can reach the edge regardless. The wire is unchanged by all of this.
+//
+// One thing it fixed for free: `cardholders.photo` is a PROTECTED file, and PocketBase
+// checks a protected download against the record's own ViewRule. With the login in a
+// separate collection, a holder fetching their own photo was refused — the badge
+// rendered with no face on it. Being the record is what makes it readable.
 //
 // # How a remote unlock is authorized
 //
@@ -68,10 +105,11 @@ import (
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
-// BadgeCollection is the auth collection these routes serve.
-const BadgeCollection = "badge_users"
+// BadgeCollection is the auth collection these routes serve — which is also the
+// collection holding the people the whole PACS is about. See the package doc.
+const BadgeCollection = "cardholders"
 
-// Badge kinds (badge_users.kind). The kind decides what the QR encodes; it is NOT
+// Badge kinds (cardholders.kind). The kind decides what the QR encodes; it is NOT
 // an access level or an expiry — validity lives on the credential.
 const (
 	KindHolder  = "holder"  // ongoing cardholder: QR identifies, opens nothing
@@ -125,9 +163,9 @@ type handler struct {
 	cachedAt time.Time
 }
 
-// Register wires the badge routes. apis.RequireAuth names ONLY badge_users: an
-// operator token must not reach these (it has no cardholder to resolve), and a
-// bare RequireAuth() would admit any auth collection.
+// Register wires the badge routes. apis.RequireAuth names ONLY `cardholders`: an
+// operator token must not reach these (an operator is not a person with a badge), and
+// a bare RequireAuth() would admit any auth collection.
 func Register(se *core.ServeEvent, nc *nats.Conn, kv jetstream.KeyValue, subj subjects.Subjects, log *logger.Logger) {
 	h := &handler{
 		app:  se.App,
@@ -138,12 +176,11 @@ func Register(se *core.ServeEvent, nc *nats.Conn, kv jetstream.KeyValue, subj su
 	}
 	se.Router.GET("/api/badge/me", h.me).Bind(apis.RequireAuth(BadgeCollection))
 	se.Router.POST("/api/badge/unlock/{portalId}", h.unlock).Bind(apis.RequireAuth(BadgeCollection))
-	// POST /api/badge/visitors — the one OPERATOR route here (see visitors.go).
-	// Gated by the operator collection + `enroll`, never by a badge token.
+	// The OPERATOR routes: mint a visitor, end a visit. Gated by the operator
+	// collection + `enroll`, never by a badge token. See visitors.go.
 	h.registerVisitorRoutes(se)
-	// POST /api/badge/holders (operator + `enroll`) and POST /api/badge/password
-	// (a badge holder, for their own password) — see holders.go.
-	h.registerHolderRoutes(se)
+	// POST /api/badge/password — a holder setting their own. See password.go.
+	h.registerPasswordRoute(se)
 }
 
 // --- GET /api/badge/me ---
@@ -190,13 +227,9 @@ type badgePortal struct {
 }
 
 func (h *handler) me(e *core.RequestEvent) error {
-	badge := e.Auth
-	cardholder, err := h.cardholderFor(badge)
-	if err != nil {
-		return e.NotFoundError("badge is not linked to a cardholder", err)
-	}
+	cardholder := e.Auth
 
-	kind := badge.GetString("kind")
+	kind := cardholder.GetString("kind")
 	creds, err := h.credentialsFor(cardholder.Id)
 	if err != nil {
 		return e.InternalServerError("failed to load credentials", err)
@@ -205,7 +238,7 @@ func (h *handler) me(e *core.RequestEvent) error {
 
 	resp := meResponse{
 		Name:        cardholder.GetString("name"),
-		Email:       badge.Email(),
+		Email:       cardholder.Email(),
 		Kind:        kind,
 		PhotoRecord: cardholder.Id,
 		PhotoFile:   cardholder.GetString("photo"),
@@ -304,11 +337,7 @@ type unlockResponse struct {
 }
 
 func (h *handler) unlock(e *core.RequestEvent) error {
-	badge := e.Auth
-	cardholder, err := h.cardholderFor(badge)
-	if err != nil {
-		return e.NotFoundError("badge is not linked to a cardholder", err)
-	}
+	cardholder := e.Auth
 
 	portal, err := h.app.FindRecordById("portals", e.Request.PathValue("portalId"))
 	if err != nil {
@@ -415,20 +444,6 @@ func (h *handler) snapshot(reqCtx context.Context) (*policysnapshot.Snapshot, er
 	}
 	h.cached, h.cachedAt = policysnapshot.Build(entries), time.Now()
 	return h.cached, nil
-}
-
-// cardholderFor resolves the badge record's cardholder. The relation is required by
-// the schema, so a failure here means the cardholder was hard-deleted out from
-// under a live login.
-func (h *handler) cardholderFor(badge *core.Record) (*core.Record, error) {
-	if badge == nil {
-		return nil, errors.New("no authenticated badge")
-	}
-	id := badge.GetString("cardholder")
-	if id == "" {
-		return nil, errors.New("badge has no cardholder")
-	}
-	return h.app.FindRecordById("cardholders", id)
 }
 
 // credentialsFor returns the cardholder's non-revoked credentials. Revoked ones are
@@ -569,5 +584,35 @@ func (h *handler) audit(e *core.RequestEvent, cardholderID, portalCode string, a
 	})
 	if err := h.app.Save(rec); err != nil {
 		h.log.Error("failed to write badge audit row", "portal", portalCode, "error", err)
+	}
+}
+
+// writeBadgeAudit inserts one audit_logs row against the badge collection. Fail-safe:
+// the operation has already committed, so an audit error is logged, never propagated.
+// Never records a password, hashed or otherwise — audit rows are widely readable.
+func (h *handler) writeBadgeAudit(e *core.RequestEvent, eventType, recordID string, after map[string]any) {
+	col, err := h.app.FindCollectionByNameOrId("audit_logs")
+	if err != nil {
+		h.log.Error("audit sink unavailable", "error", err)
+		return
+	}
+	rec := core.NewRecord(col)
+	rec.Set("event_type", eventType)
+	rec.Set("collection_name", BadgeCollection)
+	rec.Set("record_id", recordID)
+	if e.Auth != nil {
+		rec.Set("actor_id", e.Auth.Id)
+		rec.Set("actor_email", e.Auth.Email())
+		rec.Set("actor_collection", e.Auth.Collection().Name)
+	}
+	rec.Set("request_ip", e.RealIP())
+	if e.Request != nil {
+		rec.Set("request_method", e.Request.Method)
+		rec.Set("request_url", e.Request.URL.Path)
+	}
+	rec.Set("timestamp", types.NowDateTime())
+	rec.Set("after", after)
+	if err := h.app.Save(rec); err != nil {
+		h.log.Error("failed to write badge audit row", "record", recordID, "error", err)
 	}
 }

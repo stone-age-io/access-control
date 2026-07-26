@@ -1,73 +1,127 @@
 package badgeapi
 
 import (
-	"fmt"
-
+	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/stone-age-io/access-control/internal/authz"
+	"github.com/pocketbase/pocketbase/tools/security"
 )
 
-// protectedBadgeFields are the badge_users fields a badge holder must never write on
-// their own record. Each one decides something the holder is the subject of, not the
-// author of:
-//
-//   - cardholder — WHOSE credentials this login resolves. GET /api/badge/me and
-//     POST /api/badge/unlock both start from it, so repointing it at another person's
-//     cardholder id hands over every door that person can open, attributed to them.
-//   - kind — whether the QR carries the credential VALUE (visitor) or an inert
-//     identifier (staff). Flipping a lanyard badge to `visitor` mints a permanent,
-//     photographable key out of an identifier that opened nothing.
-//   - password_set — whether changing the password requires proving the current one.
-//     Clearing it lets a stolen session change the password unchallenged and lock the
-//     real holder out of their own badge.
-var protectedBadgeFields = []string{"cardholder", "kind", "password_set"}
+// validationError builds the field-scoped error shape PocketBase's own record
+// validators return, so a refusal from the hooks below reaches the operator's form as
+// an error ON THAT FIELD rather than an opaque "failed to save record".
+func validationError(field, message string) error {
+	return validation.Errors{
+		field: validation.NewError("validation_"+field, message),
+	}
+}
 
-// RegisterGuards binds the badge_users invariants that must hold on the plain
-// collection API, whether or not the badge routes were ever registered:
+// RegisterGuards binds the invariants that keep `cardholders` coherent as an AUTH
+// collection. They must hold on the plain collection API — the operator UI, an
+// import script, the PocketBase dashboard — so they are bound at startup rather than
+// inside OnServe: the collection API is served whether or not NATS came up and the
+// badge routes were ever registered.
 //
-//   - the field-level guard on self-update (below),
-//   - visitor pass revocation on delete (bindVisitorPassRevocation in visitors.go),
-//     because a deleted visitor login must never leave a live credential behind, and
-//   - preservation of an operator-set password across a first OTP sign-in
-//     (bindOTPPasswordPreservation below).
+//	OnRecordCreate  every record gets a password (PocketBase demands one) and a
+//	                visible email (or operators see blanks in their own list)
+//	OnRecordUpdate  a login is never left unusable-by-construction
+//	OnRecordAuthWithOTPRequest  a first OTP sign-in must not erase a known password
 //
-// # Why a hook and not a collection rule
+// # What is NOT here any more, and why
 //
-// The update rule is `id = @request.auth.id || <operator enroll>`, which lets a holder
-// PATCH their own record — necessary, and by itself not the problem. The problem is
-// that a PocketBase collection rule selects which RECORDS may be written and says
-// nothing about which FIELDS, so "may edit my own record" silently means "may edit
-// every non-system field on it", including the three above. There is no rule syntax
-// that expresses "this record, but not these columns"; a hook is the mechanism
-// PocketBase provides. This mirrors the privilege-escalation guard internal/changelog
-// puts on users.permissions, for exactly the same reason.
+// This used to also carry a field-level guard (`protectedBadgeFields`) stopping a
+// badge holder from rewriting `cardholder`, `kind`, or `password_set` on their own
+// record. That guard existed because the login was a separate `badge_users` record
+// whose update rule had to permit self-writes. It is gone because the escalation
+// surface is gone: `cardholders` update is `enroll`-gated with NO self clause, so a
+// badge token cannot PATCH its own record at all. A holder changes their password
+// through POST /api/badge/password, which is an app.Save and bypasses collection
+// rules by design.
 //
-// Bound to *Request hooks, so it constrains API traffic only — accessd's own
-// app.Save writes (internal/badgeapi's issue and password routes, the visitor mint)
-// set these fields deliberately and must not be blocked. That is the same
-// API-only/programmatic split the changelog relies on.
-//
-// Registered at startup rather than inside OnServe, so the guard exists even on a boot
-// path where the badge ROUTES are never registered: the collection API is served
-// regardless of whether NATS came up, and it is the collection API being guarded here.
+// That is the shape of this whole collapse — the guard was not deleted because it
+// stopped mattering, it was deleted because the thing it guarded no longer exists.
 func RegisterGuards(app core.App) {
-	bindVisitorPassRevocation(app)
+	bindPasswordFill(app)
+	bindLoginRequiresEmail(app)
 	bindOTPPasswordPreservation(app)
+}
 
-	app.OnRecordUpdateRequest(BadgeCollection).BindFunc(func(e *core.RecordRequestEvent) error {
-		if isBadgeManager(e.Auth) {
+// bindPasswordFill gives every new cardholder a password and a visible email.
+//
+// # Password
+//
+// PocketBase requires a non-blank password on every auth record regardless of which
+// auth methods are enabled, and unlike the email field it FORCE-re-enforces
+// Required on save (core.Collection.initPasswordField), so there is no way to
+// declare it optional. Without this hook, creating a cardholder through the ordinary
+// operator form would fail validation on a field that form has no business showing —
+// most people in a PACS never sign in.
+//
+// The filled value is random rather than a constant, so it cannot become a de-facto
+// shared secret across an install's records, and `password_set` stays false to record
+// that nobody has ever seen it. An account in this state cannot be signed into: the
+// AuthRule needs `badge_login`, and even with it there is no password to present and
+// no OTP without an address.
+//
+// Only fills when blank, so an operator issuing a login WITH an initial password —
+// the path that works with no SMTP at all — is left alone.
+//
+// # emailVisibility
+//
+// PocketBase strips `email` from an auth record's API response unless the requester
+// is the record owner, a superuser, or matches the collection's ManageRule
+// (core.Record.PublicExport → apis.autoResolveRecordsFlags). An operator browsing
+// the cardholder list is none of those unless they hold `enroll`, so without this the
+// list would show blank emails to a `policy`- or `topology`-only operator. Defaulting
+// it true is honest rather than lax: the read rule already limits `cardholders` to
+// operators plus the person themselves, so "visible" here only means visible to
+// someone already entitled to the whole record.
+func bindPasswordFill(app core.App) {
+	app.OnRecordCreate("cardholders").BindFunc(func(e *core.RecordEvent) error {
+		if e.Record == nil {
 			return e.Next()
 		}
-		original := e.Record.Original()
-		for _, field := range protectedBadgeFields {
-			// Compared as formatted strings rather than with != on the `any` values:
-			// Record.Get returns the field's native type, and a direct comparison of
-			// two interfaces holding a slice (which a relation field yields whenever
-			// MaxSelect > 1) panics at runtime instead of reporting inequality.
-			if fmt.Sprint(e.Record.Get(field)) != fmt.Sprint(original.Get(field)) {
-				return e.ForbiddenError(
-					"a badge login may not change its own "+field+"; ask an operator", nil)
-			}
+		if e.Record.GetString("password") == "" {
+			e.Record.SetPassword(security.RandomString(32))
+			e.Record.Set("password_set", false)
+		}
+		e.Record.Set("emailVisibility", true)
+		return e.Next()
+	})
+}
+
+// bindLoginRequiresEmail refuses to enable a badge login on a cardholder with no
+// email address.
+//
+// Not a policy preference — an arithmetic fact about the enabled auth methods. Email
+// is the sole `PasswordAuth.IdentityFields` entry, so with no address there is
+// nothing to type in the identity box; OTP and password-reset are both emails; and
+// OAuth2 matches an existing record by the address the provider returns. A login with
+// no email is unusable by every route, so allowing one would only produce a checkbox
+// that looks enabled and silently does nothing.
+//
+// Bound on create AND update, because the address can be cleared later just as easily
+// as it can be missing at the start.
+func bindLoginRequiresEmail(app core.App) {
+	check := func(rec *core.Record) error {
+		if rec == nil || !rec.GetBool("badge_login") {
+			return nil
+		}
+		if rec.Email() == "" {
+			return validationError(
+				"badge_login",
+				"a badge login needs an email address — it is the sign-in identity, and how a one-time code is delivered")
+		}
+		return nil
+	}
+	app.OnRecordCreate("cardholders").BindFunc(func(e *core.RecordEvent) error {
+		if err := check(e.Record); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+	app.OnRecordUpdate("cardholders").BindFunc(func(e *core.RecordEvent) error {
+		if err := check(e.Record); err != nil {
+			return err
 		}
 		return e.Next()
 	})
@@ -93,10 +147,10 @@ func RegisterGuards(app core.App) {
 //
 // # Why it is wrong for this tier, and what it broke
 //
-// `badge_users` has MFA off and (since migration 1750000034) password auth on, so the
-// branch fires. The sequence that loses a password:
+// This collection has MFA off and password auth on, so the branch fires. The sequence
+// that loses a password:
 //
-//  1. An operator issues a badge login with an initial password, handed over in
+//  1. An operator enables a badge login with an initial password, handed over in
 //     person — the one path that works with no SMTP at all. `password_set` is true.
 //  2. The holder instead signs in with an emailed one-time code, which is offered on
 //     the same page and is the faster option.
@@ -106,10 +160,9 @@ func RegisterGuards(app core.App) {
 //     and cannot be produced. The holder is locked out of password sign-in with no
 //     self-service route back — in exactly the SMTP-less install that needed it.
 //
-// The pre-hijacking attack it defends against cannot happen here: `badge_users` has an
-// explicit `enroll`-gated create rule (migration 1750000030) precisely because an auth
-// collection's DEFAULT create rule is open signup. Nobody but an operator can bring a
-// record into existence, so there is no attacker-authored record to disarm.
+// The pre-hijacking attack it defends against cannot happen here: `cardholders` has an
+// `enroll`-gated create rule, so nobody but an operator can bring a record into
+// existence and there is no attacker-authored record to disarm.
 //
 // # Why this shape
 //
@@ -120,7 +173,7 @@ func RegisterGuards(app core.App) {
 // than clicking a link in an inbox.
 //
 // Scoped to records that have something to lose (`password_set`), so a login with only
-// the random throwaway still gets PocketBase's ordinary verification behaviour.
+// the random fill still gets PocketBase's ordinary verification behaviour.
 //
 // Fail-safe: a save failure is logged and the sign-in proceeds. Refusing it would
 // strand the holder, which is the outcome this exists to prevent.
@@ -133,7 +186,7 @@ func bindOTPPasswordPreservation(app core.App) {
 		if err := e.App.Save(e.Record); err != nil {
 			e.App.Logger().Error(
 				"could not pre-verify badge login; OTP sign-in may reset its password",
-				"badgeUser", e.Record.Id, "error", err)
+				"cardholder", e.Record.Id, "error", err)
 		}
 		return e.Next()
 	})
@@ -145,19 +198,4 @@ func bindOTPPasswordPreservation(app core.App) {
 // (`password_set`).
 func otpWouldEraseAKnownPassword(rec *core.Record) bool {
 	return rec != nil && rec.GetBool("password_set") && !rec.Verified()
-}
-
-// isBadgeManager reports whether an actor may write the protected fields: a superuser,
-// or an operator holding `enroll` (the capability that governs the badge tier).
-// Naming the operator collection matters — a badge record has no `permissions` field,
-// so the capability test alone would merely be false rather than wrong, but stating it
-// keeps the intent legible against a future tier that happens to have one.
-func isBadgeManager(auth *core.Record) bool {
-	if auth == nil {
-		return false
-	}
-	if auth.IsSuperuser() {
-		return true
-	}
-	return auth.Collection().Name == "users" && authz.HasCapability(auth, authz.CapEnroll)
 }

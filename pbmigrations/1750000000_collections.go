@@ -8,6 +8,7 @@ package pbmigrations
 import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/migrations"
+	"github.com/pocketbase/pocketbase/tools/types"
 )
 
 // The policy graph. Cross-references are PocketBase relations; the KV mirror
@@ -162,13 +163,35 @@ func init() {
 			return err
 		}
 
-		// --- cardholders: people who hold credentials (IdP/LDAP/CSV identities),
-		// NOT PocketBase logins. Named "cardholders" to avoid colliding with
-		// PocketBase's built-in "users" auth collection; mirrored to KV under the
-		// user.{id} key prefix to match the policy contract. ---
-		cardholders := core.NewBaseCollection("cardholders")
+		// --- cardholders: the people a PACS is about. An AUTH collection, so one
+		// person is one record whether or not they ever sign in. Named
+		// "cardholders" to avoid colliding with PocketBase's built-in "users"
+		// (the OPERATOR tier); mirrored to KV under the user.{id} key prefix to
+		// match the policy contract. internal/badgeapi's package doc has the
+		// reasoning for one collection rather than a login record beside the
+		// person. ---
+		cardholders := core.NewAuthCollection("cardholders")
 		cardholders.Fields.Add(&core.TextField{Name: "external_id"}) // IdP/LDAP/CSV key, nullable
 		cardholders.Fields.Add(&core.TextField{Name: "name"})
+		// REPLACES the required system email field NewAuthCollection installs, so
+		// it stays optional exactly as it was before this collection became an
+		// auth collection.
+		//
+		// Optional because email here is UNIQUE, and plenty of cardholders
+		// genuinely have no address: contractors and cleaning crews, hourly staff
+		// at sites that issue no mailboxes, and the non-person cards every real
+		// install carries ("Loading Dock Spare", "Fire Dept Lockbox"). Requiring it
+		// would force a SYNTHETIC unique address per such person, which is worse
+		// than blank in every direction — the field stops meaning "how to reach
+		// this person", something has to mint them, and they can be mailed to by
+		// accident. An LDAP/CSV import with a sparse email column would hard-fail
+		// rather than import, and `external_id` above exists precisely because
+		// identity arrives from an IdP rather than an inbox.
+		//
+		// This is NOT what stops such a person signing in — the AuthRule below is.
+		// PocketBase re-enforces System/Hidden on a supplied field but leaves
+		// Required alone, and the unique index it generates is `WHERE email != ''`,
+		// so blanks do not collide.
 		cardholders.Fields.Add(&core.EmailField{Name: "email"})
 		cardholders.Fields.Add(&core.SelectField{
 			Name:      "status",
@@ -180,9 +203,78 @@ func init() {
 			CollectionId: roles.Id,
 			MaxSelect:    9999,
 		})
+		// badge_login: may this person sign in to see their own badge? An explicit
+		// operator-set flag, and THE gate — every cardholder is an auth record
+		// carrying a random password nobody has seen, so this flag, via the
+		// AuthRule below, is what separates "a person in the system" from "an
+		// account". Nothing else is load-bearing for that.
+		//
+		// Deliberately NOT the built-in `verified` field, which would be a trap:
+		// PocketBase WRITES `verified` itself (auth-with-otp sets it on a first
+		// successful code), and requestOTP does not consult the AuthRule at all —
+		// so an unverified person could request a code, submit it, have PocketBase
+		// flip the flag, and only then be measured against a rule that now passes.
+		// A `verified`-gated AuthRule opens itself on first use.
+		cardholders.Fields.Add(&core.BoolField{Name: "badge_login"})
+		// kind: which badge shape this person is. NOT an expiry and NOT an access
+		// level — validity lives on the credential's valid_from/valid_until, which
+		// the edge enforces. It decides what the QR encodes (an inert identifier
+		// for staff, the credential VALUE for a visitor) and which lifecycle rules
+		// apply (see internal/badgeapi, internal/badgesweep).
+		//
+		// Not required, and blank means an ordinary cardholder. That is deliberate:
+		// every fork on this field asks "is this a visitor?", so the only value
+		// that must be set correctly is `visitor`, and an unset field can never
+		// accidentally mean "put a working credential in the QR code".
+		cardholders.Fields.Add(&core.SelectField{
+			Name:      "kind",
+			Values:    []string{"holder", "visitor"},
+			MaxSelect: 1,
+		})
+		// password_set: does this person know their own password? A badge login is
+		// created with an unguessable throwaway, because PocketBase requires a
+		// non-blank password on every auth record regardless of the enabled
+		// methods — so without this flag there is no way to tell "knows their
+		// password" from "has a random string nobody has ever seen". The
+		// difference decides whether a password change must prove the old one.
+		cardholders.Fields.Add(&core.BoolField{Name: "password_set"})
 		addTimestamps(cardholders)
 		// keyed in KV by PB id (user.{id}); external_id is just a lookup aid.
 		cardholders.AddIndex("idx_cardholders_external_id", false, "external_id", "")
+
+		// --- auth options ---
+		// Email + password AND OTP. Password matters most at the small installs
+		// least likely to run a mail server: with OTP as the only method every
+		// sign-in is an emailed code, so the whole badge tier is inert without
+		// SMTP. Visitors are still minted without a password and use OTP.
+		cardholders.PasswordAuth.Enabled = true
+		// Email only. There is no username field, and adding one would create a
+		// second way to name the same person.
+		cardholders.PasswordAuth.IdentityFields = []string{"email"}
+		cardholders.OAuth2.Enabled = true
+		cardholders.OTP.Enabled = true
+		cardholders.OTP.Duration = 900 // 15 min — long enough to find the mail on a phone
+		cardholders.OTP.Length = 8
+		// A visitor would otherwise receive the OTP mail and then, seconds later, a
+		// "new device login" alert for the same action. Confusing enough to be a
+		// support call.
+		cardholders.AuthAlert.Enabled = false
+		// AuthRule gates who may obtain a token: an opted-in, active person. Note
+		// it is checked at ISSUANCE only (apis.recordAuthResponse), NOT on every
+		// authenticated request — so it stops a new sign-in and the next token
+		// refresh, but does not kill a live session. Withdrawing a suspended
+		// person's badge face is done server-side in internal/badgeapi, which is
+		// the mechanism that acts immediately.
+		cardholders.AuthRule = types.Pointer(`badge_login = true && status = "active"`)
+		// ManageRule lets an operator holding `enroll` reset a stuck login's
+		// password through the collection API without proving the old one.
+		cardholders.ManageRule = types.Pointer(`@request.auth.collectionName = "users" && @request.auth.permissions ~ "enroll"`)
+		// Explicit, and load-bearing: an auth collection reached through the
+		// dashboard defaults to OPEN SIGNUP, which here would let anyone mint
+		// themselves a person record. 1750000009/1750000016 narrow this to the
+		// `enroll` capability; stating it here means the collection is never open
+		// even for the instant between migrations.
+		cardholders.CreateRule = nil // superusers only until 1750000009 runs
 		if err := app.Save(cardholders); err != nil {
 			return err
 		}

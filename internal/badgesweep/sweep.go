@@ -19,12 +19,11 @@
 //
 // # Deliberately NOT done here
 //
-// The sweep does not delete visitor badge logins or cardholders. How long to keep a
-// record of who visited is a data-retention decision that belongs to the install (and
-// often to its lawyers), not to a background job inventing a policy. Keeping the
-// login also means a returning visitor is recognised and refreshed by
-// badgeapi's mint route rather than duplicated. Operators can delete a visitor
-// outright; that path is unchanged.
+// The sweep does not delete visitors. How long to keep a record of who visited is a
+// data-retention decision that belongs to the install (and often to its lawyers), not
+// to a background job inventing a policy. Keeping the record also means a returning
+// visitor is recognised and refreshed by badgeapi's mint route rather than
+// duplicated. Operators can delete a visitor outright; that path is unchanged.
 //
 // Scope is `visitor` badges only. An expired STAFF credential is left alone on
 // purpose: an operator may well be about to extend it, and silently flipping it to
@@ -46,10 +45,11 @@ import (
 // the query off a busy database. A var so tests can shorten it.
 var sweepInterval = time.Hour
 
-// badgeCollection is the auth collection whose `visitor` records this sweep covers.
+// badgeCollection is the collection whose `visitor` records this sweep covers — the
+// cardholders themselves, since a visitor IS a cardholder with kind = visitor.
 // Duplicated from badgeapi rather than imported: this package has no other reason to
 // depend on the HTTP layer.
-const badgeCollection = "badge_users"
+const badgeCollection = "cardholders"
 
 // Sweeper periodically revokes expired visitor credentials. It owns its own lifetime
 // (like armrelease.Releaser): Start launches the loop, Stop ends it.
@@ -147,18 +147,20 @@ func (s *Sweeper) Sweep(now time.Time) int {
 	return revoked
 }
 
-// visitorCardholderIDs returns the cardholder ids behind every `visitor` badge login.
+// visitorCardholderIDs returns the ids of every `visitor` cardholder.
+//
+// One query, no relation to walk: before the badge login and the person were the same
+// record, this had to enumerate logins and dereference each one's `cardholder`, and a
+// login whose person had gone contributed nothing but a blank id to skip.
 func (s *Sweeper) visitorCardholderIDs() ([]string, error) {
 	// The filter value is a constant, not user input.
-	badges, err := s.app.FindRecordsByFilter(badgeCollection, "kind = 'visitor'", "", 0, 0)
+	visitors, err := s.app.FindRecordsByFilter(badgeCollection, "kind = 'visitor'", "", 0, 0)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(badges))
-	for _, b := range badges {
-		if id := b.GetString("cardholder"); id != "" {
-			out = append(out, id)
-		}
+	out := make([]string, 0, len(visitors))
+	for _, v := range visitors {
+		out = append(out, v.Id)
 	}
 	return out, nil
 }
