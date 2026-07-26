@@ -183,22 +183,39 @@ never emailed — only the raise. There is no `notify.*` config block and no
 
 > **SMTP is optional, but it decides which sign-in methods work.** One-time codes and
 > the forgot-password link are both emails. With no mail server configured, the only
-> way into a badge is a **password an operator sets when issuing the login** (Cardholder
-> → Badge login → Issue login) or an OAuth2 provider. Visitor minting still works — the
-> pass is valid either way — but the invite mail is not sent and the visitor has no way
-> to sign in, so visitor passes are effectively an SMTP-only feature. See
-> [operators.md](operators.md#sign-in-methods).
+> way into a badge is a **password an operator sets in person** — on the cardholder form
+> for a staff holder (Cardholder → Badge login), or in the **Initial password** field on
+> the visitor mint form — or an OAuth2 provider. Neither is ever emailed. So the badge
+> tier, visitors included, works with no mail server at all; what is lost is
+> self-service (a holder cannot recover their own password) and the invite mail, whose
+> content an operator can simply say out loud. The mint screen shows the badge link and a
+> QR of it for exactly that handover. See [operators.md](operators.md#sign-in-methods).
 
 ### Rate limits and `TrustedProxy` (accessd)
 
-Migrations `1750000032` and `1750000034` ship default PocketBase rate limits for the
-badge routes — they are the first routes reachable by someone who is not an operator,
-and an unconfigured limiter is wide open. Defaults, per client: 10 unlocks/min, 60 badge
-loads/min, 5 OTP requests/min (that endpoint sends an email per call, so it is both a
-mail-bomb and an SMTP-quota vector), 10 password sign-ins/min (credential stuffing), 3
-password-reset requests/min, and 5 password changes/min (the change route checks the
-current password, so it is an oracle for guessing it from a stolen session). Adjust them
-in the PocketBase admin under **Settings → Rate limits**.
+Migrations [`1750000032`](../pbmigrations/1750000032_badge_rate_limits.go),
+[`1750000039`](../pbmigrations/1750000039_remote_area_output.go) and
+[`1750000041`](../pbmigrations/1750000041_badge_floorplan.go) ship default PocketBase rate
+limits for the badge routes — they are the first routes reachable by someone who is not an
+operator, and an unconfigured limiter is wide open. Defaults, per client:
+
+| Rule | Limit | Why that number |
+|---|---|---|
+| `POST /api/badge/unlock/` | 10/min | it opens a door |
+| `POST /api/badge/areas/` (arm + disarm) | 6/min | lower: disarming turns intrusion detection off |
+| `POST /api/badge/outputs/` | 10/min | momentary, like an unlock |
+| `GET /api/badge/me` | 60/min | a page load |
+| `GET /api/badge/live` | 60/min | a page load, but it walks the whole grant set |
+| `cardholders:requestOTP` | 5/min | sends an email per call — a mail-bomb *and* an SMTP-quota vector |
+| `cardholders:authWithPassword` | 10/min | credential stuffing |
+| `cardholders:requestPasswordReset` | 3/min | also an email per call |
+| `POST /api/badge/password` | 5/min | it checks the current password, so it is an oracle for guessing it from a stolen session |
+
+Adjust them in the PocketBase admin under **Settings → Rate limits**.
+
+`GET /api/badge/preview/{id}` is deliberately absent: it is operator-only (`enroll`), so it
+sits behind the same trust boundary as every other operator route and none of those are
+limited. It is audited instead — see [operators.md](operators.md#seeing-a-holders-badge-apibadgepreview).
 
 > **Behind a reverse proxy, set `TrustedProxy`.** PocketBase's limiter keys on client
 > IP. Without the proxy configured in **Settings → Application**, every request appears

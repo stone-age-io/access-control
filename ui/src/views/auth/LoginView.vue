@@ -103,8 +103,8 @@ const subtitle = computed(() =>
     <!-- Absolutely positioned so it cannot shift the centred card, and reachable before
          signing in: someone squinting at a bright form at night should not have to get
          past it first. -->
-    <div class="fixed top-2 right-2 pad-safe-top z-10">
-      <ThemeToggle size="sm" />
+    <div class="fixed top-1 right-1 pad-safe-top z-10">
+      <ThemeToggle />
     </div>
 
     <div class="w-full max-w-sm">

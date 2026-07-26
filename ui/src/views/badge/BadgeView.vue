@@ -151,31 +151,38 @@ onMounted(load)
         <span v-if="refreshing" class="loading loading-spinner loading-xs shrink-0"></span>
       </div>
 
-      <div class="flex items-center gap-0.5 shrink-0">
-        <ThemeToggle size="sm" />
+      <div class="flex items-center shrink-0">
+        <ThemeToggle />
 
         <!-- Account menu. Sign out used to be a bare button in the header, which put the
-             one irreversible action on this screen a thumb-width from the tabs. -->
+             one irreversible action on this screen a thumb-width from the tabs.
+             `btn-square` with no size modifier: 48px, see ThemeToggle for why `btn-sm`
+             is the wrong tool here. -->
         <div class="dropdown dropdown-end">
           <button
             tabindex="0"
-            class="btn btn-sm btn-ghost btn-square"
+            class="btn btn-ghost btn-square"
             aria-label="Account menu"
             :title="badgeAuth.email || 'Account'"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
             </svg>
           </button>
-          <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box z-50 w-60 p-2 shadow-lg">
+          <!-- Not `menu-sm`: it pads rows to .25rem, giving ~28px tall targets stacked a
+               few pixels apart — and one of them signs you out. `min-h-11` puts every row
+               at the 44px floor, which the default menu padding alone does not reach. -->
+          <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-50 w-64 p-2 shadow-lg">
             <li class="menu-title truncate">{{ badgeAuth.email || 'Signed in' }}</li>
-            <li><button type="button" @click="manualRefresh">Refresh</button></li>
+            <li><button type="button" class="min-h-11" @click="manualRefresh">Refresh</button></li>
             <li>
-              <button type="button" @click="openPasswordModal">
+              <button type="button" class="min-h-11" @click="openPasswordModal">
                 {{ badgeAuth.hasPassword ? 'Change password' : 'Set a password' }}
               </button>
             </li>
-            <li><button type="button" class="text-error" @click="signOut">Sign out</button></li>
+            <li>
+              <button type="button" class="min-h-11 text-error" @click="signOut">Sign out</button>
+            </li>
           </ul>
         </div>
       </div>
@@ -193,12 +200,14 @@ onMounted(load)
     </div>
 
     <template v-else-if="me">
-      <!-- Tabs stay pinned: they are how you get to the other half of the badge. -->
+      <!-- Tabs stay pinned: they are how you get to the other half of the badge.
+           `h-11` because DaisyUI's `.tab` is 2rem — fine in a dense desktop console, too
+           short for the primary navigation of a one-handed phone screen. -->
       <div class="shrink-0 px-3">
         <div role="tablist" class="tabs tabs-boxed mx-auto max-w-sm">
           <button
             role="tab"
-            class="tab flex-1"
+            class="tab h-11 flex-1"
             :class="tab === 'badge' ? 'tab-active' : ''"
             @click="setTab('badge')"
           >
@@ -206,7 +215,7 @@ onMounted(load)
           </button>
           <button
             role="tab"
-            class="tab flex-1 gap-1"
+            class="tab h-11 flex-1 gap-1"
             :class="tab === 'access' ? 'tab-active' : ''"
             @click="setTab('access')"
           >

@@ -268,10 +268,15 @@ foreach ($v in $visitors) {
   $ID['ch:'+$v.email] = New-Cardholder @{
     external_id=''; name=$v.name; email=$v.email; status='active'; roles=@($ID[$v.role])
     kind='visitor'; badge_login=$true
-    # A visitor gets no password: they sign in with an emailed one-time code, which is
-    # the whole point of not making them invent one for a one-day pass. verified=true
-    # because the code round-trip is the only identity check they get.
-    verified=$true; password_set=$false
+    # A real visitor normally gets no password — an emailed one-time code is the whole
+    # point of not making someone invent one for a one-day pass. The DEMO gives them the
+    # same password as the staff badges, because a demo you cannot sign into without
+    # configuring SMTP is not much of a demo, and because the operator-set initial
+    # password is itself a real feature: it is what makes the badge tier usable on an
+    # install with no mail server (the visitor mint form has a field for it).
+    # verified=true because for a real visitor the code round-trip is the only identity
+    # check they get.
+    verified=$true; password=$DEMO_BADGE_PW; password_set=$true
   }
 }
 

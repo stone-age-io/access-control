@@ -48,6 +48,7 @@ should report `created=0 failed=0`.
 | Aux output on a badge | `ag-relays` grants the East gate strike (Facilities and Security hold it) |
 | Remote opt-ins | unlock on `east-lobby` + `hq-east-stair`; arm/disarm on `dc-warehouse`; the gate strike; floor plan on `east-office` |
 | Operator's own badge | `admin@local.dev` is linked to Sarah Chen's cardholder, so "My badge" in the profile menu works |
+| Troubleshooting a badge | the expired and revoked visitors are the ones to open — **View their badge** on a visitor or cardholder shows what that person's own screen says, which is how you tell "expired" from "never issued" from "no login" without cross-referencing four collections |
 | History | 9 taps and 3 unacknowledged alarms, backdated minutes to hours |
 
 The arm-rights asymmetry is the part worth looking at: the cleaning crew can arm the
@@ -67,7 +68,14 @@ The seed prints these when it finishes:
 | Operator console (`/login`) | `admin@local.dev` | `changeme123` (from fixture `1750000010`) |
 | Badge — staff (`/login?as=badge`) | `sarah.chen@stoneage.example`, `marcus.johnson@…`, `priya.patel@…`, `emily.rodriguez@…` | `badge-demo-1234` |
 | Badge — fixture cardholder | `alice@example.com` | `changeme123` |
-| Badge — visitor | `dana.whitfield@acme.example` | emailed one-time code — **needs SMTP** |
+| Badge — visitor | `dana.whitfield@acme.example` | `badge-demo-1234` |
+
+A real visitor normally signs in with an **emailed one-time code**, so their pass would need
+SMTP. The seed gives the demo visitors the staff password instead — partly so the demo works
+with no mail server, and partly because that operator-set initial password is a real feature
+rather than a demo shortcut: it is the field on the visitor mint form that makes the badge
+tier usable on an install with no mail at all. It is never emailed; an operator hands it over
+at the desk, along with the badge link and QR the mint screen shows.
 
 The other nine employees have **no** badge login, which is the realistic default: most
 people in a PACS only ever tap a card. `david.kim@stoneage.example` is the one to try if

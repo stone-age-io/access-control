@@ -452,6 +452,26 @@ silent empty `theme.css`/`{}` `branding.json` when unconfigured, so a stock inst
 overlay logo, else the built-in inline mark. `branding.example/` is the committed template. Mirrors the sibling
 `platform`/`helpdesk` apps' branding system.
 
+The UI is an installable **PWA**, copied from the sibling `platform` app so the three consoles install the same way:
+`ui/public/` holds `manifest.json` (standalone, `start_url: /`, the shared Stone Age mark at 192/512) and `sw.js`,
+Vite copies them to the embed root, and `main.ts` registers the worker **in PROD only** (in dev a registration
+outlives a Vite restart and serves a stale bundle). The service worker **caches nothing** — and here that is a
+safety property, not just platform's simplicity one: this app's job is to say what a badge opens *right now*, so a
+cached `/api/badge/me` would show a revoked pass as live. Offline resilience belongs at the edge, where
+`internal/controller`'s policy cache is designed to be stale safely. It exists solely to satisfy Chrome's install
+criteria. Two deliberate deviations from platform: the viewport keeps pinch-zoom (platform sets
+`user-scalable=no`; WCAG 1.4.4, and `touch-action: manipulation` in `main.css` already removes the tap delay that
+motivates disabling it), and `rel="icon"` points at `icon-192.png` rather than platform's zero-byte `favicon.ico`.
+`start_url: /` is right for both tiers rather than a compromise: the sign-in page remembers the last tier per
+browser, so a holder's installed app lands on the badge form and an operator's on theirs.
+
+**Touch targets are 44px minimum on anything a badge holder taps.** `main.css` lifts `btn-xs`/`btn-sm` to a
+`min-height` of 2.75rem, but **only below 1023px and only min-height** — so `btn-square btn-sm` is a trap: DaisyUI
+emits `.btn-sm{height:2rem}` *after* `.btn-square{height:3rem}`, making that combination 48 wide by 32 tall on a
+laptop and 48×44 on a phone. Badge chrome therefore uses unmodified `.btn .btn-square` (48px at every breakpoint),
+adds `min-h-11` to dropdown menu rows (DaisyUI's `menu-sm` pads them to ~28px, and one of them signs you out), and
+`h-11` to the badge tabs (`.tab` is 2rem — fine in a dense console, short for a phone's primary navigation).
+
 ## Conventions
 
 - Module path `github.com/stone-age-io/access-control`, Go 1.26. Structured logging via `zap` wrapper

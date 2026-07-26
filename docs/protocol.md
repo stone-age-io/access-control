@@ -246,6 +246,16 @@ A badge holder cannot clear an arm override — `arm-clear` is an operator's "re
 schedule", and `internal/armrelease` already releases a one-shot disarm on a scheduled
 area, so a holder's disarm strands nothing.
 
+**Reading a badge adds no wire surface at all.** `GET /api/badge/me`, `/api/badge/live`, and
+the operator's `GET /api/badge/preview/{id}` publish nothing and write nothing — they read a
+`policysnapshot` of `ACC_POLICY` plus the PocketBase records the codes in it resolve to.
+Worth stating for the preview in particular, because "let an operator see a holder's badge"
+has an obvious wire-level implementation that was rejected: minting that holder a session
+and letting the operator drive it. A badge action stamps the **cardholder** as its actor, so
+those commands would be indistinguishable on the wire and in `events` from the holder's own.
+An operator who needs a door opened publishes `cmd.grant` through the operator route under
+their own `command` capability, where `actor` is their email rather than `badge:<id>`.
+
 Each input's **contact sense** is configurable per install (`dpsContact`/
 `rexContact`/`aux_input.contact`, see Policy KV below): a normally-open vs
 normally-closed contact is folded onto the board's electrical polarity so "active"

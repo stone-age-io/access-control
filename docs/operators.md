@@ -410,8 +410,12 @@ All three are enabled on `cardholders`
 | **OAuth2** | staff with an existing identity; providers are configured in the PocketBase admin | no |
 
 > **Without SMTP, a password is the only way in.** OTP and the forgot-password link are
-> both emails. On an install with no mail server, set an initial password when you issue
-> the login and hand it over in person — otherwise the badge tier is inert.
+> both emails. On an install with no mail server, set an initial password and hand it over
+> in person — otherwise the badge tier is inert. There is a field for it on **both** issuing
+> paths: the cardholder form for a staff holder, and **Initial password** on the visitor
+> mint form. The visitor path needs it most, because a visitor's only other route in is an
+> emailed code: without a password, minting on an SMTP-less install produces a pass its
+> holder can never see.
 
 Both tiers share **one sign-in page** at `/login`, with an explicit two-way selector
 (*My badge* / *Operator*) that is deep-linkable as `?as=badge` — what the invite mail
@@ -436,7 +440,8 @@ An initial password is **optional and never emailed**: mail is stored indefinite
 forwarded, and synced to devices, so a door-opening password sent by mail would outlive
 every other control around it. The invite mail says only *where* to sign in.
 
-A holder sets or changes their own password from the badge page. The `password_set`
+A holder sets or changes their own password from the badge page, under the account menu in
+its header. The `password_set`
 flag records whether they have one, which decides whether the current password must be
 supplied to change it: a holder who signed in by one-time code is setting a *first*
 password and has nothing to prove, while one who already has a password must supply it

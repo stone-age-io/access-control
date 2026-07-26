@@ -44,3 +44,21 @@ Promise.all([
     })
   }
 })
+
+/**
+ * Register the service worker, which exists only so the browser offers "Install".
+ * It caches nothing (see ui/public/sw.js) — this app must never show a stale answer to
+ * "what does my badge open right now".
+ *
+ * PROD only: in dev, Vite serves the modules a worker would sit in front of, and a
+ * registration survives a server restart, so it is a reliable way to spend an afternoon
+ * debugging a stale bundle.
+ */
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((reg) => console.log('SW registered:', reg.scope))
+      .catch((err) => console.error('SW registration failed:', err))
+  })
+}

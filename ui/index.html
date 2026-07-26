@@ -7,6 +7,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Stone Access</title>
     <meta name="theme-color" content="#0a0a0a">
+    <!-- PWA: installable to a home screen, which is the point for a badge holder —
+         a badge you tap an icon for beats one you find a bookmark for. Matches the
+         sibling platform/helpdesk apps (see CLAUDE.md's cross-repo note); the
+         service worker is deliberately a no-op that exists only to satisfy Chrome's
+         install criteria. -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/icon-192.png">
+    <link rel="apple-touch-icon" href="/icon-192.png">
     <!-- Optional operator branding overlay; served with a silent empty fallback,
          so it's harmless when no overlay is configured. Loaded after the bundled
          DaisyUI CSS so its [data-theme] var overrides win by cascade order. -->

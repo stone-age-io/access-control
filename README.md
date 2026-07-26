@@ -48,6 +48,18 @@ internal/health/        accessd-side heartbeat subscriber → controllers.last_s
 internal/authz/         operator capability checks for accessd's custom HTTP routes (commandapi, modelsapi)
 internal/commandapi/    UI→NATS command bridge (grant/posture/aux output), gated by the `command` capability
 internal/modelsapi/     GET /api/models — enum/options metadata for the UI
+internal/simulateapi/   POST /api/simulate — the access simulator; a decision oracle, so operator-only
+internal/badgeapi/      the badge tier: a holder's own badge + remote unlock/arm/pulse, and the operator
+                        routes that mint a visit and read a holder's badge for troubleshooting
+internal/badgesweep/    marks expired visitor credentials revoked — hygiene, not enforcement
+internal/policysnapshot/ point-in-time snapshot of ACC_POLICY, shared by the simulator and the badge tier
+internal/mirror/        PocketBase record hooks → one ACC_POLICY KV key per record (+ boot reconcile/prune)
+internal/policykv/      the wire contract: KV key scheme + JSON shapes shared by mirror and PolicyStore
+internal/subjects/      every NATS subject is built and parsed here — never hand-formatted elsewhere
+internal/notify/        alarm/fire email sink (a second ACC_EVENTS durable); inert until opted into
+internal/disarm/        entry-disarm sink: a valid grant at a `disarm_on_grant` portal disarms its area
+internal/armrelease/    releases a one-shot disarm override once a scheduled area's base state is disarmed
+internal/status/        upward device shadow: ACC_STATUS → point_status projection
 internal/changelog/     control-plane audit log: API-driven policy edits + logins → audit_logs collection
 internal/audit/         JetStream consumer → PocketBase events collection
 internal/natsx/         NATS connection + KV helpers
@@ -60,9 +72,9 @@ demo/                   dev-only: seed.ps1 (demo data) + access-demo.yaml (rule-
 ## Web UI
 
 `accessd` serves a Vue 3 management console (locations + a location map, schedules,
-portals, controllers, access groups, roles, cardholders, credentials, an events
-timeline, a live operational monitor, operator management, and the control-plane
-audit log) at `/`. It is
+portals, controllers, areas, aux I/O, access groups, roles, cardholders, credentials,
+visitor passes, an events timeline, an alarm console, reports, a live operational monitor,
+operator management, and the control-plane audit log) at `/`. It is
 compiled into `internal/webui/public` and **`//go:embed`-ed into the accessd
 binary** — there is no `pb_public` directory to ship; the binary is
 self-contained.
@@ -82,6 +94,21 @@ action is authorized by the same pure decision function the edge runs, so a badg
 never do remotely what it could not do in person. `cardholders` is itself the auth
 collection for this tier — one person is one record whether or not they ever sign in — and
 `docs/operators.md` covers the boundary between the two tiers.
+
+That page is built as a **phone screen, not a document**: a fixed-height shell that never
+scrolls as a whole, its long lists grouped by building and bounded, a light/dark toggle and
+an account menu in the header, and 44px-minimum tap targets throughout. The whole UI is an
+**installable PWA** (`ui/public/manifest.json`), which matters most here — a badge you tap
+an icon for beats one you find a bookmark for. Its service worker caches **nothing** on
+purpose: this app's job is to say what a badge opens *right now*, and offline resilience
+belongs at the edge, where the controller decides locally.
+
+For the operator side of the same tier, **Visitors** issues and ends time-bound passes, and
+`GET /api/badge/preview/{id}` renders *what a holder's own badge says* — the fastest answer
+to "my pass doesn't work", since it reuses the holder's exact payload and the badge's own
+components. It is read-only and mints no session: a badge action is recorded as the
+**holder's**, so acting through a borrowed badge session would be indistinguishable from
+them in the audit trail.
 
 The console is **rebrandable at runtime without a rebuild**: point `branding.dir`
 (env `SA_BRANDING_DIR`) at a host directory of `theme.css` / `logo.svg` /
