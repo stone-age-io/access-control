@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -321,6 +322,9 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			Roles:  resolveCodes(app, "roles", r.GetStringSlice("roles")),
 		}
 	case "credentials":
+		if err := validKey("credential value", r.GetString("value")); err != nil {
+			return "", nil, err
+		}
 		payload = policykv.Credential{
 			Value:      r.GetString("value"),
 			User:       r.GetString("user"), // cardholder id (relation value as-is)
@@ -476,6 +480,31 @@ func validToken(what, v string) error {
 	}
 	if reservedTokens[v] {
 		return fmt.Errorf("%s %q is a reserved subject keyword", what, v)
+	}
+	return nil
+}
+
+// credValueRe compiles the shared charset from the wire contract, so the mirror and
+// the `credentials.value` field Pattern cannot drift apart.
+var credValueRe = regexp.MustCompile(policykv.CredentialValuePattern)
+
+// validKey rejects a credential value that cannot form a valid NATS KV key. A
+// credential is mirrored to "cred.<value>", and nats.go rejects a Put whose key
+// leaves its charset — so an unchecked value is a record that saves happily, looks
+// active in the UI, and silently never reaches any controller. That is the one
+// fail-safe hole in the mirror worth closing explicitly: every other malformed
+// value is already logged and skipped, but this one used to surface only as a KV
+// error with no operator-visible cause.
+//
+// This is a KEY restriction, not a subject-token one (validToken): a credential
+// value never appears in a subject, so '.' is allowed inside it. See
+// policykv.CredentialValuePattern.
+func validKey(what, v string) error {
+	if v == "" {
+		return fmt.Errorf("%s is empty", what)
+	}
+	if !credValueRe.MatchString(v) {
+		return fmt.Errorf("%s %q must use only letters, digits and -_=/. and must not end with '.' (NATS KV key charset)", what, v)
 	}
 	return nil
 }

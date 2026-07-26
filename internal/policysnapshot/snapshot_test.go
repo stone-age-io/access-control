@@ -2,6 +2,7 @@ package policysnapshot
 
 import (
 	"encoding/json"
+	"sort"
 	"testing"
 	"time"
 
@@ -340,5 +341,74 @@ func TestBuild_MalformedValueSkipped(t *testing.T) {
 	got := Build(e).Simulate("C1", "door1", at, "")
 	if got.CredKnown || got.Reason != policy.ReasonDenyUnknownCredential {
 		t.Fatalf("malformed cred should be absent: got credKnown=%v reason=%q", got.CredKnown, got.Reason)
+	}
+}
+
+// TestPortalsFor covers the badge view's door list. It answers "which doors are on
+// this person's badge at all" — deliberately NOT "which would open right now", so it
+// must ignore schedules, postures, and credential state while still failing safe on
+// dangling references.
+func TestPortalsFor(t *testing.T) {
+	// A second portal + group + role, so multi-role and dedup are exercised.
+	entries := baseEntries(t)
+	entries[policykv.PrefixPortal+"door2"] = mk(t, policykv.Portal{
+		Code: "door2", Type: "door", Location: "hq", Posture: "secure",
+	})
+	entries[policykv.PrefixGroup+"g2"] = mk(t, policykv.AccessGroup{
+		Code: "g2", Portals: []string{"door1", "door2"}, Schedule: "s1",
+	})
+	entries[policykv.PrefixRole+"r2"] = mk(t, policykv.Role{Code: "r2", Groups: []string{"g2"}})
+	// u1 holds both roles, whose groups overlap on door1.
+	entries[policykv.PrefixUser+"u1"] = mk(t, policykv.User{
+		ID: "u1", Status: "active", Roles: []string{"r1", "r2"},
+	})
+	// A group referencing a portal that does not exist, plus a dangling role and
+	// group reference — each must contribute nothing rather than panic or appear.
+	entries[policykv.PrefixGroup+"g3"] = mk(t, policykv.AccessGroup{
+		Code: "g3", Portals: []string{"ghost-door"}, Schedule: "s1",
+	})
+	entries[policykv.PrefixRole+"r3"] = mk(t, policykv.Role{
+		Code: "r3", Groups: []string{"g3", "missing-group"},
+	})
+	entries[policykv.PrefixUser+"u2"] = mk(t, policykv.User{
+		ID: "u2", Status: "active", Roles: []string{"r3", "missing-role"},
+	})
+
+	snap := Build(entries)
+
+	got := snap.PortalsFor("u1")
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "door1" || got[1] != "door2" {
+		t.Errorf("PortalsFor(u1) = %v, want [door1 door2] (deduped across overlapping groups)", got)
+	}
+
+	// Dangling refs and unknown portal codes yield nothing, not a phantom door.
+	if got := snap.PortalsFor("u2"); len(got) != 0 {
+		t.Errorf("PortalsFor(u2) = %v, want empty (all references dangle)", got)
+	}
+
+	// An unknown user is not an error and grants nothing.
+	if got := snap.PortalsFor("nobody"); got != nil && len(got) != 0 {
+		t.Errorf("PortalsFor(unknown) = %v, want empty", got)
+	}
+}
+
+// TestPortalLocationAndType back the command subject the badge unlock publishes to;
+// an unknown portal must report not-known rather than an empty-but-ok value, or the
+// caller would publish to a malformed subject.
+func TestPortalLocationAndType(t *testing.T) {
+	snap := Build(baseEntries(t))
+
+	if loc, ok := snap.PortalLocation("door1"); !ok || loc != "hq" {
+		t.Errorf("PortalLocation(door1) = (%q, %v), want (hq, true)", loc, ok)
+	}
+	if ptype, ok := snap.PortalType("door1"); !ok || ptype != "door" {
+		t.Errorf("PortalType(door1) = (%q, %v), want (door, true)", ptype, ok)
+	}
+	if _, ok := snap.PortalLocation("ghost"); ok {
+		t.Error("PortalLocation(ghost) reported ok for an unknown portal")
+	}
+	if _, ok := snap.PortalType("ghost"); ok {
+		t.Error("PortalType(ghost) reported ok for an unknown portal")
 	}
 }

@@ -55,6 +55,7 @@ const form = ref({
   auto_schedule: '',
   area: '',
   disarm_on_grant: false,
+  allow_remote_unlock: false,
   notify_on_alarm: false,
 })
 
@@ -121,6 +122,7 @@ async function loadRecord() {
       auto_schedule: p.auto_schedule || '',
       area: p.area || '',
       disarm_on_grant: !!p.disarm_on_grant,
+      allow_remote_unlock: !!p.allow_remote_unlock,
       notify_on_alarm: !!p.notify_on_alarm,
     }
     markClean()
@@ -203,6 +205,7 @@ async function handleSubmit() {
       auto_schedule: form.value.auto_schedule,
       area: form.value.area,
       disarm_on_grant: form.value.disarm_on_grant,
+      allow_remote_unlock: form.value.allow_remote_unlock,
       notify_on_alarm: form.value.notify_on_alarm,
     }
     if (isEdit.value) {
@@ -403,6 +406,10 @@ onMounted(async () => {
             <FormField inline label="Email on alarm"
                        hint="Email opted-in operators when this door raises a forced/held-open alarm. Recipients are set per operator (Operators → Notify).">
               <input v-model="form.notify_on_alarm" type="checkbox" class="toggle toggle-primary" />
+            </FormField>
+            <FormField inline label="Allow remote unlock"
+                       hint="Let badge holders open this door from their badge page. Their own access still applies (schedule, validity, posture) — this only decides whether the door may be opened with no one present. Off by default.">
+              <input v-model="form.allow_remote_unlock" type="checkbox" class="toggle toggle-primary" />
             </FormField>
           </div>
         </div>

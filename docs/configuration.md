@@ -173,6 +173,29 @@ never emailed — only the raise. There is no `notify.*` config block and no
 > `disarm_on_grant` + an `area` on the portal in the UI). Like notify it is a
 > `DeliverNew` durable on `ACC_EVENTS`.
 
+> **The badge tier has no config either.** The badge routes
+> ([`internal/badgeapi`](../internal/badgeapi)) and the visitor-credential sweep
+> ([`internal/badgesweep`](../internal/badgesweep)) are **always started** and need no
+> settings — they are inert until an operator creates a `badge_users` record, and
+> remote unlock additionally needs a door to opt in via `allow_remote_unlock`
+> (default off). What *is* configurable lives in PocketBase settings rather than
+> here: SMTP (for OTP sign-in codes and visitor invites) and the rate limits below.
+
+### Rate limits and `TrustedProxy` (accessd)
+
+Migration `1750000032` ships default PocketBase rate limits for the badge routes —
+they are the first routes reachable by someone who is not an operator, and an
+unconfigured limiter is wide open. Defaults: 10 unlocks/min and 60 badge loads/min per
+client, plus 5 OTP requests/min (the OTP endpoint sends an email per call, so it is
+both a mail-bomb and an SMTP-quota vector). Adjust them in the PocketBase admin under
+**Settings → Rate limits**.
+
+> **Behind a reverse proxy, set `TrustedProxy`.** PocketBase's limiter keys on client
+> IP. Without the proxy configured in **Settings → Application**, every request appears
+> to come from the proxy and shares a single bucket — so one visitor's retries would
+> rate-limit the whole building. This is the same setting the audit log's `request_ip`
+> depends on.
+
 ## Branding (accessd-only)
 
 Point `branding.dir` at a host directory to override the embedded app name, logo,

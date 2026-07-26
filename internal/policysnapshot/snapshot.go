@@ -19,10 +19,12 @@
 package policysnapshot
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"time"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stone-age-io/access-control/internal/policy"
 	"github.com/stone-age-io/access-control/internal/policykv"
 )
@@ -181,6 +183,101 @@ func Build(entries map[string][]byte) *Snapshot {
 
 	s.rebuildHolidays()
 	return s
+}
+
+// SnapshotKV reads the current ACC_POLICY keyspace into the key→value map Build
+// consumes. It drains a WatchAll: the watcher re-delivers each key's latest value
+// and then a nil sentinel marking "all current keys delivered" — exactly the
+// snapshot the controller's PolicyStore syncs on boot, without leaving a watch
+// running.
+//
+// The cost is proportional to the whole keyspace, so a caller on a user-facing path
+// (as opposed to an operator pressing "simulate") should cache the result for a few
+// seconds rather than draining per request.
+func SnapshotKV(ctx context.Context, kv jetstream.KeyValue) (map[string][]byte, error) {
+	w, err := kv.WatchAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = w.Stop() }()
+
+	out := make(map[string][]byte)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case entry, ok := <-w.Updates():
+			if !ok {
+				return out, nil
+			}
+			if entry == nil {
+				return out, nil // initial sync complete
+			}
+			switch entry.Operation() {
+			case jetstream.KeyValuePut:
+				out[entry.Key()] = entry.Value()
+			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
+				delete(out, entry.Key())
+			}
+		}
+	}
+}
+
+// PortalsFor returns the portal codes the given cardholder id can be granted at,
+// walking the same user → roles → groups → portals path policy.Decide walks — but
+// WITHOUT the schedule/posture/credential checks, so it answers "which doors are on
+// this person's badge at all", not "which would open right now".
+//
+// It exists for the badge view's door list. Ordering is not defined (map iteration),
+// so callers that display it should sort.
+func (s *Snapshot) PortalsFor(userID string) []string {
+	u, ok := s.graph.Users[userID]
+	if !ok {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	for _, roleCode := range u.Roles {
+		role, ok := s.graph.Roles[roleCode]
+		if !ok {
+			continue // dangling reference — fail safe, contributes nothing
+		}
+		for _, groupCode := range role.Groups {
+			group, ok := s.graph.Groups[groupCode]
+			if !ok {
+				continue
+			}
+			for portalCode := range group.Portals {
+				if _, known := s.graph.Portals[portalCode]; known {
+					seen[portalCode] = struct{}{}
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for code := range seen {
+		out = append(out, code)
+	}
+	return out
+}
+
+// PortalLocation returns a portal's location code and whether the portal is known.
+// Needed to address a command subject without re-reading PocketBase.
+func (s *Snapshot) PortalLocation(portalCode string) (string, bool) {
+	p, ok := s.graph.Portals[portalCode]
+	if !ok {
+		return "", false
+	}
+	return p.Location, true
+}
+
+// PortalType returns a portal's type token (the {type} subject segment) and whether
+// the portal is known.
+func (s *Snapshot) PortalType(portalCode string) (string, bool) {
+	p, ok := s.graph.Portals[portalCode]
+	if !ok {
+		return "", false
+	}
+	return p.Type, true
 }
 
 // Simulate runs the real policy.Decide for a credential value at a portal code and

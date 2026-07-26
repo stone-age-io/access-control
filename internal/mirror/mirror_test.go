@@ -55,6 +55,73 @@ func TestKeyAndValue_Credential(t *testing.T) {
 	}
 }
 
+// The badge auth tier (badge_users, migration 1750000030) must never be mirrored: a
+// login is control-plane, and a leaf node has no business knowing one exists. The
+// separation is what keeps "add a badge login" from touching the policy graph at
+// all. Because the hooks bind to this explicit allowlist, absence here IS the
+// guarantee — assert it rather than leaving it to be re-derived.
+func TestBadgeUsersNotMirrored(t *testing.T) {
+	for _, name := range mirroredCollections {
+		if name == "badge_users" {
+			t.Fatal("badge_users is in mirroredCollections; a badge login must never reach NATS KV")
+		}
+	}
+	// recordKey is the other half: even if a hook fired, there is no key scheme for
+	// a badge login, so it would be rejected rather than written somewhere odd.
+	app := newApp(t)
+	col, err := app.FindCollectionByNameOrId("badge_users")
+	if err != nil {
+		t.Fatalf("badge_users collection: %v", err)
+	}
+	if _, err := recordKey(core.NewRecord(col)); err == nil {
+		t.Error("recordKey accepted a badge_users record; want 'not a mirrored collection'")
+	}
+}
+
+// A credential value becomes the KV key "cred.<value>" verbatim, so a value
+// outside the NATS KV key charset must be rejected at mirror time rather than
+// failing the Put with no operator-visible cause. Table-driven over the charset
+// edges; '.' is allowed INSIDE a value (a credential is never a subject token) but
+// not at the end (it would make the key end with '.').
+func TestKeyAndValue_CredentialValueCharset(t *testing.T) {
+	app := newApp(t)
+	cred := find(t, app, "credentials", "value", "CARD-001")
+
+	for _, tc := range []struct {
+		value string
+		ok    bool
+	}{
+		// Accepted — the full allowed charset, including '.' inside the value and
+		// '=' (both legal in a KV key, and both produced by base64url minting).
+		{"CARD-001", true},
+		{"abcDEF123", true},
+		{"a-b_c=d/e.f", true},
+		{"QR.v1.aGVsbG8", true},
+		{"pad=", true},
+		// Rejected — empty, or outside the KV key charset.
+		{"", false},
+		{"has space", false},
+		{"tab\there", false},
+		{"colon:value", false}, // a URL pasted into the field
+		{"hash#frag", false},
+		{"question?q", false},
+		{"plus+sign", false}, // '+' from standard (non-url) base64
+		{"star*", false},
+		{"greater>", false},
+		{"café", false},      // non-ASCII
+		{"trailing.", false}, // key would end with '.'
+	} {
+		cred.Set("value", tc.value)
+		_, _, err := keyAndValue(app, cred)
+		if tc.ok && err != nil {
+			t.Errorf("value %q: keyAndValue error = %v, want accepted", tc.value, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("value %q: keyAndValue accepted it, want rejected (would break the KV key)", tc.value)
+		}
+	}
+}
+
 // Relations must be resolved to stable codes, not PocketBase ids.
 func TestKeyAndValue_GroupResolvesCodes(t *testing.T) {
 	app := newApp(t)

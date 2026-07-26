@@ -171,6 +171,30 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
 - **Controller health** (`internal/health`, accessd-side) — a core-NATS subscriber to the heartbeat subject
   updates `controllers.last_seen`/`status` with a **direct record update, not an events row**, plus a staleness
   sweep that marks a silent box offline. Heartbeats are deliberately kept out of the audit stream.
+- **Badge tier** (`internal/badgeapi`, accessd-side) — the routes a *cardholder or visitor* calls, authenticated
+  against the **`badge_users`** auth collection (migration `1750000030`), never `users`. `GET /api/badge/me` returns
+  their own badge (photo, QR payload, door list — names only, never portal codes or hardware fields);
+  `POST /api/badge/unlock/{portalId}` is a **remote unlock authorized by `policy.Decide`**, run over a live
+  `policysnapshot` of ACC_POLICY (a short TTL cache, since `SnapshotKV` drains the whole keyspace and this is a
+  button a visitor can tap). So remote unlock can never exceed what that badge opens in person, and it emits the
+  **existing `cmd.grant`** with `actor: badge:<cardholderId>` — no new subject, no edge change. A per-door
+  `portals.allow_remote_unlock` (default false, not mirrored) gates it, because "may walk through" and "may open
+  from anywhere with no presence proof" are different permissions. **A badge action never publishes `.tap`** —
+  `Tap.Source` exists so a physical read stays distinguishable. Every attempt writes an `audit_logs` row, including
+  denials: a deny never reaches the controller, so without it a holder could probe doors leaving no trace. The
+  package also holds the one *operator* route, `POST /api/badge/visitors` (`enroll`-gated): one transaction creating
+  cardholder + time-bound credential + `visitor` login, with the credential value from `crypto/rand` as uppercase
+  base32 (QR alphanumeric mode, and inside the KV key charset). A repeat visitor is **reused**, not duplicated —
+  auth collections have a unique email index, and the same person visiting twice is the same person.
+  The QR fork is the security-relevant decision: a *visitor* pass carries the credential value (it must work at a
+  scanner, and lives hours), while every other badge carries the cardholder id — an identifier that opens nothing,
+  because a staff badge hangs on a lanyard for years and gets photographed incidentally.
+- **Visitor sweep** (`internal/badgesweep`, accessd-side) — marks an expired *visitor* credential `revoked`. This is
+  **hygiene, not enforcement**: `policy.Decide` already enforces `valid_from`/`valid_until` at the edge, offline
+  included. It buys truth in the control plane (an `active` pass really is active) and stops a stale value being
+  resurrected by a date edit. It deliberately does **not** delete logins or cardholders — retention is the install's
+  policy to set, not a background job's to invent — and it leaves expired *staff* credentials alone, since an
+  operator may be about to extend one.
 
 ### NATS subjects
 
@@ -232,8 +256,19 @@ the `policy.Decide` wire), `1750000018` (shareable holiday calendars), `17500000
 `locations.notify_fire` — moves the alarm-email "who"/"which" out of config into UI-managed data), and
 `1750000024` (notification recipient scoping: `users.notify_locations` — an operator is paged only for
 alarms at locations in its scope; empty = all locations), `1750000025` (events `stream_seq` unique index for
-idempotent audit projection), and `1750000026` (`aux_input`/`aux_output` `floorplan_position` — UI-only, so aux
-I/O can be placed and monitored on the floor plan like portals, never mirrored to KV).
+idempotent audit projection), `1750000026` (`aux_input`/`aux_output` `floorplan_position` — UI-only, so aux
+I/O can be placed and monitored on the floor plan like portals, never mirrored to KV), and then the **badge
+tier**: `1750000027` (scope the control-plane READ floor from `@request.auth.id != ""` to
+`@request.auth.collectionName = "users"` — the old rule was auth-collection-agnostic, so a second auth tier
+would have inherited operator read on the whole graph including `credentials.value` in plaintext),
+`1750000028` (`credentials.value` charset `Pattern` from `policykv.CredentialValuePattern` — a value outside the
+NATS KV key charset used to save fine and then silently never mirror), `1750000029` (`cardholders.photo`, a
+**protected** file so its URL is not public to anyone holding the link), `1750000030` (the `badge_users` auth
+collection — OTP + OAuth2, password disabled, self-scoped reads, `enroll`-gated create because an auth
+collection's default create rule is OPEN SIGNUP), `1750000031` (`portals.allow_remote_unlock`, default false,
+control-plane only), `1750000032` (default rate limits for the badge routes), and `1750000033`
+(`roles.visitor_preset` — the curated presets the visitor mint flow offers; on *roles* because the graph is
+cardholder → roles → groups, so a role is the assignable unit).
 The base `1750000000` stays frozen; everything is additive. `migratecmd`
 Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
 before committing.
@@ -244,11 +279,18 @@ Two collection rules govern the *control plane* (who may edit policy), entirely 
 decision (`policy.Decide`, which never sees operators). Operators sign in against PocketBase's built-in **`users`**
 auth collection (not `_superusers`); a superuser stays the break-glass account that bypasses everything. Ability is
 the multi-select **`users.permissions`** — orthogonal capabilities (`enroll`/`policy`/`topology`/`command`/
-`operators`), **not** a rank. Read is a universal floor for any authenticated operator; only writes and commands are
+`operators`), **not** a rank. Read is a universal floor for any authenticated operator — where "operator" means a
+record in `users` *specifically* (`@request.auth.collectionName = "users"`, migration `1750000027`), never "any
+authenticated request", so the badge tier below cannot inherit it; only writes and commands are
 gated. Two enforcement points share `permissions`: **collection rules** (migration `1750000016`, the real boundary
 — rule form is `@request.auth.permissions ~ "x"`, JSON-LIKE not `?=`, exact only because capability names are
 pairwise non-substring) and **`authz.RequireCapability`** on accessd's custom routes (`internal/commandapi`'s
-grant/posture/output need `command`; `internal/modelsapi`'s `/api/models` needs any auth). `internal/changelog`
+grant/posture/output need `command`; `internal/modelsapi`'s `/api/models` and `internal/simulateapi`'s
+`/api/simulate` need only operator auth). Every operator route binds **`authz.RequireOperatorAuth()`**, never bare
+`apis.RequireAuth()`: bare RequireAuth admits *any* auth collection (`/api/simulate` is a decision oracle over the
+whole graph, so that would be worse than exposing the collections), while `apis.RequireAuth("users")` alone would
+lock out the break-glass superuser — PocketBase's check is plain collection-name membership with no superuser
+exemption. `RequireOperatorAuth` names both. `internal/changelog`
 records every API-driven policy edit (+ operator logins) to the `audit_logs` collection via PocketBase `*Request`
 hooks — so accessd's own programmatic `app.Save` writes (heartbeats, the events/point_status projections, the KV
 mirror) are excluded by construction; rows strip secrets and a daily cron prunes past `accessd.auditRetentionDays`.

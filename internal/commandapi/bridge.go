@@ -27,7 +27,6 @@ import (
 	"net/http"
 
 	"github.com/nats-io/nats.go"
-	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/stone-age-io/access-control/internal/authz"
@@ -47,15 +46,23 @@ type bridge struct {
 // requires an authenticated user; issuing a door command is an operational write,
 // so a per-handler capability check (authz.RequireCapability(CapCommand)) admits
 // operators holding `command` (and superusers, the break-glass account).
+//
+// The binding names the operator collections (authz.RequireOperatorAuth) rather
+// than admitting any auth collection. The capability check already fails closed for
+// the badge tier (migration 1750000030 — a badge record has no `permissions`
+// field), so this is defense in depth: it rejects at the middleware instead of
+// relying on a field lookup coming up empty. Badge-holder remote unlock is a
+// separate route in internal/badgeapi, authorized by policy.Decide rather than by
+// capability.
 func Register(se *core.ServeEvent, nc *nats.Conn, subj subjects.Subjects, log *logger.Logger) {
 	b := &bridge{app: se.App, nc: nc, subj: subj, log: log.With("component", "commandapi")}
-	se.Router.POST("/api/portals/{id}/grant", b.grant).Bind(apis.RequireAuth())
-	se.Router.POST("/api/portals/{id}/posture", b.posture).Bind(apis.RequireAuth())
-	se.Router.POST("/api/aux-outputs/{id}/output", b.output).Bind(apis.RequireAuth())
-	se.Router.POST("/api/events/{id}/ack", b.ackEvent).Bind(apis.RequireAuth())
-	se.Router.POST("/api/areas/{id}/arm", b.arm).Bind(apis.RequireAuth())
-	se.Router.POST("/api/areas/{id}/disarm", b.disarm).Bind(apis.RequireAuth())
-	se.Router.POST("/api/areas/{id}/arm-clear", b.armClear).Bind(apis.RequireAuth())
+	se.Router.POST("/api/portals/{id}/grant", b.grant).Bind(authz.RequireOperatorAuth())
+	se.Router.POST("/api/portals/{id}/posture", b.posture).Bind(authz.RequireOperatorAuth())
+	se.Router.POST("/api/aux-outputs/{id}/output", b.output).Bind(authz.RequireOperatorAuth())
+	se.Router.POST("/api/events/{id}/ack", b.ackEvent).Bind(authz.RequireOperatorAuth())
+	se.Router.POST("/api/areas/{id}/arm", b.arm).Bind(authz.RequireOperatorAuth())
+	se.Router.POST("/api/areas/{id}/disarm", b.disarm).Bind(authz.RequireOperatorAuth())
+	se.Router.POST("/api/areas/{id}/arm-clear", b.armClear).Bind(authz.RequireOperatorAuth())
 }
 
 // grant publishes a momentary grant (cmd.grant) for a portal.

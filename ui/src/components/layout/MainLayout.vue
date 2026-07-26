@@ -34,6 +34,7 @@ const sections: NavSectionCap[] = [
     items: [
       { label: 'Cardholders', icon: '🪪', path: '/cardholders' },
       { label: 'Credentials', icon: '🎫', path: '/credentials', child: true },
+      { label: 'Visitors', icon: '👋', path: '/visitors', child: true },
       { label: 'Roles', icon: '🏷️', path: '/roles' },
       { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
     ],
@@ -42,6 +43,8 @@ const sections: NavSectionCap[] = [
     title: 'Facility',
     items: [
       { label: 'Locations', icon: '🏢', path: '/locations' },
+      { label: 'Scan to Unlock', icon: '📷', path: '/portals/scan', child: true },
+      { label: 'Door Placards', icon: '🖨️', path: '/portals/placards', child: true },
       { label: 'Controllers', icon: '⚙️', path: '/controllers' },
       { label: 'Portals', icon: '🚪', path: '/portals' },
       { label: 'Aux Inputs', icon: '🔌', path: '/aux-inputs' },

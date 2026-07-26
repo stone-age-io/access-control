@@ -32,6 +32,8 @@ import (
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/armrelease"
 	"github.com/stone-age-io/access-control/internal/audit"
+	"github.com/stone-age-io/access-control/internal/badgeapi"
+	"github.com/stone-age-io/access-control/internal/badgesweep"
 	"github.com/stone-age-io/access-control/internal/changelog"
 	"github.com/stone-age-io/access-control/internal/commandapi"
 	"github.com/stone-age-io/access-control/internal/disarm"
@@ -107,6 +109,7 @@ func main() {
 		healthMon  *health.Monitor
 		statusProj *status.Projector
 		releaser   *armrelease.Releaser
+		badgeSweep *badgesweep.Sweeper
 	)
 
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -272,6 +275,14 @@ func main() {
 		// authenticated operator; it reveals only what policy already grants.
 		simulateapi.Register(e, kv, log)
 
+		// Badge tier: GET /api/badge/me and POST /api/badge/unlock/{portalId}, for
+		// records in the `badge_users` auth collection (cardholders + visitors), NOT
+		// operators. The unlock route is authorized by the same policy.Decide the
+		// edge runs — over the same KV snapshot the simulator uses — so a remote
+		// unlock can never exceed what that person's badge opens in person, and it
+		// emits an ordinary cmd.grant (no new subject, no edge change).
+		badgeapi.Register(e, nc.NC, kv, subj, log)
+
 		// One-shot disarm release: a periodic sweep that clears a disarm override on a
 		// scheduled area once its base arm-state is disarmed, so scheduled-arm +
 		// entry-disarm loops without an operator clearing the override daily. Reads the
@@ -279,6 +290,13 @@ func main() {
 		// stopped in OnTerminate.
 		releaser = armrelease.New(e.App, kv, log)
 		releaser.Start()
+
+		// Visitor credential hygiene: marks an expired visitor credential revoked so
+		// the credentials list reflects reality. NOT an enforcement path — expiry is
+		// already enforced by policy.Decide at the edge from the credential's own
+		// bounds. Needs no NATS; owns its lifetime, stopped in OnTerminate.
+		badgeSweep = badgesweep.New(e.App, log)
+		badgeSweep.Start()
 
 		// Status projector: ACC_STATUS device shadow → point_status projection (UI
 		// live state). Watches on a background context so it outlives this setup
@@ -299,6 +317,9 @@ func main() {
 
 	pb.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		log.Info("accessd terminating")
+		if badgeSweep != nil {
+			badgeSweep.Stop()
+		}
 		if releaser != nil {
 			releaser.Stop()
 		}

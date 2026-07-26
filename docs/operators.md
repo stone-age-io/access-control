@@ -13,6 +13,7 @@ permissions, and a controller never sees an operator.
 - [Capabilities](#capabilities) — the five orthogonal abilities
 - [What each capability gates](#what-each-capability-gates) — collection rules + custom routes
 - [Presets](#presets) — the UI's named capability sets
+- [Non-operator auth tiers](#non-operator-auth-tiers) — why the read floor names `users`
 - [Privilege-escalation guard](#privilege-escalation-guard)
 - [Control-plane audit log](#control-plane-audit-log-audit_logs) — `audit_logs`, what is recorded, retention
 
@@ -37,8 +38,11 @@ An operator's ability is the multi-select **`users.permissions`** field — an
 `admin`/`operator`/`viewer` ladder, which couldn't express real roles like
 "enrollment only" or "door ops but not hardware" — each a non-linear subset.)
 **Read is a universal floor**: any authenticated operator can read every
-operational collection. Only **writes and commands** are gated, each by one
-capability:
+operational collection. "Operator" here means a record in the **`users`**
+collection specifically — the floor is scoped to that collection, not to "any
+authenticated request", so a second auth tier does not inherit it (see
+[Non-operator auth tiers](#non-operator-auth-tiers)). Only **writes and commands**
+are gated, each by one capability:
 
 | Capability | Grants |
 |---|---|
@@ -53,14 +57,35 @@ The five names are constants in [`internal/authz`](../internal/authz/authz.go)
 operator's whole authorization surface — there is no role field to drift out of
 sync with the permissions.
 
+### Cardholder photos (PII)
+
+`cardholders.photo` (migration
+[`1750000029`](../pbmigrations/1750000029_cardholder_photo.go)) is the first real
+PII in the schema, and it follows the read floor above: **every operator can see
+every photo**, with no capability gate. That is deliberate — a guard verifying a
+face at a desk needs it, and gating it would make the badge and alarm views
+inconsistent per-operator. Two consequences worth knowing:
+
+- The field is a **protected** file, so its URL carries no implicit authorization:
+  PocketBase requires a short-lived file token (`pb.files.getToken()`, wrapped by
+  the UI's `useFileUrl`). Unlike an ordinary PocketBase file URL, a pasted link does
+  not work for someone without a session.
+- Photos live in `pb_data/storage`, so **backups grow** with the cardholder
+  population, and dropping the field does not delete the stored files.
+
+The photo is never mirrored to NATS KV — `policykv.User` carries only status and
+roles — so it never reaches a leaf node.
+
 ## What each capability gates
 
 Two enforcement points share `users.permissions`:
 
 **1. Collection CRUD** — PocketBase collection rules (the real boundary), set by
 migration [`1750000016`](../pbmigrations/1750000016_operator_permissions.go).
-List/View are open to any authenticated operator (`@request.auth.id != ""`) except
-where noted; the table shows the **write** rules:
+List/View are open to any authenticated operator
+(`@request.auth.collectionName = "users"`, set by migration
+[`1750000027`](../pbmigrations/1750000027_operator_read_floor.go)) except where
+noted; the table shows the **write** rules:
 
 | Collection(s) | Create / Update | Delete |
 |---|---|---|
@@ -99,7 +124,17 @@ so they call `authz.RequireCapability` per handler:
 | `POST /api/aux-outputs/{id}/output` | `command` | drive an aux output → `cmd.output` |
 | `POST /api/events/{id}/ack` | `command` | acknowledge an alarm/fire (sets ack fields) |
 | `POST /api/areas/{id}/arm` · `/disarm` · `/arm-clear` | `command` | set/clear an area's durable `arm_override` |
-| `GET /api/models` | any authenticated | enum/options metadata for the UI |
+| `GET /api/models` | any operator | enum/options metadata for the UI |
+| `POST /api/simulate` | any operator | access simulator — a decision oracle; operator-only |
+| `POST /api/badge/visitors` | `enroll` | mint a visitor: cardholder + time-bound credential + badge login |
+
+The badge tier has two routes of its own, gated by the **`badge_users`** collection
+rather than by capability — see [Non-operator auth tiers](#non-operator-auth-tiers):
+
+| Route | Who | Purpose |
+|---|---|---|
+| `GET /api/badge/me` | a badge holder | their own badge: photo, QR, doors |
+| `POST /api/badge/unlock/{id}` | a badge holder | remote unlock, authorized by `policy.Decide` |
 
 Most of these bridge the UI to the **NATS command plane**; the wire subjects and
 bodies they publish are documented in [`protocol.md`](protocol.md#command-details).
@@ -138,6 +173,36 @@ shows as "Custom"):
 | Command Ops | `command`, `policy` |
 | Facilities | `topology` |
 | Admin | all five |
+
+## Non-operator auth tiers
+
+stone-access has more than one auth collection. `users` is the **operator** tier
+this document describes; `_superusers` is the break-glass admin; `badge_users`
+(migration [`1750000030`](../pbmigrations/1750000030_badge_users.go)) is the
+**badge tier** — cardholders and visitors who sign in to view their own badge and,
+where permitted, remotely unlock a door. A badge record is *not* an operator: it
+holds no `permissions` field and must never read the policy graph.
+
+Keeping those tiers apart takes two deliberate choices, both easy to get wrong:
+
+1. **Collection read rules name the collection, not "any auth."** The floor is
+   `@request.auth.collectionName = "users"`, not `@request.auth.id != ""`. The
+   latter is auth-collection-*agnostic*: every badge holder would satisfy it and
+   inherit operator read on the whole graph — including `credentials`, whose
+   `value` field is the credential secret in plaintext. `TestReadFloorExcludesNonOperatorAuth`
+   is the regression test, and it deliberately uses a *throwaway* auth collection so
+   the guarantee holds for tiers added later.
+2. **Custom routes use `authz.RequireOperatorAuth()`, not bare `apis.RequireAuth()`.**
+   Bare `RequireAuth()` admits any auth collection. `POST /api/simulate` is the
+   sharp case: it is a **decision oracle** over the entire policy graph, so exposing
+   it to the badge tier would be worse than exposing the collections. Note that
+   `apis.RequireAuth("users")` *alone* is also wrong — PocketBase's check is plain
+   collection-name membership with no superuser exemption, so it would lock out the
+   break-glass account. `RequireOperatorAuth` names both.
+
+Badge-tier routes live in `internal/badgeapi` and are authorized by
+`policy.Decide` (what that person's own credential opens, right now) rather than by
+capability — so a remote unlock can never exceed the holder's physical access.
 
 ## Privilege-escalation guard
 

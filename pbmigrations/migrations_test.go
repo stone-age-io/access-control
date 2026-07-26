@@ -87,8 +87,9 @@ func TestOperatorAuthTier(t *testing.T) {
 	rule("controllers", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"topology"`)
 	// Access logic: schedules writable with the policy capability.
 	rule("schedules", "UpdateRule", func(c *core.Collection) *string { return c.UpdateRule }, `"policy"`)
-	// All operators can read the policy graph.
-	rule("portals", "ListRule", func(c *core.Collection) *string { return c.ListRule }, `@request.auth.id`)
+	// All operators can read the policy graph — but only operators. After
+	// 1750000027 the floor names the operator collection instead of "any auth".
+	rule("portals", "ListRule", func(c *core.Collection) *string { return c.ListRule }, `@request.auth.collectionName = "users"`)
 	// audit_logs readable with the operators capability.
 	rule("audit_logs", "ListRule", func(c *core.Collection) *string { return c.ListRule }, `"operators"`)
 
@@ -175,6 +176,426 @@ func deref(s *string) string {
 		return "<nil>"
 	}
 	return *s
+}
+
+// TestBadgeUsers verifies migration 1750000030: the badge auth tier. The rules are
+// the point — an auth collection's DEFAULT create rule is open signup, which would
+// let anyone mint themselves a badge login.
+func TestBadgeUsers(t *testing.T) {
+	app := newApp(t)
+
+	c, err := app.FindCollectionByNameOrId("badge_users")
+	if err != nil {
+		t.Fatalf("badge_users collection: %v", err)
+	}
+	if !c.IsAuth() {
+		t.Fatal("badge_users is not an auth collection")
+	}
+
+	// Open signup must be closed, and minting must require an operator capability.
+	if c.CreateRule == nil || *c.CreateRule == "" {
+		t.Fatalf("badge_users.CreateRule = %v, want enroll-gated (empty string is OPEN SIGNUP)", c.CreateRule)
+	}
+	for _, want := range []string{`"enroll"`, `@request.auth.collectionName = "users"`} {
+		if !strings.Contains(*c.CreateRule, want) {
+			t.Errorf("badge_users.CreateRule = %q, want it to contain %s", *c.CreateRule, want)
+		}
+	}
+	// A badge holder must only ever see its own record — never another badge user's.
+	if c.ListRule == nil || !strings.Contains(*c.ListRule, "id = @request.auth.id") {
+		t.Errorf("badge_users.ListRule = %v, want self-scoped", c.ListRule)
+	}
+
+	// Password auth off, OTP on: a visitor should not manage a password, and OTP is
+	// what makes an emailed badge link more than a bare bearer token.
+	if c.PasswordAuth.Enabled {
+		t.Error("badge_users password auth is enabled; want OTP/OAuth2 only")
+	}
+	if !c.OTP.Enabled {
+		t.Error("badge_users OTP is disabled; the visitor invite flow depends on it")
+	}
+
+	// The cardholder link must be required and unique — one login per person, and
+	// never a login that speaks for nobody.
+	f, ok := c.Fields.GetByName("cardholder").(*core.RelationField)
+	if !ok || f == nil {
+		t.Fatal("badge_users.cardholder relation field missing")
+	}
+	if !f.Required {
+		t.Error("badge_users.cardholder is not required")
+	}
+	cardholders, err := app.FindCollectionByNameOrId("cardholders")
+	if err != nil {
+		t.Fatalf("cardholders collection: %v", err)
+	}
+	if f.CollectionId != cardholders.Id {
+		t.Errorf("badge_users.cardholder targets %q, want cardholders (%q)", f.CollectionId, cardholders.Id)
+	}
+	var unique bool
+	for _, idx := range c.Indexes {
+		if strings.Contains(idx, "UNIQUE") && strings.Contains(idx, "cardholder") {
+			unique = true
+		}
+	}
+	if !unique {
+		t.Errorf("badge_users has no unique index on cardholder; indexes = %v", c.Indexes)
+	}
+
+	if k, ok := c.Fields.GetByName("kind").(*core.SelectField); !ok || k == nil {
+		t.Error("badge_users.kind select field missing")
+	} else {
+		for _, want := range []string{"holder", "visitor"} {
+			if !slicesContains(k.Values, want) {
+				t.Errorf("badge_users.kind missing value %q (have %v)", want, k.Values)
+			}
+		}
+	}
+}
+
+// TestPortalRemoteUnlockDefaultsFalse verifies migration 1750000031. The DEFAULT is
+// the assertion that matters: remote unlock must be an explicit per-door act, so an
+// install that upgrades into this feature must not find its doors remotely openable.
+func TestPortalRemoteUnlockDefaultsFalse(t *testing.T) {
+	app := newApp(t)
+
+	portals, err := app.FindCollectionByNameOrId("portals")
+	if err != nil {
+		t.Fatalf("portals collection: %v", err)
+	}
+	if portals.Fields.GetByName("allow_remote_unlock") == nil {
+		t.Fatal("portals.allow_remote_unlock field missing")
+	}
+	// Every pre-existing portal (the fixture's) must be closed to remote unlock.
+	all, err := app.FindAllRecords("portals")
+	if err != nil {
+		t.Fatalf("FindAllRecords portals: %v", err)
+	}
+	if len(all) == 0 {
+		t.Fatal("no fixture portals to check")
+	}
+	for _, p := range all {
+		if p.GetBool("allow_remote_unlock") {
+			t.Errorf("portal %q has allow_remote_unlock = true after migration; want false",
+				p.GetString("code"))
+		}
+	}
+}
+
+// TestBadgeRateLimits verifies migration 1750000032. The badge routes are the first
+// reachable by a non-operator, and an unconfigured PocketBase limiter is wide open —
+// so these defaults ship rather than being left to the installer.
+func TestBadgeRateLimits(t *testing.T) {
+	app := newApp(t)
+	rl := app.Settings().RateLimits
+
+	if !rl.Enabled {
+		t.Error("rate limiting is disabled; the badge routes ship with limits on")
+	}
+
+	// The unlock rule must be a PREFIX rule (trailing '/'), or it would never match
+	// /api/badge/unlock/{portalId} for a real portal id.
+	find := func(label string) (core.RateLimitRule, bool) {
+		for _, r := range rl.Rules {
+			if r.Label == label {
+				return r, true
+			}
+		}
+		return core.RateLimitRule{}, false
+	}
+
+	unlock, ok := find("POST /api/badge/unlock/")
+	if !ok {
+		t.Fatalf("no rate limit rule for the badge unlock route; rules = %+v", rl.Rules)
+	}
+	if !strings.HasSuffix(unlock.Label, "/") {
+		t.Errorf("unlock rule label %q is not a prefix rule; it will not match a portal id", unlock.Label)
+	}
+	if unlock.MaxRequests <= 0 || unlock.Duration <= 0 {
+		t.Errorf("unlock rule = %+v, want positive MaxRequests and Duration", unlock)
+	}
+
+	// OTP mints an email per call and the caller is a guest, so an @auth-only rule
+	// would never fire.
+	otp, ok := find("badge_users:requestOTP")
+	if !ok {
+		t.Fatalf("no rate limit rule for badge_users OTP requests; rules = %+v", rl.Rules)
+	}
+	if otp.Audience == core.RateLimitRuleAudienceAuth {
+		t.Error("OTP rule is scoped to @auth, but an OTP requester has no token yet — it would never apply")
+	}
+
+	// The limiter matches "METHOD /path" against a real request; sanity-check that
+	// the prefix rule actually selects for a concrete unlock path.
+	got, found := rl.FindRateLimitRule(
+		[]string{"POST /api/badge/unlock/abc123def456789", "/api/badge/unlock/abc123def456789"},
+		core.RateLimitRuleAudienceAuth, core.RateLimitRuleAudienceAll,
+	)
+	if !found || got.Label != unlock.Label {
+		t.Errorf("FindRateLimitRule for a concrete unlock path = (%+v, %v), want the prefix rule %q",
+			got, found, unlock.Label)
+	}
+}
+
+// TestBadgeUserCannotReadPolicyGraph is the end-to-end version of
+// TestReadFloorExcludesNonOperatorAuth against the REAL badge collection. The
+// throwaway-collection test proves the general rule; this one proves the actual
+// tier this feature ships, including that a badge holder cannot enumerate other
+// badge holders.
+func TestBadgeUserCannotReadPolicyGraph(t *testing.T) {
+	app := newApp(t)
+
+	badgeCol, err := app.FindCollectionByNameOrId("badge_users")
+	if err != nil {
+		t.Fatalf("badge_users collection: %v", err)
+	}
+	alice, err := app.FindFirstRecordByData("cardholders", "external_id", "alice")
+	if err != nil {
+		t.Fatalf("fixture cardholder alice not found: %v", err)
+	}
+
+	badge := core.NewRecord(badgeCol)
+	badge.SetEmail("visitor@test.dev")
+	badge.Set("cardholder", alice.Id)
+	badge.Set("kind", "visitor")
+	// PocketBase requires a non-blank password on an auth record even when the
+	// collection has password auth DISABLED — the field validator is independent of
+	// the auth-method option. It is unusable for sign-in, so anything creating a
+	// badge login sets an unguessable throwaway (see internal/badgeapi).
+	badge.SetPassword("unused-password-not-a-sign-in-path")
+	if err := app.Save(badge); err != nil {
+		t.Fatalf("save badge user: %v", err)
+	}
+
+	// The credential VALUE is the credential secret — this is the row that must
+	// never be listable by the badge tier.
+	for _, name := range []string{"credentials", "cardholders", "portals", "areas", "events"} {
+		c, err := app.FindCollectionByNameOrId(name)
+		if err != nil {
+			t.Errorf("%s collection: %v", name, err)
+			continue
+		}
+		ok, err := app.CanAccessRecord(alice, &core.RequestInfo{Auth: badge, Method: "GET"}, c.ListRule)
+		if err != nil {
+			t.Fatalf("%s: CanAccessRecord error: %v", name, err)
+		}
+		if ok {
+			t.Errorf("a badge_users record can list %s — the policy graph is exposed to the badge tier", name)
+		}
+	}
+
+	// A second badge user must be invisible to the first: the self-scoped rule is
+	// evaluated against the OTHER record, which is what a list request would do.
+	// Build the peer's cardholder here rather than relying on a second fixture
+	// person, so this half always runs.
+	cardholders, err := app.FindCollectionByNameOrId("cardholders")
+	if err != nil {
+		t.Fatalf("cardholders collection: %v", err)
+	}
+	peer := core.NewRecord(cardholders)
+	peer.Set("name", "Peer Person")
+	peer.Set("status", "active")
+	if err := app.Save(peer); err != nil {
+		t.Fatalf("save peer cardholder: %v", err)
+	}
+
+	other := core.NewRecord(badgeCol)
+	other.SetEmail("other@test.dev")
+	other.Set("cardholder", peer.Id)
+	other.Set("kind", "holder")
+	other.SetPassword("unused-password-not-a-sign-in-path")
+	if err := app.Save(other); err != nil {
+		t.Fatalf("save second badge user: %v", err)
+	}
+	ok, err := app.CanAccessRecord(other, &core.RequestInfo{Auth: badge, Method: "GET"}, badgeCol.ListRule)
+	if err != nil {
+		t.Fatalf("badge_users peer check: CanAccessRecord error: %v", err)
+	}
+	if ok {
+		t.Error("a badge_users record can read another badge_users record; want self-scoped only")
+	}
+}
+
+// TestCardholderPhoto verifies migration 1750000029: the cardholder photo file
+// field. Protected is the assertion that matters — an unprotected file URL is
+// public to anyone holding the link, which is the wrong default for the first PII
+// field in the schema.
+func TestCardholderPhoto(t *testing.T) {
+	app := newApp(t)
+
+	c, err := app.FindCollectionByNameOrId("cardholders")
+	if err != nil {
+		t.Fatalf("cardholders collection: %v", err)
+	}
+	f, ok := c.Fields.GetByName("photo").(*core.FileField)
+	if !ok || f == nil {
+		t.Fatal("cardholders.photo file field missing")
+	}
+	if !f.Protected {
+		t.Error("cardholders.photo is not Protected; a leaked file URL would expose the photo without auth")
+	}
+	if f.MaxSelect != 1 {
+		t.Errorf("cardholders.photo MaxSelect = %d, want 1", f.MaxSelect)
+	}
+	if len(f.MimeTypes) == 0 {
+		t.Error("cardholders.photo has no MimeTypes restriction; want images only")
+	}
+	for _, mt := range f.MimeTypes {
+		if !strings.HasPrefix(mt, "image/") {
+			t.Errorf("cardholders.photo allows non-image mime type %q", mt)
+		}
+	}
+	if len(f.Thumbs) == 0 {
+		t.Error("cardholders.photo has no Thumbs; the list and badge views need generated sizes")
+	}
+}
+
+// TestCredentialValueCharset verifies migration 1750000028: credentials.value is
+// constrained to the NATS KV key charset at the API boundary. A credential is
+// mirrored to KV key "cred.<value>", so a value outside that charset used to save
+// happily, list as active in the UI, and then silently never reach any controller —
+// the KV Put failed in accessd's log with nothing tying it back to the record.
+// Paired with mirror.validKey (defense in depth for non-API writes).
+func TestCredentialValueCharset(t *testing.T) {
+	app := newApp(t)
+
+	creds, err := app.FindCollectionByNameOrId("credentials")
+	if err != nil {
+		t.Fatalf("credentials collection: %v", err)
+	}
+	f, ok := creds.Fields.GetByName("value").(*core.TextField)
+	if !ok || f == nil {
+		t.Fatal("credentials.value text field missing")
+	}
+	if f.Pattern == "" {
+		t.Error("credentials.value Pattern is empty; want the NATS KV key charset")
+	}
+
+	alice, err := app.FindFirstRecordByData("cardholders", "external_id", "alice")
+	if err != nil {
+		t.Fatalf("fixture cardholder alice not found: %v", err)
+	}
+	save := func(value string) error {
+		rec := core.NewRecord(creds)
+		rec.Set("value", value)
+		rec.Set("user", alice.Id)
+		rec.Set("status", "active")
+		return app.Save(rec)
+	}
+
+	// A URL is the realistic mistake once badges exist — ':' , '?' and '#' are all
+	// outside the KV key charset.
+	for _, bad := range []string{
+		"https://example.com/badge/abc",
+		"has space",
+		"trailing.",
+		"plus+sign",
+		"hash#frag",
+	} {
+		if err := save(bad); err == nil {
+			t.Errorf("credentials.value %q saved, want a validation error", bad)
+		}
+	}
+	// Values a minted badge credential will actually use must pass.
+	for _, good := range []string{"CARD-999", "QR-v1.aGVsbG8", "pad=", "a_b/c=d-e.f"} {
+		if err := save(good); err != nil {
+			t.Errorf("credentials.value %q rejected (%v), want accepted", good, err)
+		}
+	}
+}
+
+// TestReadFloorExcludesNonOperatorAuth is the security boundary for migration
+// 1750000027. The old read floor (`@request.auth.id != ""`) was satisfied by an
+// authenticated record from ANY auth collection, so introducing a second auth tier
+// (badge holders / visitors) would have handed every one of them operator read on
+// the whole policy graph — including credentials.value, the credential secret in
+// plaintext.
+//
+// The collection created here is a throwaway, NOT badge_users, on purpose: the
+// guarantee under test is "any non-operator auth collection is excluded", which
+// must hold for auth tiers added later without anyone remembering to extend this
+// test.
+//
+// The read rules reference only @request.auth (never a record field), so
+// evaluating them against any persisted record exercises them faithfully — same
+// approach as TestPermissionRuleEnforcement.
+func TestReadFloorExcludesNonOperatorAuth(t *testing.T) {
+	app := newApp(t)
+
+	// A second auth collection, standing in for any non-operator auth tier.
+	otherCol := core.NewAuthCollection("test_other_auth")
+	if err := app.Save(otherCol); err != nil {
+		t.Fatalf("save throwaway auth collection: %v", err)
+	}
+	otherAuth := core.NewRecord(otherCol)
+	otherAuth.SetEmail("outsider@test.dev")
+	otherAuth.SetPassword("password123")
+	otherAuth.SetVerified(true)
+	if err := app.Save(otherAuth); err != nil {
+		t.Fatalf("save throwaway auth record: %v", err)
+	}
+
+	// An operator with NO capabilities: read is a universal floor for operators,
+	// so this one must still pass every rule below. That is what makes the test
+	// prove collection scoping rather than incidental capability gating.
+	usersCol, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("users collection: %v", err)
+	}
+	operator := core.NewRecord(usersCol)
+	operator.SetEmail("readonly@test.dev")
+	operator.SetPassword("password123")
+	operator.SetVerified(true)
+	operator.Set("permissions", []string{})
+	if err := app.Save(operator); err != nil {
+		t.Fatalf("save operator: %v", err)
+	}
+
+	alice, err := app.FindFirstRecordByData("cardholders", "external_id", "alice")
+	if err != nil {
+		t.Fatalf("fixture cardholder alice not found: %v", err)
+	}
+
+	// Every collection whose read floor 1750000027 scoped to the operator tier.
+	for _, name := range []string{
+		"cardholders", "credentials",
+		"schedules", "access_groups", "roles", "holidays", "holiday_calendars",
+		"locations", "controllers", "portals", "aux_input", "aux_output", "areas",
+		"events", "point_status",
+	} {
+		c, err := app.FindCollectionByNameOrId(name)
+		if err != nil {
+			t.Errorf("%s collection: %v", name, err)
+			continue
+		}
+		for _, tc := range []struct {
+			which string
+			rule  *string
+		}{
+			{"ListRule", c.ListRule},
+			{"ViewRule", c.ViewRule},
+		} {
+			if tc.rule == nil {
+				t.Errorf("%s.%s is nil (superuser-only); expected the operator read floor", name, tc.which)
+				continue
+			}
+			okOther, err := app.CanAccessRecord(alice, &core.RequestInfo{Auth: otherAuth, Method: "GET"}, tc.rule)
+			if err != nil {
+				t.Fatalf("%s.%s: CanAccessRecord(other-auth) error: %v", name, tc.which, err)
+			}
+			if okOther {
+				t.Errorf("%s.%s admits a non-operator auth record (rule %q) — policy graph is exposed to the badge tier",
+					name, tc.which, deref(tc.rule))
+			}
+			okOperator, err := app.CanAccessRecord(alice, &core.RequestInfo{Auth: operator, Method: "GET"}, tc.rule)
+			if err != nil {
+				t.Fatalf("%s.%s: CanAccessRecord(operator) error: %v", name, tc.which, err)
+			}
+			if !okOperator {
+				t.Errorf("%s.%s rejects a capability-less operator (rule %q) — read must stay a universal operator floor",
+					name, tc.which, deref(tc.rule))
+			}
+		}
+	}
 }
 
 func TestFixtureSeeded(t *testing.T) {

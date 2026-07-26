@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/stone-age-io/access-control/internal/authz"
 	"github.com/stone-age-io/access-control/internal/drivers/hardware"
 )
 
@@ -33,9 +33,12 @@ type model struct {
 	Inputs    []line `json:"inputs"`
 }
 
-// Register wires GET /api/models onto the serve event's router.
+// Register wires GET /api/models onto the serve event's router. Scoped to the
+// operator collections rather than bare RequireAuth: bare RequireAuth admits ANY
+// auth collection, which would expose hardware profiles to the badge tier
+// (migration 1750000030). No capability beyond being an operator is needed.
 func Register(se *core.ServeEvent) {
-	se.Router.GET("/api/models", handle).Bind(apis.RequireAuth())
+	se.Router.GET("/api/models", handle).Bind(authz.RequireOperatorAuth())
 }
 
 func handle(e *core.RequestEvent) error {
