@@ -31,35 +31,30 @@ func newSweeper(t *testing.T, app core.App) *Sweeper {
 	return New(app, logger.NewNopLogger())
 }
 
-// mkCardholder creates a cardholder and, when kind is non-empty, a badge login of
-// that kind pointing at it.
+// mkCardholder creates a cardholder of the given kind (empty kind = neither holder nor
+// visitor, i.e. outside this sweep's scope).
+//
+// cardholders is an AUTH collection, so PocketBase requires a non-blank password on
+// every record. accessd fills one automatically (badgeapi.RegisterGuards), but this
+// package does not depend on the HTTP layer and a TestApp does not run main — so the
+// password is set explicitly here. It is not a sign-in path: `badge_login` is unset, so
+// the collection's AuthRule refuses to issue a token regardless.
 func mkCardholder(t *testing.T, app core.App, name, email, kind string) *core.Record {
 	t.Helper()
-	col, err := app.FindCollectionByNameOrId("cardholders")
+	col, err := app.FindCollectionByNameOrId(badgeCollection)
 	if err != nil {
-		t.Fatalf("cardholders collection: %v", err)
+		t.Fatalf("%s collection: %v", badgeCollection, err)
 	}
 	ch := core.NewRecord(col)
 	ch.Set("name", name)
 	ch.Set("status", "active")
+	ch.SetEmail(email)
+	ch.SetPassword("unused-password-not-a-sign-in-path")
+	if kind != "" {
+		ch.Set("kind", kind)
+	}
 	if err := app.Save(ch); err != nil {
 		t.Fatalf("save cardholder %s: %v", name, err)
-	}
-
-	if kind == "" {
-		return ch
-	}
-	badgeCol, err := app.FindCollectionByNameOrId(badgeCollection)
-	if err != nil {
-		t.Fatalf("%s collection: %v", badgeCollection, err)
-	}
-	bu := core.NewRecord(badgeCol)
-	bu.SetEmail(email)
-	bu.Set("cardholder", ch.Id)
-	bu.Set("kind", kind)
-	bu.SetPassword("unused-password-not-a-sign-in-path")
-	if err := app.Save(bu); err != nil {
-		t.Fatalf("save badge user %s: %v", email, err)
 	}
 	return ch
 }

@@ -68,13 +68,24 @@ var readFloorCollections = []string{
 // readFloorCollections. A collection that does not exist is skipped rather than
 // failing the migration: there is nothing to tighten, and the down-migrations in
 // this package take the same stance.
+//
+// `cardholders` gets the floor OR self, because it is the badge tier's own auth
+// collection (1750000000) and a person must be able to read their own record. That
+// clause is not cosmetic — PocketBase enforces a PROTECTED file download against the
+// record's ViewRule (apis/file.go, RequestInfoContextProtectedFile), and
+// `cardholders.photo` is protected (1750000029). Without it a badge holder fetching
+// their own photo is refused, so the badge renders with no face on it.
 func setReadFloor(app core.App, rule *string) error {
 	for _, name := range readFloorCollections {
 		c, err := app.FindCollectionByNameOrId(name)
 		if err != nil {
 			continue
 		}
-		c.ListRule, c.ViewRule = rule, rule
+		applied := rule
+		if name == "cardholders" && rule != nil {
+			applied = types.Pointer(`id = @request.auth.id || (` + *rule + `)`)
+		}
+		c.ListRule, c.ViewRule = applied, applied
 		if err := app.Save(c); err != nil {
 			return err
 		}

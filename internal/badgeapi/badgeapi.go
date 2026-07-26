@@ -1,17 +1,59 @@
-// Package badgeapi serves the BADGE TIER: the two routes a cardholder or visitor
-// signed into the `badge_users` auth collection (migration 1750000030) may call.
+// Package badgeapi serves the BADGE TIER: the routes a cardholder or visitor signed
+// into the `cardholders` auth collection may call.
 //
-//	GET  /api/badge/me                 this person's badge — photo, QR, doors
-//	POST /api/badge/unlock/{portalId}  remote unlock, authorized by policy.Decide
+//	GET  /api/badge/me                     this person's badge — photo, QR, what it opens
+//	POST /api/badge/unlock/{portalId}      remote unlock, authorized by policy.Decide
+//	POST /api/badge/areas/{id}/arm         arm an area, authorized by policy.DecideArea
+//	POST /api/badge/areas/{id}/disarm      disarm an area, same decider
+//	POST /api/badge/outputs/{id}/pulse     drive an aux output, policy.DecideOutput
+//	POST /api/badge/password               set or change one's own password
 //
-// Both are bound to `badge_users` alone. They are NOT operator routes and share no
-// authorization with internal/commandapi: a badge record has no `permissions`
-// field, so capability checks are meaningless here.
+// All of them are bound to `cardholders` alone. They are NOT operator routes and share
+// no authorization with internal/commandapi: a cardholder has no `permissions` field,
+// so capability checks are meaningless here. The area and output routes live in
+// areas.go; see that file for why arming is a durable record write and an output is a
+// fire-and-forget command.
 //
-// The package also serves ONE operator route, POST /api/badge/visitors (visitors.go),
-// which mints a visitor: cardholder + time-bound credential + `visitor` login. It is
-// gated the opposite way — operator collection plus the `enroll` capability — and is
-// kept here because everything it creates is badge-tier.
+// The package also serves the OPERATOR routes that mint and end a visit
+// (visitors.go), gated the opposite way — operator collection plus the `enroll`
+// capability — and kept here because everything they touch is badge-tier.
+//
+// # One collection, two views
+//
+// `cardholders` is BOTH the person and the login. There is no separate login record:
+// a cardholder who may sign in is one with `badge_login` set, and the same row is
+// what `credentials.user` points at and what the KV mirror publishes as `user.{id}`.
+// Two tiers read the same substrate through different lenses — an operator sees the
+// policy graph, a holder sees one badge — and the substrate is shared rather than
+// copied.
+//
+// It started as a second auth collection (`badge_users`) with a 1:1 relation to
+// `cardholders`. Everything that made that version complicated was the relation
+// itself: a unique index to stop two logins for one person, a cascade delete to stop
+// an orphan login authenticating and resolving nobody, a field guard to stop a holder
+// repointing the relation at someone else and inheriting their doors, and a delete
+// hook to keep a visitor's two halves dying together. Collapsing the two records
+// deletes all four, because none of them describe a rule about badges — they were all
+// describing the join.
+//
+// What the collapse costs, stated plainly:
+//
+//   - Every person is now an auth record, including the majority who never sign in.
+//     `badge_login` is the gate (it backs the collection's AuthRule), and a record
+//     without it carries a random password nobody has seen. Being an auth record is
+//     not being an account.
+//   - Auth-flow writes now land on a MIRRORED collection, so they could wake every
+//     controller's policy watch. Sign-in itself never writes the record (OTP, MFA and
+//     login-alert state live in PocketBase's own `_otps`/`_mfas`/`_authOrigins`);
+//     the only write is a first OTP flipping `verified`. internal/mirror skips a KV
+//     put whose payload is unchanged, so even that one is absorbed.
+//   - `policykv.User` is a hand-built three-field struct — id, status, roles — so no
+//     auth field can reach the edge regardless. The wire is unchanged by all of this.
+//
+// One thing it fixed for free: `cardholders.photo` is a PROTECTED file, and PocketBase
+// checks a protected download against the record's own ViewRule. With the login in a
+// separate collection, a holder fetching their own photo was refused — the badge
+// rendered with no face on it. Being the record is what makes it readable.
 //
 // # How a remote unlock is authorized
 //
@@ -63,15 +105,17 @@ import (
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
+	"github.com/stone-age-io/access-control/internal/authz"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/policysnapshot"
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
-// BadgeCollection is the auth collection these routes serve.
-const BadgeCollection = "badge_users"
+// BadgeCollection is the auth collection these routes serve — which is also the
+// collection holding the people the whole PACS is about. See the package doc.
+const BadgeCollection = "cardholders"
 
-// Badge kinds (badge_users.kind). The kind decides what the QR encodes; it is NOT
+// Badge kinds (cardholders.kind). The kind decides what the QR encodes; it is NOT
 // an access level or an expiry — validity lives on the credential.
 const (
 	KindHolder  = "holder"  // ongoing cardholder: QR identifies, opens nothing
@@ -83,6 +127,24 @@ const (
 const (
 	QRIdentifier = "identifier" // an opaque cardholder id — safe to display indefinitely
 	QRCredential = "credential" // the credential value itself — a key; short-lived only
+)
+
+// Pass states. Exactly one describes a badge at any moment, and the client renders
+// one branch per state.
+//
+// This is ONE enum rather than a set of booleans on purpose. It replaced an
+// `expired bool` that was computed as "no in-window credential exists", which
+// conflated two states a person needs told apart: a cardholder who has never been
+// issued a credential saw "your pass is not currently valid", which is true but
+// unactionable and reads like a fault. Splitting them into separate booleans would
+// have left the client to combine them, and combining them wrongly is precisely the
+// bug — so the server decides, once.
+const (
+	PassValid       = "valid"         // a credential is active and in-window right now
+	PassExpired     = "expired"       // a credential exists but its window has passed
+	PassNotYetValid = "not_yet_valid" // a credential exists but its window hasn't opened
+	PassNone        = "none"          // no usable credential is issued at all
+	PassSuspended   = "suspended"     // the CARDHOLDER is suspended; the badge is withdrawn
 )
 
 const (
@@ -107,9 +169,21 @@ type handler struct {
 	cachedAt time.Time
 }
 
-// Register wires the badge routes. apis.RequireAuth names ONLY badge_users: an
-// operator token must not reach these (it has no cardholder to resolve), and a
-// bare RequireAuth() would admit any auth collection.
+// meCollections are the auth collections that may read a badge: the badge tier itself,
+// plus the operator tier and the break-glass superuser reading their OWN badge through
+// cardholders.operator (migration 1750000040).
+//
+// Naming them explicitly matters in both directions, the same way authz.OperatorCollections
+// does: a bare apis.RequireAuth() would admit any auth collection, and omitting
+// superusers would lock the break-glass account out of a route its own operators can use.
+var meCollections = append([]string{BadgeCollection}, authz.OperatorCollections...)
+
+// Register wires the badge routes. Every route that actuates something names ONLY
+// `cardholders`: an operator who wants to open a door uses the operator command routes
+// with their `command` capability, where it is audited as an operator action. Reading a
+// badge is the sole exception — see meCollections.
+//
+// A bare RequireAuth() would admit any auth collection, which is why none of these use it.
 func Register(se *core.ServeEvent, nc *nats.Conn, kv jetstream.KeyValue, subj subjects.Subjects, log *logger.Logger) {
 	h := &handler{
 		app:  se.App,
@@ -118,11 +192,20 @@ func Register(se *core.ServeEvent, nc *nats.Conn, kv jetstream.KeyValue, subj su
 		subj: subj,
 		log:  log.With("component", "badgeapi"),
 	}
-	se.Router.GET("/api/badge/me", h.me).Bind(apis.RequireAuth(BadgeCollection))
+	// /me is the ONE badge route an operator token may call, resolved through
+	// cardholders.operator — see subjectCardholder. Every route that ACTUATES stays
+	// bound to `cardholders` alone.
+	se.Router.GET("/api/badge/me", h.me).Bind(apis.RequireAuth(meCollections...))
 	se.Router.POST("/api/badge/unlock/{portalId}", h.unlock).Bind(apis.RequireAuth(BadgeCollection))
-	// POST /api/badge/visitors — the one OPERATOR route here (see visitors.go).
-	// Gated by the operator collection + `enroll`, never by a badge token.
+	// Arm/disarm an area, drive an aux output. See areas.go.
+	h.registerAreaRoutes(se)
+	// The holder's own things placed on a site's floor plan. See live.go.
+	h.registerLiveRoute(se)
+	// The OPERATOR routes: mint a visitor, end a visit. Gated by the operator
+	// collection + `enroll`, never by a badge token. See visitors.go.
 	h.registerVisitorRoutes(se)
+	// POST /api/badge/password — a holder setting their own. See password.go.
+	h.registerPasswordRoute(se)
 }
 
 // --- GET /api/badge/me ---
@@ -146,11 +229,21 @@ type meResponse struct {
 	QRKind   string `json:"qrKind"`   // QRIdentifier | QRCredential
 	QRSecret bool   `json:"qrSecret"` // true when QR is a working credential, so the UI can warn
 
+	// The window of the credential PassState describes — which is the live one when
+	// valid, the soonest to open when not yet valid, and the last to close when
+	// expired. Both "" when there is no credential to describe or its bound is
+	// unbounded.
 	ValidFrom  string `json:"validFrom"`  // RFC3339, "" = unbounded
 	ValidUntil string `json:"validUntil"` // RFC3339, "" = unbounded
-	Expired    bool   `json:"expired"`    // no active, in-window credential right now
+	// PassState is the single answer to "is this badge usable right now"; see the
+	// Pass* constants. The client switches on it and must not re-derive it.
+	PassState string `json:"passState"`
 
 	Portals []badgePortal `json:"portals"`
+	// The non-door targets this badge grants (migration 1750000037). Both are empty
+	// for the overwhelming majority of badges, which grant doors only.
+	Areas   []badgeArea   `json:"areas"`
+	Outputs []badgeOutput `json:"outputs"`
 }
 
 // badgePortal is one door on this badge. `id` is the PocketBase record id (what the
@@ -162,40 +255,81 @@ type badgePortal struct {
 	RemoteUnlock bool   `json:"remoteUnlock"`
 }
 
-func (h *handler) me(e *core.RequestEvent) error {
-	badge := e.Auth
-	cardholder, err := h.cardholderFor(badge)
+// subjectCardholder resolves whose badge this request is about.
+//
+// For a badge token it is the authenticated record itself — the holder IS the
+// cardholder, which is the whole point of the collapse. For an operator token it is the
+// cardholder whose `operator` relation points back at them (migration 1750000040), so
+// an operator who also carries a card can see their own badge without signing in twice.
+//
+// The second case is the ONLY place the two tiers meet, and it is deliberately
+// one-directional and read-only:
+//
+//   - It resolves an operator to their own cardholder, never the reverse, and never to
+//     someone else's: the link is a single indexed lookup on a field only an `enroll`
+//     holder can write, and it is uniquely indexed so two cardholders cannot claim one
+//     operator.
+//   - Only GET /api/badge/me uses it. An operator token cannot unlock, arm, disarm, or
+//     pulse through the badge tier — those routes name `cardholders` alone. Operators
+//     already have the command routes for that, gated by `command` and audited as
+//     operator actions; letting the same human act through two paths would make the
+//     audit trail ambiguous about which authority they used.
+//
+// An operator with no linked cardholder gets (nil, false), which the caller turns into
+// a 404 — the honest answer to "show me my badge" when there is no badge.
+func (h *handler) subjectCardholder(e *core.RequestEvent) (*core.Record, bool) {
+	if e.Auth == nil {
+		return nil, false
+	}
+	if e.Auth.Collection().Name == BadgeCollection {
+		return e.Auth, true
+	}
+	rec, err := h.app.FindFirstRecordByData(BadgeCollection, "operator", e.Auth.Id)
 	if err != nil {
-		return e.NotFoundError("badge is not linked to a cardholder", err)
+		return nil, false
+	}
+	return rec, true
+}
+
+func (h *handler) me(e *core.RequestEvent) error {
+	cardholder, ok := h.subjectCardholder(e)
+	if !ok {
+		return e.NotFoundError("no badge is linked to this account", nil)
 	}
 
-	kind := badge.GetString("kind")
+	kind := cardholder.GetString("kind")
 	creds, err := h.credentialsFor(cardholder.Id)
 	if err != nil {
 		return e.InternalServerError("failed to load credentials", err)
 	}
-	active := activeCredential(creds, time.Now().UTC())
+	state, describe := evaluatePass(creds, cardholder.GetString("status"), time.Now().UTC())
 
 	resp := meResponse{
 		Name:        cardholder.GetString("name"),
-		Email:       badge.Email(),
+		Email:       cardholder.Email(),
 		Kind:        kind,
 		PhotoRecord: cardholder.Id,
 		PhotoFile:   cardholder.GetString("photo"),
-		Expired:     active == nil,
+		PassState:   state,
 	}
-	if active != nil {
-		resp.ValidFrom = dateRFC3339(active, "valid_from")
-		resp.ValidUntil = dateRFC3339(active, "valid_until")
+	if describe != nil {
+		resp.ValidFrom = dateRFC3339(describe, "valid_from")
+		resp.ValidUntil = dateRFC3339(describe, "valid_until")
 	}
 
 	credValue := ""
-	if active != nil {
-		credValue = active.GetString("value")
+	if state == PassValid && describe != nil {
+		credValue = describe.GetString("value")
 	}
 	resp.QR, resp.QRKind, resp.QRSecret = qrPayload(kind, cardholder.Id, credValue)
+	if state == PassSuspended {
+		// Withdraw the whole badge face, the inert identifier included. A suspended
+		// holder's screen must not look like a working badge — that screen is what
+		// someone would hold up to a guard.
+		resp.QR, resp.QRSecret = "", false
+	}
 
-	// Door list, from the same graph the decision uses.
+	// Everything this badge can act on, from the same graph the decisions use.
 	snap, err := h.snapshot(e.Request.Context())
 	if err != nil {
 		// Fail soft: the identity half of the badge is still useful and correct
@@ -204,7 +338,10 @@ func (h *handler) me(e *core.RequestEvent) error {
 		h.log.Error("badge me: policy snapshot unavailable", "cardholder", cardholder.Id, "error", err)
 		return e.JSON(http.StatusOK, resp)
 	}
+	now := time.Now().UTC()
 	resp.Portals = h.portalsForBadge(snap, cardholder.Id)
+	resp.Areas = h.areasForBadge(snap, cardholder.Id, now)
+	resp.Outputs = h.outputsForBadge(snap, cardholder.Id)
 	return e.JSON(http.StatusOK, resp)
 }
 
@@ -228,12 +365,7 @@ func (h *handler) portalsForBadge(snap *policysnapshot.Snapshot, cardholderID st
 		if p.Name == "" {
 			p.Name = code // never render a nameless door
 		}
-		if loc, err := h.app.FindRecordById("locations", rec.GetString("location")); err == nil {
-			p.Location = loc.GetString("name")
-			if p.Location == "" {
-				p.Location = loc.GetString("code")
-			}
-		}
+		p.Location = h.locationName(rec.GetString("location"))
 		out = append(out, p)
 	}
 	return out
@@ -271,11 +403,7 @@ type unlockResponse struct {
 }
 
 func (h *handler) unlock(e *core.RequestEvent) error {
-	badge := e.Auth
-	cardholder, err := h.cardholderFor(badge)
-	if err != nil {
-		return e.NotFoundError("badge is not linked to a cardholder", err)
-	}
+	cardholder := e.Auth
 
 	portal, err := h.app.FindRecordById("portals", e.Request.PathValue("portalId"))
 	if err != nil {
@@ -384,20 +512,6 @@ func (h *handler) snapshot(reqCtx context.Context) (*policysnapshot.Snapshot, er
 	return h.cached, nil
 }
 
-// cardholderFor resolves the badge record's cardholder. The relation is required by
-// the schema, so a failure here means the cardholder was hard-deleted out from
-// under a live login.
-func (h *handler) cardholderFor(badge *core.Record) (*core.Record, error) {
-	if badge == nil {
-		return nil, errors.New("no authenticated badge")
-	}
-	id := badge.GetString("cardholder")
-	if id == "" {
-		return nil, errors.New("badge has no cardholder")
-	}
-	return h.app.FindRecordById("cardholders", id)
-}
-
 // credentialsFor returns the cardholder's non-revoked credentials. Revoked ones are
 // filtered here as well as by Decide — cheaper, and it keeps a revoked value from
 // being handed to the QR payload.
@@ -420,6 +534,59 @@ func (h *handler) credentialsFor(cardholderID string) ([]*core.Record, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// evaluatePass reduces a cardholder's credentials to the ONE state their badge is in,
+// plus the credential whose window describes that state (nil when there is none to
+// describe). Pure, so the four-way branch that produces a person's only explanation of
+// why their badge does not work is table-tested rather than inferred from booleans.
+//
+// `creds` is expected to be the output of credentialsFor — revoked and suspended
+// credentials already removed — so "none" covers both "never issued" and "all
+// revoked". Both come out as the same sentence to the holder, and the difference is an
+// operator's business, not theirs.
+//
+// A suspended CARDHOLDER outranks everything: policy.Decide already denies them at a
+// reader, so a badge that showed a live pass would be contradicting the door.
+func evaluatePass(creds []*core.Record, cardholderStatus string, now time.Time) (state string, describe *core.Record) {
+	if cardholderStatus == "suspended" {
+		return PassSuspended, nil
+	}
+	if active := activeCredential(creds, now); active != nil {
+		return PassValid, active
+	}
+	if len(creds) == 0 {
+		return PassNone, nil
+	}
+
+	// Nothing is live, so every credential is either still to come or already gone.
+	// Describe a pass that is COMING in preference to one that has gone: "valid from
+	// Monday 09:00" is something the holder can act on, where "expired" only explains.
+	var soonest, latest *core.Record
+	for _, c := range creds {
+		if from := c.GetDateTime("valid_from"); !from.IsZero() && now.Before(from.Time()) {
+			if soonest == nil || from.Time().Before(soonest.GetDateTime("valid_from").Time()) {
+				soonest = c
+			}
+			continue
+		}
+		if until := c.GetDateTime("valid_until"); !until.IsZero() && now.After(until.Time()) {
+			if latest == nil || until.Time().After(latest.GetDateTime("valid_until").Time()) {
+				latest = c
+			}
+		}
+	}
+	switch {
+	case soonest != nil:
+		return PassNotYetValid, soonest
+	case latest != nil:
+		return PassExpired, latest
+	default:
+		// Unreachable: activeCredential treats an unparseable or absent bound as
+		// unbounded, so a credential it rejected has a real bound on one side or the
+		// other. Fall back to the state that promises nothing.
+		return PassNone, nil
+	}
 }
 
 // activeCredential picks the credential whose validity window contains now,
@@ -451,18 +618,33 @@ func dateRFC3339(r *core.Record, field string) string {
 //
 // The allowed path is also audited downstream by the controller's event, but the
 // DENIED path never reaches the controller — without this a badge holder could
-// probe every door in the building and leave no trace. Fail-safe: an audit failure
-// is logged, never propagated, since the unlock decision has already been made.
+// probe every door in the building and leave no trace.
 func (h *handler) audit(e *core.RequestEvent, cardholderID, portalCode string, allowed bool, reason string) {
+	h.auditAction(e, cardholderID, "portals", portalCode, "badge_remote_unlock", allowed, reason)
+}
+
+// auditAction writes one audit_logs row for a badge action against a target record —
+// an unlock, an arm, a disarm, an output pulse. Every attempt is recorded, allowed or
+// not, for the reason above: a denial never reaches a controller, so this is the only
+// trace it leaves, and probing is exactly what wants a trace.
+//
+// The target is named by its stable CODE rather than its record id, so a row stays
+// readable after the record is renamed or deleted — the same choice the changelog
+// makes. event_type is "update" (an action on a thing, not a record mutation); the
+// route path in request_url plus `action` in the payload say which action it was.
+//
+// Fail-safe: the decision has already been made and acted on by the time this runs, so
+// an audit failure is logged, never propagated.
+func (h *handler) auditAction(e *core.RequestEvent, cardholderID, collectionName, targetCode, action string, allowed bool, reason string) {
 	col, err := h.app.FindCollectionByNameOrId("audit_logs")
 	if err != nil {
 		h.log.Error("audit sink unavailable", "error", err)
 		return
 	}
 	rec := core.NewRecord(col)
-	rec.Set("event_type", "update") // an action on a portal, not a record mutation
-	rec.Set("collection_name", "portals")
-	rec.Set("record_id", portalCode)
+	rec.Set("event_type", "update")
+	rec.Set("collection_name", collectionName)
+	rec.Set("record_id", targetCode)
 	if e.Auth != nil {
 		rec.Set("actor_id", e.Auth.Id)
 		rec.Set("actor_email", e.Auth.Email())
@@ -475,13 +657,43 @@ func (h *handler) audit(e *core.RequestEvent, cardholderID, portalCode string, a
 	}
 	rec.Set("timestamp", types.NowDateTime())
 	rec.Set("after", map[string]any{
-		"action":     "badge_remote_unlock",
+		"action":     action,
 		"cardholder": cardholderID,
-		"portal":     portalCode,
+		"target":     targetCode,
 		"allowed":    allowed,
 		"reason":     reason,
 	})
 	if err := h.app.Save(rec); err != nil {
-		h.log.Error("failed to write badge audit row", "portal", portalCode, "error", err)
+		h.log.Error("failed to write badge audit row", "target", targetCode, "error", err)
+	}
+}
+
+// writeBadgeAudit inserts one audit_logs row against the badge collection. Fail-safe:
+// the operation has already committed, so an audit error is logged, never propagated.
+// Never records a password, hashed or otherwise — audit rows are widely readable.
+func (h *handler) writeBadgeAudit(e *core.RequestEvent, eventType, recordID string, after map[string]any) {
+	col, err := h.app.FindCollectionByNameOrId("audit_logs")
+	if err != nil {
+		h.log.Error("audit sink unavailable", "error", err)
+		return
+	}
+	rec := core.NewRecord(col)
+	rec.Set("event_type", eventType)
+	rec.Set("collection_name", BadgeCollection)
+	rec.Set("record_id", recordID)
+	if e.Auth != nil {
+		rec.Set("actor_id", e.Auth.Id)
+		rec.Set("actor_email", e.Auth.Email())
+		rec.Set("actor_collection", e.Auth.Collection().Name)
+	}
+	rec.Set("request_ip", e.RealIP())
+	if e.Request != nil {
+		rec.Set("request_method", e.Request.Method)
+		rec.Set("request_url", e.Request.URL.Path)
+	}
+	rec.Set("timestamp", types.NowDateTime())
+	rec.Set("after", after)
+	if err := h.app.Save(rec); err != nil {
+		h.log.Error("failed to write badge audit row", "record", recordID, "error", err)
 	}
 }

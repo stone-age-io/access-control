@@ -231,6 +231,21 @@ distinguishable from a synthesized one; a phone-initiated open is a command, and
 recording it as a credential presentation would make the audit trail assert something
 untrue.
 
+**Badge arm/disarm and output add no wire surface either**, for the same two reasons plus
+one shape difference. `POST /api/badge/areas/{id}/{arm|disarm}` is authorized by
+`policy.DecideArea` over the same snapshot and gated by `areas.allow_remote_arm`, then
+writes `areas.arm_override` — a **durable record write**, exactly as the operator route
+does, because arm-state must survive a reboot and there is deliberately no `cmd.arm`
+subject. `POST /api/badge/outputs/{id}/pulse` is authorized by `policy.DecideOutput`,
+gated by `aux_output.allow_remote`, and publishes the **existing** `cmd.output` with
+`action: "pulse"` and `seconds: 0` (the output's own configured duration). The badge
+surface offers no `on`/`off`: a momentary act is self-limiting, where energizing a relay
+from a phone and walking away is not.
+
+A badge holder cannot clear an arm override — `arm-clear` is an operator's "revert to the
+schedule", and `internal/armrelease` already releases a one-shot disarm on a scheduled
+area, so a holder's disarm strands nothing.
+
 Each input's **contact sense** is configurable per install (`dpsContact`/
 `rexContact`/`aux_input.contact`, see Policy KV below): a normally-open vs
 normally-closed contact is folded onto the board's electrical polarity so "active"
@@ -294,7 +309,7 @@ sole writer; controllers are read-only watchers.
 | `portal.{code}` | `{"code","type","location","posture","pulseSeconds",`<br>`"autoPosture"?,"autoSchedule"?,`<br>`"controller"?,"lockRelay"?,"dpsInput"?,"rexInput"?,"heldOpenSeconds"?,"readerAddress"?,`<br>`"dpsContact"?,"rexContact"?,"lockType"?,"rexUnlock"?,`<br>`"area"?,"disarmOnGrant"?}` |
 | `controller.{code}` | `{"code","name","location","model"}` |
 | `holiday.{pbid}` | `{"calendar":"<calendar code>","date":"YYYY-MM-DD","recurring"}` |
-| `group.{code}` | `{"code","portals":["<portal code>"],"schedule":"<sched code>"}` |
+| `group.{code}` | `{"code","portals":["<portal code>"],"schedule":"<sched code>",`<br>`"areas":["<area code>"]?,"auxOutputs":["<output code>"]?,"areaRights":["arm"\|"disarm"]?}` |
 | `role.{code}` | `{"code","groups":["<group code>"]}` |
 | `user.{pbid}` | `{"id","status","roles":["<role code>"]}` |
 | `cred.{value}` | `{"value","user":"<cardholder pbid>","status","validFrom"?,"validUntil"?}` |
@@ -302,10 +317,27 @@ sole writer; controllers are read-only watchers.
 | `auxout.{code}` | `{"code","location","controller"?,"relayIndex"?,"pulseSeconds"?}` |
 | `area.{code}` | `{"code","name"?,"location","arm"?,"armOverride"?,"autoArm"?,"autoSchedule"?}` |
 
+An access group grants **three independent kinds of target** under its one schedule:
+portals, `areas` (arm/disarm), and `auxOutputs`. An absent or empty list grants nothing
+of that kind, so a doors-only group is the common zero case. `areaRights` names which arm
+actions `areas` is granted for — **an empty or absent list grants NEITHER**, because
+arming and disarming are separate rights (disarming turns intrusion detection off). See
+`policy.DecideArea` / `DecideOutput`, which are pure siblings of `Decide` rather than part
+of it.
+
+The three group fields are consumed **centrally** today: accessd authorizes a badge
+holder's arm/disarm and output actions with those deciders. They are mirrored anyway
+rather than read from PocketBase, so there is one authorization substrate rather than two
+— and so an OSDP keypad arming a partition at the reader, which is an edge decision, needs
+no new wire.
+
 **UI-only fields are deliberately excluded.** The management UI adds
 `locations.description`/`coordinates`/`floorplan` and `floorplan_position` on
 `portals`, `aux_input`, and `aux_output` for the location map and floor-plan views.
-These are visualization metadata only —
+The badge tier's per-record remote opt-ins are excluded for the same reason:
+`portals.allow_remote_unlock`, `areas.allow_remote_arm`, `aux_output.allow_remote`, and
+`locations.badge_floorplan` gate accessd's own routes, and the edge has no
+remote-actuation path to gate. These are visualization and control-plane metadata only —
 the mirror's wire shape above omits them, so they never reach `ACC_POLICY` or the
 edge. `policy.Decide`, arming, and the door state machine are unaffected, and no
 floor-plan image data ever leaves accessd.
@@ -446,6 +478,43 @@ Reason codes are **stable strings** — they flow verbatim into `tap` events and
 the `events` collection, so downstream consumers and dashboards depend on them.
 (The `*_point` reason codes keep their historical spelling even though the entity
 is now called a portal.)
+
+### Non-portal targets
+
+`policy.DecideArea` and `policy.DecideOutput` answer the same question for the other two
+target kinds an access group can grant. They are **siblings** of `Decide`, not branches
+inside it: `Decide`'s order is a contract on the per-tap hot path, and an area has neither
+a posture gate nor a strike to pulse. Step 3 above — the credential/user ladder — is
+literally shared code (`subjectFor`), so a pass that a door refuses is refused here
+identically.
+
+`DecideArea(p, loc, cred, area, action, atUTC)`, where `action` is `arm` or `disarm`:
+
+1. Unknown area → `deny_unknown_area`
+2. Credential/user → the shared ladder (same codes as step 3 above)
+3. Grant: a group containing this area, holding the right for this action, whose schedule
+   window is open now → `allow_area_grant`. Otherwise, most specific first: a group had the
+   area **and** the right but no window was open → `deny_schedule_closed`; a group had the
+   area but not this right → `deny_no_area_right`; no group had it → `deny_no_access`.
+
+`DecideOutput(p, loc, cred, output, atUTC)` is the same walk without the arm/disarm split:
+`deny_unknown_output` → the ladder → `allow_output_grant` / `deny_schedule_closed` /
+`deny_no_access`.
+
+| Concept | Values |
+|---|---|
+| Arm actions | `arm` · `disarm` — **separate rights** (`group.areaRights`); an empty list grants neither |
+| Added reason codes | `allow_area_grant` · `allow_output_grant` · `deny_unknown_area` · `deny_unknown_output` · `deny_no_area_right` |
+
+`deny_no_area_right` is distinct from `deny_no_access` on purpose: it is the signature of a
+group with areas chosen and `areaRights` left empty — a misconfiguration an operator can
+fix, not an access decision.
+
+Neither function reads an area's **arm-state**. Authorizing a change is pure; *resolving*
+the current state is time-, schedule- and override-dependent operational state (like
+posture), resolved by the controller's `AreaManager` or accessd's snapshot. So a grant to
+disarm is a grant whether the area is armed or not, and disarming an already-disarmed area
+is a no-op rather than a denial.
 
 ## Audit projection (`events` collection)
 

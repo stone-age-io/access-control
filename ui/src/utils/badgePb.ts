@@ -1,13 +1,15 @@
 import PocketBase, { LocalAuthStore } from 'pocketbase'
 
 /**
- * A SECOND PocketBase client, for the badge tier (`badge_users`).
+ * A SECOND PocketBase client, for the badge tier (`cardholders`).
  *
  * It must be a separate client instance, not the operator `pb` from ./pb: the SDK
  * holds exactly one authStore per client, so sharing one would mean a badge holder
  * signing in clobbers an operator's session in the same browser (and vice versa).
  * That is not hypothetical — an operator minting a visitor at a kiosk, then the
- * visitor signing in on the same machine, is the normal flow.
+ * visitor signing in on the same machine, is the normal flow. It is also why the
+ * merged sign-in page keeps a tier selector instead of guessing from the address:
+ * one person can hold an account in both tiers.
  *
  * The distinct localStorage key is what keeps the two sessions independent. Anything
  * badge-facing must import THIS client; anything operator-facing must import `pb`.

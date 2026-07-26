@@ -28,6 +28,8 @@ edge controllers (`access-controller`) watch that keyspace and decide locally.
   sign-in, capabilities, collection-rule matrix, and the `audit_logs` change log.
 - [`docs/hardware.md`](docs/hardware.md) — physical I/O: supported boards, pin
   maps, relay/input polarity, transports, and how to add a board.
+- [`demo/README.md`](demo/README.md) — dev/demo tooling: an idempotent seed script for a
+  believable multi-site company, and rule-router rules that keep the event feed live.
 
 ## Layout
 
@@ -52,6 +54,7 @@ internal/natsx/         NATS connection + KV helpers
 internal/webui/         the compiled management UI, //go:embed-ed into accessd
 pbmigrations/           PocketBase collections (schema-in-code)
 ui/                     Vue 3 + Vite management UI source (PocketBase-backed CRUD)
+demo/                   dev-only: seed.ps1 (demo data) + access-demo.yaml (rule-router event simulator)
 ```
 
 ## Web UI
@@ -70,6 +73,15 @@ that gate writes and commands while reads stay open to any authenticated operato
 see [`docs/operators.md`](docs/operators.md). A PocketBase **superuser**
 (`accessd superuser upsert <email> <pass>`) is the break-glass account and also
 signs into the admin UI at `/_`.
+
+There is a **second, much smaller surface for the people the system is about**: a
+cardholder or visitor signs in at `/login?as=badge` and sees one page — their badge
+(photo, QR, validity) and what it grants. Where an operator has opted the door, area, or
+relay in, they can also open it, arm/disarm it, or pulse it from their phone; every such
+action is authorized by the same pure decision function the edge runs, so a badge can
+never do remotely what it could not do in person. `cardholders` is itself the auth
+collection for this tier — one person is one record whether or not they ever sign in — and
+`docs/operators.md` covers the boundary between the two tiers.
 
 The console is **rebrandable at runtime without a rebuild**: point `branding.dir`
 (env `SA_BRANDING_DIR`) at a host directory of `theme.css` / `logo.svg` /

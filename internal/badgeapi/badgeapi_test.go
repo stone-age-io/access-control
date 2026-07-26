@@ -105,6 +105,97 @@ func mkCred(t *testing.T, app core.App, value string, from, until time.Time) *co
 	return r
 }
 
+// TestEvaluatePass covers the state a badge holder is shown, which is their ONLY
+// explanation of why their badge does not work.
+//
+// The case that produced it: a cardholder with roles and doors but no credential yet
+// was told "your pass is not currently valid" — true, unactionable, and reading like a
+// fault in the pass rather than a step nobody had taken. `none` and `expired` are
+// different sentences to a person, so they are different states here.
+func TestEvaluatePass(t *testing.T) {
+	app := newApp(t)
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	hour := time.Hour
+
+	unbounded := mkCred(t, app, "UNBOUNDED", time.Time{}, time.Time{})
+	current := mkCred(t, app, "CURRENT", now.Add(-hour), now.Add(hour))
+	past := mkCred(t, app, "PAST", now.Add(-2*hour), now.Add(-hour))
+	longPast := mkCred(t, app, "LONG-PAST", now.Add(-72*hour), now.Add(-48*hour))
+	future := mkCred(t, app, "FUTURE", now.Add(hour), now.Add(2*hour))
+	farFuture := mkCred(t, app, "FAR-FUTURE", now.Add(48*hour), now.Add(72*hour))
+
+	for _, tc := range []struct {
+		name         string
+		creds        []*core.Record
+		status       string
+		wantState    string
+		wantDescribe string // credential value, or "" for nil
+	}{
+		{
+			name: "no credential at all is not an expiry", creds: nil, status: "active",
+			wantState: PassNone, wantDescribe: "",
+		},
+		{
+			name: "in-window credential is valid", creds: []*core.Record{current}, status: "active",
+			wantState: PassValid, wantDescribe: "CURRENT",
+		},
+		{
+			name: "unbounded credential is valid", creds: []*core.Record{unbounded}, status: "active",
+			wantState: PassValid, wantDescribe: "UNBOUNDED",
+		},
+		{
+			name: "past window reads as expired", creds: []*core.Record{past}, status: "active",
+			wantState: PassExpired, wantDescribe: "PAST",
+		},
+		{
+			name: "future window reads as not yet valid", creds: []*core.Record{future}, status: "active",
+			wantState: PassNotYetValid, wantDescribe: "FUTURE",
+		},
+		{
+			// The holder can act on a pass that is coming; one that has gone only explains.
+			name:  "a coming pass is described in preference to a gone one",
+			creds: []*core.Record{past, future}, status: "active",
+			wantState: PassNotYetValid, wantDescribe: "FUTURE",
+		},
+		{
+			name:  "describes the soonest of several coming passes",
+			creds: []*core.Record{farFuture, future}, status: "active",
+			wantState: PassNotYetValid, wantDescribe: "FUTURE",
+		},
+		{
+			name:  "describes the last of several gone passes",
+			creds: []*core.Record{longPast, past}, status: "active",
+			wantState: PassExpired, wantDescribe: "PAST",
+		},
+		{
+			// policy.Decide denies a suspended cardholder at the reader, so a badge
+			// claiming to be valid would be contradicting the door.
+			name:  "a suspended cardholder outranks a live credential",
+			creds: []*core.Record{current}, status: "suspended",
+			wantState: PassSuspended, wantDescribe: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state, describe := evaluatePass(tc.creds, tc.status, now)
+			if state != tc.wantState {
+				t.Errorf("state = %q, want %q", state, tc.wantState)
+			}
+			if tc.wantDescribe == "" {
+				if describe != nil {
+					t.Errorf("describe = %q, want nil", describe.GetString("value"))
+				}
+				return
+			}
+			if describe == nil {
+				t.Fatalf("describe = nil, want %q", tc.wantDescribe)
+			}
+			if v := describe.GetString("value"); v != tc.wantDescribe {
+				t.Errorf("describe = %q, want %q", v, tc.wantDescribe)
+			}
+		})
+	}
+}
+
 // TestActiveCredential covers the window logic that decides whether a badge shows a
 // live QR or reads as expired. It mirrors the bounds policy.Decide enforces at the
 // edge, so a badge must not claim to be valid when a reader would deny it.

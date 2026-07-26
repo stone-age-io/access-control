@@ -189,11 +189,27 @@ type AuxOutput struct {
 	PulseSeconds int    `json:"pulseSeconds,omitempty"`
 }
 
-// AccessGroup grants a set of portals (by code) under one schedule (by code).
+// AccessGroup grants a set of targets — portals, areas, and aux outputs, each by
+// code — under one schedule (by code). The three target kinds are independent, so
+// an area-only group simply carries no portals; an empty list grants nothing.
+//
+// AreaRights names which arm actions Areas is granted for ("arm" and/or "disarm").
+// EMPTY GRANTS NEITHER: arming and disarming are separate rights because disarming
+// turns intrusion detection off and arming turns it on, and "may lock up but not
+// silence the building" is a real role. See policy.DecideArea.
+//
+// Areas/AuxOutputs/AreaRights are consumed centrally today (accessd authorizes a
+// badge holder's arm/disarm and output commands with policy.DecideArea /
+// DecideOutput). They are mirrored anyway rather than read from PocketBase, so
+// there is one authorization substrate rather than two — and so an OSDP keypad
+// arming a partition at the reader, which is an edge decision, needs no new wire.
 type AccessGroup struct {
-	Code     string   `json:"code"`
-	Portals  []string `json:"portals"`
-	Schedule string   `json:"schedule"`
+	Code       string   `json:"code"`
+	Portals    []string `json:"portals"`
+	Schedule   string   `json:"schedule"`
+	Areas      []string `json:"areas,omitempty"`
+	AuxOutputs []string `json:"auxOutputs,omitempty"`
+	AreaRights []string `json:"areaRights,omitempty"` // "arm" and/or "disarm"
 }
 
 // Role bundles access groups (by code).

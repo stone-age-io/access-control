@@ -25,6 +25,7 @@ const form = ref({
   auto_arm: '' as '' | 'disarmed' | 'armed',
   auto_schedule: '',
   notify_on_alarm: false,
+  allow_remote_arm: false,
 })
 
 const locations = ref<Location[]>([])
@@ -62,6 +63,7 @@ async function loadRecord() {
       auto_arm: a.auto_arm || '',
       auto_schedule: a.auto_schedule || '',
       notify_on_alarm: !!a.notify_on_alarm,
+      allow_remote_arm: !!a.allow_remote_arm,
     }
     markClean()
   } catch (err: any) {
@@ -101,6 +103,7 @@ async function handleSubmit() {
       auto_arm: form.value.auto_arm,
       auto_schedule: form.value.auto_schedule,
       notify_on_alarm: form.value.notify_on_alarm,
+      allow_remote_arm: form.value.allow_remote_arm,
     }
     if (isEdit.value) {
       await pb.collection('areas').update(recordId!, data)
@@ -167,6 +170,11 @@ onMounted(async () => {
           <FormField inline label="Email on intrusion"
                      hint="Email opted-in operators when this area raises an intrusion alarm. Recipients are set per operator (Operators → Notify).">
             <input v-model="form.notify_on_alarm" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
+
+          <FormField inline label="Allow remote arm/disarm"
+                     hint="Let badge holders arm or disarm this area from their badge page. Their own access group still decides which action they may take and when — this only decides whether it may be done with no one on site. Off by default.">
+            <input v-model="form.allow_remote_arm" type="checkbox" class="toggle toggle-primary" />
           </FormField>
         </div>
       </BaseCard>

@@ -46,10 +46,9 @@ var audited = []string{
 	// holiday_calendars: which days a schedule treats as closed. A calendar edit can
 	// silently open or close every holiday-observing schedule at a site.
 	"holiday_calendars",
-	// badge_users is an auth tier: minting a badge login (and especially a visitor
-	// one) is a control-plane grant of access to a person, so it belongs in the
-	// operator change log alongside credentials.
-	"badge_users",
+	// Note there is no separate badge-login collection to list: `cardholders` above is
+	// itself the badge tier's auth collection, so enabling someone's badge login is a
+	// PATCH to a cardholder and is already audited by that entry.
 }
 
 type recorder struct {

@@ -55,26 +55,42 @@ func TestKeyAndValue_Credential(t *testing.T) {
 	}
 }
 
-// The badge auth tier (badge_users, migration 1750000030) must never be mirrored: a
-// login is control-plane, and a leaf node has no business knowing one exists. The
-// separation is what keeps "add a badge login" from touching the policy graph at
-// all. Because the hooks bind to this explicit allowlist, absence here IS the
-// guarantee — assert it rather than leaving it to be re-derived.
-func TestBadgeUsersNotMirrored(t *testing.T) {
-	for _, name := range mirroredCollections {
-		if name == "badge_users" {
-			t.Fatal("badge_users is in mirroredCollections; a badge login must never reach NATS KV")
+// cardholders is BOTH the person and the badge login, so its rows now carry auth
+// fields — email, verified, password, tokenKey. None of them may reach a leaf node,
+// and the guarantee is the wire struct: policykv.User is hand-built with three
+// fields, so the mirror physically cannot marshal a fourth. Assert it rather than
+// leaving it to be re-derived by whoever next widens the cardholder form.
+func TestCardholderWireCarriesNoAuthFields(t *testing.T) {
+	app := newApp(t)
+	alice := find(t, app, "cardholders", "external_id", "alice")
+
+	// Sanity: the fixture gives Alice a password and a badge login, so if any auth
+	// field COULD leak, this record is one that would show it.
+	if !alice.GetBool("badge_login") || alice.Email() == "" {
+		t.Fatal("fixture cardholder has no badge login or email; this test would prove nothing")
+	}
+
+	_, val, err := keyAndValue(app, alice)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(val, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, banned := range []string{
+		"email", "emailVisibility", "verified", "password", "tokenKey",
+		"badge_login", "password_set", "kind", "name",
+	} {
+		if _, ok := raw[banned]; ok {
+			t.Errorf("cardholder KV payload carries %q; the edge has no business seeing it", banned)
 		}
 	}
-	// recordKey is the other half: even if a hook fired, there is no key scheme for
-	// a badge login, so it would be rejected rather than written somewhere odd.
-	app := newApp(t)
-	col, err := app.FindCollectionByNameOrId("badge_users")
-	if err != nil {
-		t.Fatalf("badge_users collection: %v", err)
-	}
-	if _, err := recordKey(core.NewRecord(col)); err == nil {
-		t.Error("recordKey accepted a badge_users record; want 'not a mirrored collection'")
+	// And the three that SHOULD be there, so this cannot pass by marshaling nothing.
+	for _, want := range []string{"id", "status", "roles"} {
+		if _, ok := raw[want]; !ok {
+			t.Errorf("cardholder KV payload is missing %q", want)
+		}
 	}
 }
 
@@ -143,6 +159,44 @@ func TestKeyAndValue_GroupResolvesCodes(t *testing.T) {
 	}
 	if len(got.Portals) != 1 || got.Portals[0] != "lobby-main" {
 		t.Errorf("portals = %v, want [lobby-main]", got.Portals)
+	}
+	// The widened targets (1750000037), seeded onto this group by 1750000038. Areas
+	// and outputs must resolve to CODES exactly as portals do — an id here would put
+	// a PocketBase id in a KV key's referent, which the edge cannot resolve.
+	if len(got.Areas) != 1 || got.Areas[0] != "warehouse" {
+		t.Errorf("areas = %v, want [warehouse] (resolved to a code, not an id)", got.Areas)
+	}
+	if len(got.AuxOutputs) != 1 || got.AuxOutputs[0] != "lobby-gate" {
+		t.Errorf("auxOutputs = %v, want [lobby-gate]", got.AuxOutputs)
+	}
+	// area_rights is a fixed vocabulary, carried verbatim.
+	if len(got.AreaRights) != 2 {
+		t.Errorf("areaRights = %v, want both arm and disarm", got.AreaRights)
+	}
+}
+
+// A group with areas but no area_rights must mirror an EMPTY rights list, never a
+// helpful default. Empty means "neither", and the deciders depend on that: a mirror
+// that filled in both would silently grant disarm to everyone in the group.
+func TestKeyAndValue_GroupEmptyAreaRightsStayEmpty(t *testing.T) {
+	app := newApp(t)
+	group := find(t, app, "access_groups", "code", "lobby-group")
+	group.Set("area_rights", nil)
+
+	_, val, err := keyAndValue(app, group)
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	var got policykv.AccessGroup
+	if err := json.Unmarshal(val, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.AreaRights) != 0 {
+		t.Errorf("areaRights = %v, want empty (the fail-closed reading)", got.AreaRights)
+	}
+	// And the areas themselves still mirror: the grant exists, the rights do not.
+	if len(got.Areas) != 1 {
+		t.Errorf("areas = %v, want the area still present", got.Areas)
 	}
 }
 

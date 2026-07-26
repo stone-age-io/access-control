@@ -54,23 +54,9 @@ func Decide(p *Policy, loc *time.Location, posture, cred, portal string, atUTC t
 		return Decision{Reason: ReasonDenyPointDisabled}
 	}
 
-	c, ok := p.Creds[cred]
+	u, denial, ok := subjectFor(p, cred, atUTC)
 	if !ok {
-		return Decision{Reason: ReasonDenyUnknownCredential}
-	}
-	if c.Status != StatusActive {
-		return Decision{Reason: ReasonDenyRevoked, User: c.User}
-	}
-	if !c.ValidFrom.IsZero() && atUTC.Before(c.ValidFrom) {
-		return Decision{Reason: ReasonDenyNotYetValid, User: c.User}
-	}
-	if !c.ValidUntil.IsZero() && atUTC.After(c.ValidUntil) {
-		return Decision{Reason: ReasonDenyExpired, User: c.User}
-	}
-	u, ok := p.Users[c.User]
-	if !ok || u.Status != StatusActive {
-		// Credential references a user we don't have or who is suspended: deny.
-		return Decision{Reason: ReasonDenyRevoked, User: c.User}
+		return denial
 	}
 
 	portalReachable := false
@@ -102,6 +88,38 @@ func Decide(p *Policy, loc *time.Location, posture, cred, portal string, atUTC t
 		return Decision{Reason: ReasonDenyScheduleClosed, User: u.ID}
 	}
 	return Decision{Reason: ReasonDenyNoAccess, User: u.ID}
+}
+
+// subjectFor resolves a credential value to the active user behind it, or the denial
+// that stops it. It is step 3 of Decide's contract, extracted verbatim so the
+// non-portal deciders (DecideArea, DecideOutput) enforce the same ladder in the same
+// order rather than reimplementing it — a second copy of "is this pass currently
+// usable" is exactly the sort of thing that drifts, and drifting toward allow is a
+// security bug.
+//
+// Returns (user, zero Decision, true) when the credential is usable. Otherwise the
+// returned Decision is the one to hand back, with User set whenever the credential
+// named someone (so an audit row attributes the attempt even on a deny).
+func subjectFor(p *Policy, cred string, atUTC time.Time) (User, Decision, bool) {
+	c, ok := p.Creds[cred]
+	if !ok {
+		return User{}, Decision{Reason: ReasonDenyUnknownCredential}, false
+	}
+	if c.Status != StatusActive {
+		return User{}, Decision{Reason: ReasonDenyRevoked, User: c.User}, false
+	}
+	if !c.ValidFrom.IsZero() && atUTC.Before(c.ValidFrom) {
+		return User{}, Decision{Reason: ReasonDenyNotYetValid, User: c.User}, false
+	}
+	if !c.ValidUntil.IsZero() && atUTC.After(c.ValidUntil) {
+		return User{}, Decision{Reason: ReasonDenyExpired, User: c.User}, false
+	}
+	u, ok := p.Users[c.User]
+	if !ok || u.Status != StatusActive {
+		// Credential references a user we don't have or who is suspended: deny.
+		return User{}, Decision{Reason: ReasonDenyRevoked, User: c.User}, false
+	}
+	return u, Decision{}, true
 }
 
 // ScheduleOpen reports whether a schedule has an open window at atUTC in the

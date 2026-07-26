@@ -23,6 +23,9 @@ const { confirm } = useConfirm()
 // cardholders.photo is a protected file — its URL needs a session file token.
 const { url: fileUrl } = useFileUrl()
 
+// No capability gate on reading the badge login: it is a field on this very record, so
+// any operator who can see the cardholder can see it. That is deliberate — a blank space
+// cannot say "not allowed to look".
 const recordId = route.params.id as string
 const record = ref<Cardholder | null>(null)
 const credentials = ref<Credential[]>([])
@@ -58,12 +61,41 @@ const effectiveAccess = computed<EffectivePortal[]>(() => {
 const credentialSearch = (c: Credential) => [c.value, c.label, c.type].filter(Boolean).join(' ')
 const effectiveSearch = (ea: EffectivePortal) => [ea.portal.code, ea.portal.name, ...ea.groups].filter(Boolean).join(' ')
 
+// --- badge login ---
+//
+// A field on this record, not a related entity: `cardholders` is itself the badge tier's
+// auth collection, so "has a badge login" is `badge_login` on the row already loaded
+// above. Shown here read-only and edited on the cardholder form like every other field.
+//
+// It is not access: their credentials work whether or not they can sign in. See
+// docs/operators.md.
+const hasBadgeLogin = computed(() => !!record.value?.badge_login)
+
+/**
+ * The sign-in methods actually available, in the order they are offered. `password_set`
+ * is what distinguishes a password the holder knows from the random one every record
+ * carries because PocketBase requires a non-blank password on an auth record.
+ */
+const badgeMethods = computed<string[]>(() => {
+  if (!hasBadgeLogin.value) return []
+  return record.value?.password_set ? ['Password', 'Emailed code'] : ['Emailed code']
+})
+
+/**
+ * A badge login with no credential behind it is the state that produces a confusing
+ * badge — the holder signs in and is told, correctly but unhelpfully, that no pass is
+ * issued. Worth saying HERE, where the fix is one click away, rather than leaving the
+ * operator to notice that "Credentials 0" and "Effective access 3" contradict a working
+ * badge.
+ */
+const badgeHasNoCredential = computed(() => hasBadgeLogin.value && credentials.value.length === 0)
+
 async function load() {
   loading.value = true
   try {
     const [c, creds] = await Promise.all([
       pb.collection('cardholders').getOne<Cardholder>(recordId, {
-        expand: 'roles,roles.access_groups,roles.access_groups.portals',
+        expand: 'roles,roles.access_groups,roles.access_groups.portals,operator',
       }),
       pb.collection('credentials').getFullList<Credential>({ filter: `user = "${recordId}"`, sort: 'value' }),
     ])
@@ -82,7 +114,14 @@ async function handleDelete() {
   const confirmed = await confirm({
     title: 'Delete Cardholder',
     message: `Delete cardholder "${title.value}"?`,
-    details: 'Their credentials will be left without a holder. This cannot be undone.',
+    // Their credentials go with them (migration 1750000036 makes credentials.user
+    // cascade), which is what an operator means by "delete this person" — a credential
+    // outliving its holder is a key that opens doors and resolves to nobody. Their sign-in
+    // goes too, because it is the same record. Say the card count, since that is the part
+    // that surprises.
+    details: credentials.value.length
+      ? `Their ${credentials.value.length} credential${credentials.value.length === 1 ? '' : 's'} will be deleted with them and will stop opening doors. This cannot be undone.`
+      : 'This cannot be undone.',
     confirmText: 'Delete',
     variant: 'danger',
   })
@@ -149,6 +188,36 @@ onMounted(load)
             {{ record.status || 'active' }}
           </SoftBadge>
         </DataField>
+        <!-- A field on this record, not a related entity. Edited on the form. -->
+        <DataField label="Badge login">
+          <span v-if="hasBadgeLogin" class="flex flex-wrap items-center gap-1">
+            <span class="truncate">{{ record.email }}</span>
+            <SoftBadge v-for="m in badgeMethods" :key="m" :tone="m === 'Password' ? 'success' : 'neutral'">
+              {{ m }}
+            </SoftBadge>
+          </span>
+          <span v-else class="opacity-40">None</span>
+        </DataField>
+        <!-- The same human's console account, when there is one. A pointer only: it lets
+             them view this badge from their profile menu and grants nothing. -->
+        <DataField label="Operator account">
+          <router-link
+            v-if="record.expand?.operator"
+            :to="`/operators/${record.expand.operator.id}`"
+            class="link link-primary truncate"
+          >
+            {{ record.expand.operator.email }}
+          </router-link>
+          <span v-else class="opacity-40">Not an operator</span>
+        </DataField>
+      </div>
+
+      <!-- The state that makes a badge look broken to its holder. -->
+      <div v-if="badgeHasNoCredential" class="alert alert-warning py-2 text-sm mt-4">
+        <span>
+          This person has a badge login but no credential, so their badge will show
+          "no pass has been issued". Add a credential below.
+        </span>
       </div>
     </BaseCard>
 

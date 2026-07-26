@@ -1,0 +1,237 @@
+# =============================================================================
+# stone-access demo event simulator
+# =============================================================================
+# Scheduled rules that publish synthetic access-control events so the accessd
+# UI (Overview "Recent Activity" + Alarm Console) looks alive during a demo.
+#
+# HOW IT WORKS
+#   These rules publish directly to the audit subtree `acc.*.*.*.evt.*` (and the
+#   location-scoped `acc.{location}.evt.fire`). accessd's ACC_EVENTS JetStream
+#   stream captures that subtree, and its always-on `acc-audit` consumer projects
+#   every message into the PocketBase `events` collection — the same path real
+#   controllers use. So no controller needs to be running: the events appear for
+#   all three demo sites (hq / dc / east-office) regardless.
+#
+# WIRE CONTRACT (docs/protocol.md)
+#   tap   : acc.{loc}.{type}.{thing}.evt.tap   {"cred","user","allow","reason","ts","source"}
+#   state : acc.{loc}.{type}.{thing}.evt.state {"posture","reason","ts"}
+#   alarm : acc.{loc}.{type}.{thing}.evt.alarm {"type","ts"}   (type: forced|held|held_clear|intrusion)
+#   area  : acc.{loc}.area.{areacode}.evt.alarm {"type":"intrusion","point","ts"}
+#   fire  : acc.{loc}.evt.fire                 {"active":bool}
+#   {loc}/{type}/{thing} are record CODES (e.g. hq, door, lobby-main), not ids.
+#   `ts` is RFC3339 UTC; reason codes are the stable strings policy.Decide emits.
+#
+# PREREQUISITES
+#   - Seed the demo data first:   demo/seed.ps1   (see demo/README.md)
+#     Every code and credential value below is one that script creates.
+#   - Run the scheduler feature:  rule-router --config config/rule-scheduler.yaml
+#     (features.scheduler: true)
+#   - nats.urls must point at the SAME NATS server/account as accessd, and the
+#     scheduler's credentials must be allowed to publish `acc.>`.
+#   - publish.mode: jetstream is correct here (every subject below is captured by
+#     ACC_EVENTS, so each publish is ACKed by the stream).
+#
+# NOTES
+#   - Cron is 1-minute granularity (5-field). Time-of-day gating is done with cron
+#     hour/day-of-week fields + per-rule timezone, not conditions, so it's exact.
+#   - Alarms project as unacknowledged and ACCUMULATE until an operator acks them
+#     in the Alarm Console. Keep the scheduler running only as long as you want the
+#     trickle; raise the alarm intervals below if it gets noisy.
+#   - We deliberately do NOT publish allow-taps at `dc-main-entrance` (it is
+#     disarm_on_grant): a real grant there would trip accessd's entry-disarm sink
+#     and disarm the DC Warehouse area, spoiling the "armed area" part of the demo.
+#   - `user` is set to a friendly name for display; real controllers emit the
+#     cardholder id here.
+#   - To exercise the REAL decision pipeline instead of injecting events, change a
+#     tap rule's subject from `...evt.tap` to `...tap` and its payload to
+#     `{"cred":"CARD-001"}`, set publish.mode: core (taps are not stream-captured),
+#     and run a controller bound to that portal — it will decide and emit the event.
+
+# -----------------------------------------------------------------------------
+# ALLOW taps — everyday access activity
+# -----------------------------------------------------------------------------
+
+# HQ — Lobby Main, weekday business hours (Central)
+- trigger:
+    schedule:
+      cron: "*/2 7-18 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.hq.door.lobby-main.evt.tap"
+      payload: '{"cred":"CARD-001","user":"Alice Example","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
+
+# HQ — Public Lobby (auto-unlocked during office hours → posture allow)
+- trigger:
+    schedule:
+      cron: "*/3 7-18 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.hq.door.lobby-public.evt.tap"
+      payload: '{"cred":"CARD-1005","user":"Emily Rodriguez","allow":true,"reason":"allow_posture_unlocked","ts":"{@timestamp.iso}","source":"nats"}'
+
+# East Coast Office — Lobby, weekday business hours (Eastern)
+- trigger:
+    schedule:
+      cron: "*/3 8-19 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    nats:
+      subject: "acc.east-office.door.east-lobby.evt.tap"
+      payload: '{"cred":"CARD-1001","user":"Sarah Chen","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
+
+# Distribution Center — pedestrian turnstile, extended hours Mon–Sat (Central)
+- trigger:
+    schedule:
+      cron: "*/4 6-21 * * 1-6"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.dc.turnstile.dc-turnstile.evt.tap"
+      payload: '{"cred":"CARD-1006","user":"James Wilson","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
+
+# Security patrol — HQ Server Room, 24/7 (security role has all-doors access)
+- trigger:
+    schedule:
+      cron: "*/9 * * * *"
+  action:
+    nats:
+      subject: "acc.hq.door.hq-server-room.evt.tap"
+      payload: '{"cred":"CARD-1002","user":"Marcus Johnson","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
+
+# Visitor pass at the East lobby, business hours (Eastern). The credential value is the
+# seeded live visitor pass — the one a visitor's QR actually carries, since a visitor
+# badge encodes the credential VALUE rather than the inert identifier a staff badge shows.
+- trigger:
+    schedule:
+      cron: "*/7 9-16 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    nats:
+      subject: "acc.east-office.door.east-lobby.evt.tap"
+      payload: '{"cred":"V-DEMOLIVE0001","user":"Dana Whitfield","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
+
+# -----------------------------------------------------------------------------
+# DENY taps — the security-interesting traffic
+# -----------------------------------------------------------------------------
+
+# Staff member tries the East server room — no access group grants it
+- trigger:
+    schedule:
+      cron: "*/11 * * * *"
+  action:
+    nats:
+      subject: "acc.east-office.door.east-server-room.evt.tap"
+      payload: '{"cred":"CARD-1007","user":"Olivia Martinez","allow":false,"reason":"deny_no_access","ts":"{@timestamp.iso}","source":"nats"}'
+
+# Unknown card presented at the DC turnstile
+- trigger:
+    schedule:
+      cron: "*/13 * * * *"
+  action:
+    nats:
+      subject: "acc.dc.turnstile.dc-turnstile.evt.tap"
+      payload: '{"cred":"CARD-9999","user":"","allow":false,"reason":"deny_unknown_credential","ts":"{@timestamp.iso}","source":"nats"}'
+
+# Cleaning contractor outside their Tue/Thu window
+- trigger:
+    schedule:
+      cron: "*/17 * * * *"
+  action:
+    nats:
+      subject: "acc.hq.door.lobby-main.evt.tap"
+      payload: '{"cred":"CARD-2001","user":"Night Owl Cleaning","allow":false,"reason":"deny_schedule_closed","ts":"{@timestamp.iso}","source":"nats"}'
+
+# Expired visitor pass presented at the East lobby. The edge enforces the credential's
+# valid_until itself, offline included, so this denies whether or not the housekeeping
+# sweep has got round to marking the pass revoked.
+- trigger:
+    schedule:
+      cron: "*/19 * * * *"
+  action:
+    nats:
+      subject: "acc.east-office.door.east-lobby.evt.tap"
+      payload: '{"cred":"V-DEMOEXPIRED1","user":"Ibrahim Osei","allow":false,"reason":"deny_expired","ts":"{@timestamp.iso}","source":"nats"}'
+
+# Suspended cardholder badges at the HQ lobby. deny_revoked is correct and not a typo:
+# policy.Decide emits it for a suspended CARDHOLDER as well as a revoked credential
+# (internal/policy/decide.go) — the holder is told no more than that they were refused.
+- trigger:
+    schedule:
+      cron: "7,37 * * * *"
+  action:
+    nats:
+      subject: "acc.hq.door.lobby-main.evt.tap"
+      payload: '{"cred":"CARD-1012","user":"Tom Burns","allow":false,"reason":"deny_revoked","ts":"{@timestamp.iso}","source":"nats"}'
+
+# -----------------------------------------------------------------------------
+# STATE — scheduled posture transitions (East lobby auto-unlock)
+# -----------------------------------------------------------------------------
+
+# Office opens — East lobby adopts scheduled "unlocked" posture
+- trigger:
+    schedule:
+      cron: "0 8 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    nats:
+      subject: "acc.east-office.door.east-lobby.evt.state"
+      payload: '{"posture":"unlocked","reason":"scheduled","ts":"{@timestamp.iso}"}'
+
+# Office closes — East lobby reverts to "secure"
+- trigger:
+    schedule:
+      cron: "0 19 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    nats:
+      subject: "acc.east-office.door.east-lobby.evt.state"
+      payload: '{"posture":"secure","reason":"scheduled","ts":"{@timestamp.iso}"}'
+
+# -----------------------------------------------------------------------------
+# ALARMS — drive the Alarm Console (these stay UNACKNOWLEDGED until an operator
+# acks them; widen the intervals if they pile up during a long demo)
+# -----------------------------------------------------------------------------
+
+# Forced door — DC Loading Dock 2 opened with no grant/REX
+- trigger:
+    schedule:
+      cron: "*/15 * * * *"
+  action:
+    nats:
+      subject: "acc.dc.door.dc-dock-2.evt.alarm"
+      payload: '{"type":"forced","ts":"{@timestamp.iso}"}'
+
+# Held-open (DOTL) — HQ Lobby Main propped past its threshold
+- trigger:
+    schedule:
+      cron: "*/35 * * * *"
+  action:
+    nats:
+      subject: "acc.hq.door.lobby-main.evt.alarm"
+      payload: '{"type":"held","ts":"{@timestamp.iso}"}'
+
+# Intrusion — motion in the armed DC Warehouse area
+- trigger:
+    schedule:
+      cron: "*/25 * * * *"
+  action:
+    nats:
+      subject: "acc.dc.area.dc-warehouse.evt.alarm"
+      payload: '{"type":"intrusion","point":"dc-motion-1","ts":"{@timestamp.iso}"}'
+
+# -----------------------------------------------------------------------------
+# FIRE — weekly drill (also flips the location's fire-suppression state). Rare on
+# purpose; trigger manually for a demo with:
+#   nats pub acc.hq.evt.fire '{"active":true}'
+#   nats pub acc.hq.evt.fire '{"active":false}'
+# -----------------------------------------------------------------------------
+- trigger:
+    schedule:
+      cron: "0 3 * * 1"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.hq.evt.fire"
+      payload: '{"active":true,"ts":"{@timestamp.iso}"}'

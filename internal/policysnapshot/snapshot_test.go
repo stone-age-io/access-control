@@ -37,13 +37,13 @@ func mk(t *testing.T, v any) []byte {
 func baseEntries(t *testing.T) map[string][]byte {
 	open := policykv.Window{Days: []int{isoWD(at)}, Start: "00:00", End: "24:00"}
 	return map[string][]byte{
-		policykv.PrefixLocation + "hq":   mk(t, policykv.Location{Code: "hq", Timezone: "UTC"}),
-		policykv.PrefixSched + "s1":      mk(t, policykv.Schedule{Code: "s1", Windows: []policykv.Window{open}, ObserveHolidays: true}),
-		policykv.PrefixPortal + "door1":  mk(t, policykv.Portal{Code: "door1", Type: "door", Location: "hq", Posture: "secure", PulseSeconds: 5}),
-		policykv.PrefixGroup + "g1":      mk(t, policykv.AccessGroup{Code: "g1", Portals: []string{"door1"}, Schedule: "s1"}),
-		policykv.PrefixRole + "r1":       mk(t, policykv.Role{Code: "r1", Groups: []string{"g1"}}),
-		policykv.PrefixUser + "u1":       mk(t, policykv.User{ID: "u1", Status: "active", Roles: []string{"r1"}}),
-		policykv.PrefixCred + "C1":       mk(t, policykv.Credential{Value: "C1", User: "u1", Status: "active"}),
+		policykv.PrefixLocation + "hq":  mk(t, policykv.Location{Code: "hq", Timezone: "UTC"}),
+		policykv.PrefixSched + "s1":     mk(t, policykv.Schedule{Code: "s1", Windows: []policykv.Window{open}, ObserveHolidays: true}),
+		policykv.PrefixPortal + "door1": mk(t, policykv.Portal{Code: "door1", Type: "door", Location: "hq", Posture: "secure", PulseSeconds: 5}),
+		policykv.PrefixGroup + "g1":     mk(t, policykv.AccessGroup{Code: "g1", Portals: []string{"door1"}, Schedule: "s1"}),
+		policykv.PrefixRole + "r1":      mk(t, policykv.Role{Code: "r1", Groups: []string{"g1"}}),
+		policykv.PrefixUser + "u1":      mk(t, policykv.User{ID: "u1", Status: "active", Roles: []string{"r1"}}),
+		policykv.PrefixCred + "C1":      mk(t, policykv.Credential{Value: "C1", User: "u1", Status: "active"}),
 	}
 }
 
@@ -188,7 +188,7 @@ func armEntries(t *testing.T, loc policykv.Location, area policykv.Area, scheds 
 func TestBaseArmState(t *testing.T) {
 	hq := policykv.Location{Code: "hq", Timezone: "UTC"}
 	openNow := policykv.Window{Days: []int{isoWD(at)}, Start: "00:00", End: "24:00"}
-	closedNow := policykv.Window{Days: []int{isoWD(at)}, Start: "20:00", End: "23:00"} // 14:00 outside
+	closedNow := policykv.Window{Days: []int{isoWD(at)}, Start: "20:00", End: "23:00"}    // 14:00 outside
 	midnightOpen := policykv.Window{Days: []int{isoWD(at)}, Start: "12:00", End: "02:00"} // crosses midnight, open at 14:00
 
 	tests := []struct {
@@ -199,19 +199,19 @@ func TestBaseArmState(t *testing.T) {
 		wantResolved bool
 	}{
 		{
-			name:      "no schedule, standing armed",
-			entries:   armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "armed"}),
-			area:      "a1", wantArmed: true, wantResolved: true,
+			name:    "no schedule, standing armed",
+			entries: armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "armed"}),
+			area:    "a1", wantArmed: true, wantResolved: true,
 		},
 		{
-			name:      "no schedule, standing disarmed",
-			entries:   armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed"}),
-			area:      "a1", wantArmed: false, wantResolved: true,
+			name:    "no schedule, standing disarmed",
+			entries: armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "disarmed"}),
+			area:    "a1", wantArmed: false, wantResolved: true,
 		},
 		{
-			name:      "no schedule, empty arm defaults disarmed",
-			entries:   armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq"}),
-			area:      "a1", wantArmed: false, wantResolved: true,
+			name:    "no schedule, empty arm defaults disarmed",
+			entries: armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq"}),
+			area:    "a1", wantArmed: false, wantResolved: true,
 		},
 		{
 			name: "window open → auto_arm armed",
@@ -260,9 +260,9 @@ func TestBaseArmState(t *testing.T) {
 			area: "a1", wantArmed: true, wantResolved: false, // returns standing, resolved=false
 		},
 		{
-			name:      "unknown area → unresolved",
-			entries:   armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "armed"}),
-			area:      "other", wantArmed: false, wantResolved: false,
+			name:    "unknown area → unresolved",
+			entries: armEntries(t, hq, policykv.Area{Code: "a1", Location: "hq", Arm: "armed"}),
+			area:    "other", wantArmed: false, wantResolved: false,
 		},
 	}
 
@@ -410,5 +410,145 @@ func TestPortalLocationAndType(t *testing.T) {
 	}
 	if _, ok := snap.PortalType("ghost"); ok {
 		t.Error("PortalType(ghost) reported ok for an unknown portal")
+	}
+}
+
+// targetEntries extends baseEntries with an area and an aux output, both granted by
+// group g1 with the rights given — the setup the badge tier's area/output lists and
+// arm decisions run against.
+func targetEntries(t *testing.T, rights ...string) map[string][]byte {
+	e := baseEntries(t)
+	e[policykv.PrefixArea+"warehouse"] = mk(t, policykv.Area{
+		Code: "warehouse", Name: "Warehouse", Location: "hq", Arm: "armed",
+	})
+	e[policykv.PrefixAuxOutput+"gate-relay"] = mk(t, policykv.AuxOutput{
+		Code: "gate-relay", Location: "hq", RelayIndex: 3,
+	})
+	e[policykv.PrefixGroup+"g1"] = mk(t, policykv.AccessGroup{
+		Code: "g1", Portals: []string{"door1"}, Schedule: "s1",
+		Areas: []string{"warehouse"}, AuxOutputs: []string{"gate-relay"},
+		AreaRights: rights,
+	})
+	return e
+}
+
+// AreasFor backs the badge's area list. An area granted with no rights must not
+// appear at all: a holder shown an area they have no authority over learns about a
+// space they cannot act on, and the fix is on the group, not the badge.
+func TestAreasFor(t *testing.T) {
+	both := Build(targetEntries(t, "arm", "disarm"))
+	got := both.AreasFor("u1")
+	if len(got) != 1 {
+		t.Fatalf("AreasFor(u1) = %v, want one area", got)
+	}
+	if r := got["warehouse"]; !r.CanArm || !r.CanDisarm {
+		t.Errorf("rights = %+v, want both", r)
+	}
+
+	armOnly := Build(targetEntries(t, "arm"))
+	if r := armOnly.AreasFor("u1")["warehouse"]; !r.CanArm || r.CanDisarm {
+		t.Errorf("arm-only rights = %+v, want {CanArm:true CanDisarm:false}", r)
+	}
+
+	if got := Build(targetEntries(t)).AreasFor("u1"); len(got) != 0 {
+		t.Errorf("AreasFor with empty area_rights = %v, want nothing (fail closed)", got)
+	}
+
+	// An unknown user, and an area code with no area record, both yield nothing.
+	if got := both.AreasFor("nobody"); len(got) != 0 {
+		t.Errorf("AreasFor(unknown user) = %v, want empty", got)
+	}
+	ghost := targetEntries(t, "arm", "disarm")
+	ghost[policykv.PrefixGroup+"g1"] = mk(t, policykv.AccessGroup{
+		Code: "g1", Schedule: "s1", Areas: []string{"ghost-area"}, AreaRights: []string{"arm"},
+	})
+	if got := Build(ghost).AreasFor("u1"); len(got) != 0 {
+		t.Errorf("AreasFor with a dangling area code = %v, want empty", got)
+	}
+}
+
+// Rights union across groups: two groups each granting one right on one area give the
+// holder both, the same way two groups granting one portal union their schedules.
+func TestAreasForUnionsRights(t *testing.T) {
+	e := targetEntries(t, "arm")
+	e[policykv.PrefixGroup+"g2"] = mk(t, policykv.AccessGroup{
+		Code: "g2", Schedule: "s1", Areas: []string{"warehouse"}, AreaRights: []string{"disarm"},
+	})
+	e[policykv.PrefixRole+"r1"] = mk(t, policykv.Role{Code: "r1", Groups: []string{"g1", "g2"}})
+
+	if r := Build(e).AreasFor("u1")["warehouse"]; !r.CanArm || !r.CanDisarm {
+		t.Errorf("rights = %+v, want both unioned across g1 (arm) and g2 (disarm)", r)
+	}
+}
+
+func TestOutputsFor(t *testing.T) {
+	snap := Build(targetEntries(t, "arm"))
+	got := snap.OutputsFor("u1")
+	if len(got) != 1 || got[0] != "gate-relay" {
+		t.Errorf("OutputsFor(u1) = %v, want [gate-relay]", got)
+	}
+	// Outputs are not gated by area_rights — those govern arm actions only.
+	if got := Build(targetEntries(t)).OutputsFor("u1"); len(got) != 1 {
+		t.Errorf("OutputsFor with no area_rights = %v, want [gate-relay] (rights gate areas, not outputs)", got)
+	}
+	if got := snap.OutputsFor("nobody"); len(got) != 0 {
+		t.Errorf("OutputsFor(unknown) = %v, want empty", got)
+	}
+}
+
+// SimulateArea/SimulateOutput must run the real deciders over the snapshot's graph,
+// resolving the timezone from the AREA's location rather than a portal's.
+func TestSimulateAreaAndOutput(t *testing.T) {
+	snap := Build(targetEntries(t, "arm"))
+
+	if d := snap.SimulateArea("C1", "warehouse", policy.ArmActionArm, at); !d.Allow || d.Reason != policy.ReasonAllowAreaGrant {
+		t.Errorf("SimulateArea(arm) = {%v %q}, want allow_area_grant", d.Allow, d.Reason)
+	}
+	if d := snap.SimulateArea("C1", "warehouse", policy.ArmActionDisarm, at); d.Allow || d.Reason != policy.ReasonDenyNoAreaRight {
+		t.Errorf("SimulateArea(disarm) = {%v %q}, want deny_no_area_right", d.Allow, d.Reason)
+	}
+	if d := snap.SimulateArea("C1", "ghost", policy.ArmActionArm, at); d.Allow || d.Reason != policy.ReasonDenyUnknownArea {
+		t.Errorf("SimulateArea(unknown area) = {%v %q}, want deny_unknown_area", d.Allow, d.Reason)
+	}
+	if d := snap.SimulateOutput("C1", "gate-relay", at); !d.Allow || d.Reason != policy.ReasonAllowOutputGrant {
+		t.Errorf("SimulateOutput = {%v %q}, want allow_output_grant", d.Allow, d.Reason)
+	}
+	if d := snap.SimulateOutput("C1", "ghost", at); d.Allow || d.Reason != policy.ReasonDenyUnknownOutput {
+		t.Errorf("SimulateOutput(unknown) = {%v %q}, want deny_unknown_output", d.Allow, d.Reason)
+	}
+
+	// The command subjects the badge routes publish to.
+	if loc, ok := snap.AreaLocation("warehouse"); !ok || loc != "hq" {
+		t.Errorf("AreaLocation(warehouse) = (%q, %v), want (hq, true)", loc, ok)
+	}
+	if loc, ok := snap.OutputLocation("gate-relay"); !ok || loc != "hq" {
+		t.Errorf("OutputLocation(gate-relay) = (%q, %v), want (hq, true)", loc, ok)
+	}
+	if _, ok := snap.AreaLocation("ghost"); ok {
+		t.Error("AreaLocation(ghost) reported ok for an unknown area")
+	}
+	if _, ok := snap.OutputLocation("ghost"); ok {
+		t.Error("OutputLocation(ghost) reported ok for an unknown output")
+	}
+}
+
+// The two copies of an area serve different jobs and must not be confused: the graph
+// copy an authorization decision sees carries NO arm-state, while the arm-state copy
+// ShouldReleaseDisarm reads keeps it. A decision that could see arm-state would be
+// able to make authorization depend on it, which is exactly what DecideArea must not do.
+func TestAreaGraphCopyCarriesNoArmState(t *testing.T) {
+	snap := Build(targetEntries(t, "arm", "disarm"))
+	if snap.graph.Areas["warehouse"].Location != "hq" {
+		t.Fatalf("graph area = %+v, want location hq", snap.graph.Areas["warehouse"])
+	}
+	if snap.areas["warehouse"].Arm != "armed" {
+		t.Errorf("arm-state copy lost the arm field: %+v", snap.areas["warehouse"])
+	}
+	// A disarmed area must authorize a disarm identically to an armed one: the grant
+	// is over the action, not over the current state.
+	e := targetEntries(t, "disarm")
+	e[policykv.PrefixArea+"warehouse"] = mk(t, policykv.Area{Code: "warehouse", Location: "hq", Arm: "disarmed"})
+	if d := Build(e).SimulateArea("C1", "warehouse", policy.ArmActionDisarm, at); !d.Allow {
+		t.Errorf("disarming an already-disarmed area = %q, want allow (state is not authorization)", d.Reason)
 	}
 }

@@ -194,6 +194,11 @@ onBeforeUnmount(() => {
     @retry="reload"
   >
     <template #actions>
+      <!-- Placards are generated FROM portals, so they belong here as an action rather
+           than as a nav destination of their own. -->
+      <router-link to="/portals/placards" class="btn btn-outline w-full sm:w-auto">
+        <span>🖨️</span><span>Print placards</span>
+      </router-link>
       <router-link to="/portals/new" class="btn btn-primary w-full sm:w-auto">
         <span class="text-lg">+</span><span>New Portal</span>
       </router-link>

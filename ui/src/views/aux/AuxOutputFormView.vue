@@ -27,6 +27,7 @@ const form = ref({
   controller: (route.query.controller as string) || '',
   relay_index: 0,
   pulse_seconds: 5,
+  allow_remote: false,
 })
 
 const locations = ref<Location[]>([])
@@ -68,6 +69,7 @@ async function loadRecord() {
       controller: a.controller || '',
       relay_index: a.relay_index || 0,
       pulse_seconds: a.pulse_seconds || 0,
+      allow_remote: !!a.allow_remote,
     }
     markClean()
   } catch (err: any) {
@@ -104,6 +106,7 @@ async function handleSubmit() {
       controller: form.value.controller,
       relay_index: Number(form.value.relay_index) || 0,
       pulse_seconds: Number(form.value.pulse_seconds) || 0,
+      allow_remote: form.value.allow_remote,
     }
     if (isEdit.value) {
       await pb.collection('aux_output').update(recordId!, data)
@@ -175,6 +178,11 @@ onMounted(async () => {
               <input v-model.number="form.pulse_seconds" type="number" min="0" class="input input-bordered w-32" />
             </FormField>
           </div>
+
+          <FormField inline label="Allow remote use"
+                     hint="Let badge holders pulse this relay from their badge page, if an access group grants it to them. A badge only ever pulses — it cannot latch the relay on. Off by default.">
+            <input v-model="form.allow_remote" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
         </div>
       </BaseCard>
 

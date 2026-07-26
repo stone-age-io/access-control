@@ -172,6 +172,11 @@ onBeforeUnmount(() => {
         </DataField>
         <DataField label="Relay index">{{ record.relay_index }}</DataField>
         <DataField label="Pulse">{{ record.pulse_seconds }} s</DataField>
+        <DataField label="Remote use">
+          <SoftBadge :tone="record.allow_remote ? 'warning' : 'neutral'" dot>
+            {{ record.allow_remote ? 'badge holders may pulse it' : 'on site only' }}
+          </SoftBadge>
+        </DataField>
       </div>
     </BaseCard>
 

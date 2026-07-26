@@ -176,19 +176,29 @@ never emailed — only the raise. There is no `notify.*` config block and no
 > **The badge tier has no config either.** The badge routes
 > ([`internal/badgeapi`](../internal/badgeapi)) and the visitor-credential sweep
 > ([`internal/badgesweep`](../internal/badgesweep)) are **always started** and need no
-> settings — they are inert until an operator creates a `badge_users` record, and
+> settings — they are inert until an operator ticks **Badge login** on a cardholder, and
 > remote unlock additionally needs a door to opt in via `allow_remote_unlock`
 > (default off). What *is* configurable lives in PocketBase settings rather than
-> here: SMTP (for OTP sign-in codes and visitor invites) and the rate limits below.
+> here: SMTP, OAuth2 providers, and the rate limits below.
+
+> **SMTP is optional, but it decides which sign-in methods work.** One-time codes and
+> the forgot-password link are both emails. With no mail server configured, the only
+> way into a badge is a **password an operator sets when issuing the login** (Cardholder
+> → Badge login → Issue login) or an OAuth2 provider. Visitor minting still works — the
+> pass is valid either way — but the invite mail is not sent and the visitor has no way
+> to sign in, so visitor passes are effectively an SMTP-only feature. See
+> [operators.md](operators.md#sign-in-methods).
 
 ### Rate limits and `TrustedProxy` (accessd)
 
-Migration `1750000032` ships default PocketBase rate limits for the badge routes —
-they are the first routes reachable by someone who is not an operator, and an
-unconfigured limiter is wide open. Defaults: 10 unlocks/min and 60 badge loads/min per
-client, plus 5 OTP requests/min (the OTP endpoint sends an email per call, so it is
-both a mail-bomb and an SMTP-quota vector). Adjust them in the PocketBase admin under
-**Settings → Rate limits**.
+Migrations `1750000032` and `1750000034` ship default PocketBase rate limits for the
+badge routes — they are the first routes reachable by someone who is not an operator,
+and an unconfigured limiter is wide open. Defaults, per client: 10 unlocks/min, 60 badge
+loads/min, 5 OTP requests/min (that endpoint sends an email per call, so it is both a
+mail-bomb and an SMTP-quota vector), 10 password sign-ins/min (credential stuffing), 3
+password-reset requests/min, and 5 password changes/min (the change route checks the
+current password, so it is an oracle for guessing it from a stolen session). Adjust them
+in the PocketBase admin under **Settings → Rate limits**.
 
 > **Behind a reverse proxy, set `TrustedProxy`.** PocketBase's limiter keys on client
 > IP. Without the proxy configured in **Settings → Application**, every request appears

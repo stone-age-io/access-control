@@ -83,7 +83,25 @@ cd ui && npm run build                           # UI has no test suite; the typ
 
 `internal/policy` is the core. `Decide(p, loc, posture, cred, portal, atUTC) Decision` is a pure function over
 plain maps — no I/O, no locks, no rules engine. It runs identically on central and edge and is table-tested.
-The graph mirrors the operator's mental model 1:1: **user → roles → access groups → (portals + one schedule)**.
+The graph mirrors the operator's mental model 1:1: **user → roles → access groups → (targets + one schedule)**,
+where a target is a **portal**, an **area** (arm/disarm), or an **aux output** — three independent relations on one
+group, because the schedule is the whole reason groups exist and "warehouse staff, Mon–Fri 06:00–18:00" is one
+window whichever kind of thing it authorizes (migration `1750000037`).
+
+Each target kind gets its own **pure sibling** of `Decide`, not a widened `Decide` — its evaluation order is a
+documented contract on the per-tap hot path, and an area has no posture gate and no strike to pulse:
+`DecideArea(p, loc, cred, area, action, atUTC)` and `DecideOutput(p, loc, cred, output, atUTC)`
+(`decide_targets.go`). All three share the credential/user ladder (`subjectFor`), so "is this pass usable" has one
+implementation rather than three that can drift toward allow. Arm and disarm are **separate rights**
+(`AccessGroup.CanArm`/`CanDisarm`, flattened from the wire's `areaRights` by `policy.ArmRights`): disarming turns
+intrusion detection off, and "may lock up but not silence the building" is a real role. An empty rights list grants
+neither and reports `deny_no_area_right`, distinct from `deny_no_access`, so a group with areas and no rights is
+diagnosable rather than silent.
+
+Authorizing an arm is pure; **resolving** an area's arm-state still is not (it is time/schedule/override
+state, like posture) — so nothing in `policy` reads an arm-state, and a grant to disarm is a grant whether the area
+is currently armed or not. Today only accessd evaluates the two siblings (the badge routes); the controller maps the
+fields anyway so an OSDP keypad arming a partition at the reader needs no wire change.
 
 **Evaluation order is the contract — deny-overrides come first** (see the doc comment on `Decide`):
 unknown portal → posture gate (disabled/lockdown deny; `unlocked`/`free_access` allow without consulting the
@@ -172,29 +190,102 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   updates `controllers.last_seen`/`status` with a **direct record update, not an events row**, plus a staleness
   sweep that marks a silent box offline. Heartbeats are deliberately kept out of the audit stream.
 - **Badge tier** (`internal/badgeapi`, accessd-side) — the routes a *cardholder or visitor* calls, authenticated
-  against the **`badge_users`** auth collection (migration `1750000030`), never `users`. `GET /api/badge/me` returns
-  their own badge (photo, QR payload, door list — names only, never portal codes or hardware fields);
-  `POST /api/badge/unlock/{portalId}` is a **remote unlock authorized by `policy.Decide`**, run over a live
-  `policysnapshot` of ACC_POLICY (a short TTL cache, since `SnapshotKV` drains the whole keyspace and this is a
-  button a visitor can tap). So remote unlock can never exceed what that badge opens in person, and it emits the
-  **existing `cmd.grant`** with `actor: badge:<cardholderId>` — no new subject, no edge change. A per-door
-  `portals.allow_remote_unlock` (default false, not mirrored) gates it, because "may walk through" and "may open
-  from anywhere with no presence proof" are different permissions. **A badge action never publishes `.tap`** —
-  `Tap.Source` exists so a physical read stays distinguishable. Every attempt writes an `audit_logs` row, including
-  denials: a deny never reaches the controller, so without it a holder could probe doors leaving no trace. The
-  package also holds the one *operator* route, `POST /api/badge/visitors` (`enroll`-gated): one transaction creating
-  cardholder + time-bound credential + `visitor` login, with the credential value from `crypto/rand` as uppercase
-  base32 (QR alphanumeric mode, and inside the KV key charset). A repeat visitor is **reused**, not duplicated —
-  auth collections have a unique email index, and the same person visiting twice is the same person.
+  against the **`cardholders`** collection itself, never `users`. That collection is an **auth collection**: one
+  person is one record whether or not they ever sign in, and a person who may sign in is one with `badge_login` set
+  (which backs the collection's `AuthRule`). So the two tiers read **one substrate through two lenses** — an operator
+  sees the policy graph, a holder sees one badge — rather than one shadowing the other.
+  It began as a separate `badge_users` collection with a 1:1 relation back to `cardholders`, and everything
+  complicated about that version was the relation, not the feature: a unique index (one login per person), a cascade
+  delete (no orphan login that authenticates and resolves nobody), a field guard (no repointing the relation to
+  inherit someone's doors), and a delete hook (a visitor's two halves must die together). Collapsing the records
+  deleted all four. Three PocketBase facts make it work: collection type is **immutable**, so `cardholders` must be
+  *born* as auth (hence the base migration is not frozen any more — a fresh `pb_data` is required);
+  `initEmailField` leaves `Required` alone on a supplied field and the unique index it generates is
+  `WHERE email != ''`, so **email stays optional** and blanks do not collide (it is unique, so requiring it would
+  force a synthetic address onto every contractor and non-person card, and hard-fail a sparse LDAP/CSV import); but
+  `initPasswordField` **force-re-enforces Required**, so `bindPasswordFill` supplies a random password on create —
+  otherwise the ordinary cardholder form, which has no password box, could not save anyone.
+  `GET /api/badge/me` returns their own badge (photo, QR payload, and everything the badge grants — **names only**,
+  never codes or hardware fields); `POST /api/badge/unlock/{portalId}` is a **remote unlock authorized by
+  `policy.Decide`**, run over a live `policysnapshot` of ACC_POLICY (a short TTL cache, since `SnapshotKV` drains the
+  whole keyspace and this is a button a visitor can tap). So remote unlock can never exceed what that badge opens in
+  person, and it emits the **existing `cmd.grant`** with `actor: badge:<cardholderId>` — no new subject, no edge
+  change. A per-door `portals.allow_remote_unlock` (default false, not mirrored) gates it, because "may walk through"
+  and "may open from anywhere with no presence proof" are different permissions. **A badge action never publishes
+  `.tap`** — `Tap.Source` exists so a physical read stays distinguishable. Every attempt writes an `audit_logs` row,
+  including denials: a deny never reaches the controller, so without it a holder could probe doors leaving no trace.
+  The **non-door actions** are the same shape (`areas.go`): `POST /api/badge/areas/{id}/arm` and `/disarm` authorize
+  with `policy.DecideArea` and then write `areas.arm_override` — a *durable record write*, exactly as
+  `internal/commandapi` does and for the same reason (a reboot must not silently disarm; there is no `cmd.arm`
+  subject) — while `POST /api/badge/outputs/{id}/pulse` authorizes with `policy.DecideOutput` and publishes the
+  existing `cmd.output`. Each has its own default-false opt-in (`areas.allow_remote_arm`,
+  `aux_output.allow_remote`). Two things a holder deliberately **cannot** do: clear an arm override (that is an
+  operator's "revert to the schedule"; `internal/armrelease` already releases a one-shot disarm on a scheduled area,
+  so a holder's disarm strands nothing), and latch an output on (the route drives `pulse` only — a momentary act is
+  self-limiting, and this is a choice about the *surface*, not a claim that on/off/pulse are separately authorized).
+  `GET /api/badge/live` places the holder's own portals and outputs on a site's floor plan, gated by
+  `locations.badge_floorplan` (default false): the pins are badge-scoped but the plan is the whole building, so a
+  contractor with one door would otherwise learn the layout. It is a **server projection, not widened rules** —
+  PocketBase rules are row-level, so any rule letting a holder read their own portal row would also hand them
+  `lock_relay`/`reader_address`/the policy code, and "portal in a group in a role I hold" is a deep back-relation
+  filter. Areas never appear on the plan (only portals and aux I/O carry a `floorplan_position`; an area is a set with
+  no single place to pin), and there is no live state or realtime — the badge polls `/me` for the one piece of state a
+  holder can act on.
+  One human can hold an account in both tiers, so `cardholders.operator` (migration `1750000040`) points at the
+  `users` record of the same person and `GET /api/badge/me` — **alone among these routes** — accepts an operator token,
+  resolving through it (`subjectCardholder`). Everything that *actuates* names `cardholders` only: an operator opening
+  a door uses the command routes with their `command` capability, where it is audited as an operator action, rather
+  than through a second path that would make the audit trail ambiguous about which authority they used. The pointer
+  lives on `cardholders` because `users.UpdateRule` is self — a `users.cardholder` field would be self-writable, so
+  any operator could repoint it and inherit that badge's doors, which is exactly the escalation the badge tier's write
+  rules removed.
+  `POST /api/badge/password` lets a holder set/change their own password; `password_set` decides whether the current
+  one must be proved — an OTP-signed-in holder is setting a *first* password and has nothing to prove, while
+  demanding no proof from one who has a password would let a stolen session lock them out. It cannot go through
+  PocketBase's own record update, which always demands `oldPassword` from a non-manager. There is deliberately **no**
+  route for "give this cardholder a login": `badge_login` is a field, so it is one checkbox on the cardholder form
+  and an ordinary PATCH the collection rules already govern. The old `/api/badge/holders` existed only to centralise
+  the `kind` discriminator, the throwaway password, and `password_set` — all three moved into the schema and
+  `RegisterGuards`. What remains is `POST /api/badge/invite/{id}` (`enroll`), because emailing someone is not a
+  field write, and enabling a login is genuinely separate from telling them about it (a 500-person rollout flips the
+  flag by import and mails later; an operator handing a password over at a desk wants no mail at all). An optional
+  operator-set initial password is what makes the tier usable **with no SMTP at all** (OTP and password-reset are
+  both emails); it is handed over in person and never mailed.
+  `POST /api/badge/visitors` (`enroll`) mints a visitor in one transaction: the cardholder (`kind: visitor`,
+  `badge_login`) plus a time-bound credential whose value comes from `crypto/rand` as uppercase base32 (QR
+  alphanumeric mode, and inside the KV key charset). A repeat visitor is **reused**, not duplicated — email is
+  uniquely indexed, and the same person visiting twice is the same person.
+  `POST /api/badge/visitors/{id}/revoke` ends a visit: it revokes the credentials and **keeps** the person, so the
+  visit stays on the record and a returning visitor is still recognised. Delete is the retention decision, and it
+  now works — `credentials.user` cascades (`1750000036`), so removing a person removes their cards, through the
+  ordinary delete path so the mirror prunes the `cred.{value}` keys.
+  `GET /api/badge/me` reports a single `passState` (`valid`/`expired`/`not_yet_valid`/`none`/`suspended`) rather
+  than an `expired` boolean, because that boolean was computed as "no in-window credential" and so told a cardholder
+  who had never been issued one that their pass was "not currently valid"; a suspended cardholder gets no QR at all,
+  since their screen must not look like a working badge.
   The QR fork is the security-relevant decision: a *visitor* pass carries the credential value (it must work at a
   scanner, and lives hours), while every other badge carries the cardholder id — an identifier that opens nothing,
   because a staff badge hangs on a lanyard for years and gets photographed incidentally.
+  `RegisterGuards` (registered at startup, not in `OnServe`, since it guards the *collection* API) binds the three
+  invariants that keep an auth `cardholders` coherent: `bindPasswordFill` (a random password + `emailVisibility`,
+  the latter because PocketBase strips `email` from an auth record's response for any requester who is not the
+  owner, a superuser, or a `ManageRule` match — so operators would see a blank email column);
+  `bindLoginRequiresEmail` (email is the sole identity field and the only route an OTP can arrive by, so a login
+  without one is unusable by every method); and `bindOTPPasswordPreservation`, which stops PocketBase's own
+  pre-hijacking defence — on a first OTP it marks the record verified and, with MFA off, **randomises the
+  password** — from destroying the operator-set password the SMTP-less install depends on. That defence does not
+  apply to an `enroll`-gated collection: nobody but an operator can create a record, so there is no
+  attacker-authored one to disarm. There is **no field-level guard** any more: `cardholders` writes are
+  `enroll`-gated with **no self clause**, so a holder cannot PATCH their own row at all — the escalation surface is
+  gone rather than guarded, which matters more here than it did, since that row is also the policy graph's entry
+  point (`roles`) and its `status`.
 - **Visitor sweep** (`internal/badgesweep`, accessd-side) — marks an expired *visitor* credential `revoked`. This is
   **hygiene, not enforcement**: `policy.Decide` already enforces `valid_from`/`valid_until` at the edge, offline
   included. It buys truth in the control plane (an `active` pass really is active) and stops a stale value being
-  resurrected by a date edit. It deliberately does **not** delete logins or cardholders — retention is the install's
-  policy to set, not a background job's to invent — and it leaves expired *staff* credentials alone, since an
-  operator may be about to extend one.
+  resurrected by a date edit. It deliberately does **not** delete anyone — retention is the install's policy to set,
+  not a background job's to invent — and it leaves expired *staff* credentials alone, since an operator may be about
+  to extend one. It finds its scope with one query now (`cardholders where kind = 'visitor'`) rather than
+  enumerating logins and dereferencing each one's `cardholder`.
 
 ### NATS subjects
 
@@ -259,19 +350,41 @@ alarms at locations in its scope; empty = all locations), `1750000025` (events `
 idempotent audit projection), `1750000026` (`aux_input`/`aux_output` `floorplan_position` — UI-only, so aux
 I/O can be placed and monitored on the floor plan like portals, never mirrored to KV), and then the **badge
 tier**: `1750000027` (scope the control-plane READ floor from `@request.auth.id != ""` to
-`@request.auth.collectionName = "users"` — the old rule was auth-collection-agnostic, so a second auth tier
+`@request.auth.collectionName = "users"`, plus `id = @request.auth.id` on `cardholders` so a holder reads their own
+row — the clause a PROTECTED photo download is checked against — the old rule was auth-collection-agnostic, so a second auth tier
 would have inherited operator read on the whole graph including `credentials.value` in plaintext),
 `1750000028` (`credentials.value` charset `Pattern` from `policykv.CredentialValuePattern` — a value outside the
 NATS KV key charset used to save fine and then silently never mirror), `1750000029` (`cardholders.photo`, a
-**protected** file so its URL is not public to anyone holding the link), `1750000030` (the `badge_users` auth
-collection — OTP + OAuth2, password disabled, self-scoped reads, `enroll`-gated create because an auth
-collection's default create rule is OPEN SIGNUP), `1750000031` (`portals.allow_remote_unlock`, default false,
-control-plane only), `1750000032` (default rate limits for the badge routes), and `1750000033`
-(`roles.visitor_preset` — the curated presets the visitor mint flow offers; on *roles* because the graph is
-cardholder → roles → groups, so a role is the assignable unit).
-The base `1750000000` stays frozen; everything is additive. `migratecmd`
-Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
-before committing.
+**protected** file so its URL is not public to anyone holding the link), `1750000031`
+(`portals.allow_remote_unlock`, default false, control-plane only), `1750000032` (default rate limits for the badge
+routes and the `cardholders` auth endpoints), `1750000033` (`roles.visitor_preset` — the curated presets the visitor
+mint flow offers; on *roles* because the graph is cardholder → roles → groups, so a role is the assignable unit), and
+`1750000036` (`credentials.user` **cascades** — before it, PocketBase refused to delete the target of a required
+relation, so deleting a cardholder failed outright for anyone ever issued a card; and a credential outliving its
+holder is a key that opens doors and resolves to nobody. The cascade calls `app.Delete` per record, so the mirror
+prunes the `cred.{value}` keys and it cannot leave a working key in KV). Then the **widened access group**:
+`1750000037` (`access_groups.areas`/`aux_outputs`/`area_rights` — a group grants areas and aux outputs alongside
+portals, under the one schedule that is the whole reason groups exist; `area_rights` is a two-value multi-select
+because arming and disarming are different rights, and an EMPTY list grants neither), `1750000038` (a guarded
+fixture granting the demo area + a new `lobby-gate` output through `lobby-group`), `1750000039`
+(`areas.allow_remote_arm` + `aux_output.allow_remote`, both default false, control-plane only — the same
+"may act here" ≠ "may act from anywhere" split as `allow_remote_unlock`, plus rate limits for the new routes),
+`1750000040` (`cardholders.operator`, an optional uniquely-indexed pointer to the `users` record of the same
+human, so an operator can view their OWN badge — on *cardholders* because `users` is self-writable, so the
+mirror-image field would let any operator repoint it and inherit someone else's badge), and `1750000041`
+(`locations.badge_floorplan`, default false — a badge may show a site's floor plan with the holder's own doors
+pinned on it; the pins are scoped to one badge but the plan is the whole building).
+
+**The base `1750000000` is NOT frozen any more, and there are gaps at 30/34/35.** The badge tier used to be a second
+auth collection (`badge_users`, migrations `1750000030`/`1750000034`/`1750000035`); it was collapsed into
+`cardholders`, which PocketBase can only express by making that collection auth **at creation** — collection type is
+immutable (`core/collection_validate.go`, "Collection type cannot be changed"). So the base migration changed and
+the three `badge_users` migrations were deleted rather than superseded. Pre-production, and the trade was
+deliberate: the alternative was a delete-and-recopy migration leaving the base migration lying about what
+`cardholders` is. **A fresh `pb_data` is required** — an existing dev database will not migrate onto this schema.
+Everything after the base stays additive.
+`migratecmd` Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones —
+review those before committing.
 
 ### Control-plane access (operators & audit)
 

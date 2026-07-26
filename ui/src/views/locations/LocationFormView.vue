@@ -26,6 +26,7 @@ const form = ref({
   timezone: 'America/New_York',
   fai_suppress: true,
   notify_fire: false,
+  badge_floorplan: false,
   description: '',
   lat: 0,
   lon: 0,
@@ -88,6 +89,7 @@ async function loadRecord() {
       timezone: location.timezone || 'UTC',
       fai_suppress: location.fai_suppress ?? true,
       notify_fire: !!location.notify_fire,
+      badge_floorplan: !!location.badge_floorplan,
       description: location.description || '',
       lat: location.coordinates?.lat ?? 0,
       lon: location.coordinates?.lon ?? 0,
@@ -124,6 +126,7 @@ async function handleSubmit() {
       timezone: form.value.timezone.trim(),
       fai_suppress: form.value.fai_suppress,
       notify_fire: form.value.notify_fire,
+      badge_floorplan: form.value.badge_floorplan,
       description: form.value.description.trim(),
       coordinates: { lat: Number(form.value.lat) || 0, lon: Number(form.value.lon) || 0 },
       holiday_calendars: form.value.holiday_calendars,
@@ -207,6 +210,11 @@ onMounted(async () => {
 
           <FormField inline label="Email on fire input" hint="Email opted-in operators when this location's fire input activates. Recipients are set per operator (Operators → Notify).">
             <input v-model="form.notify_fire" type="checkbox" class="toggle toggle-primary" />
+          </FormField>
+
+          <FormField inline label="Show the floor plan on badges"
+                     hint="Let badge holders see this site's floor plan with their own doors pinned on it. Only their own doors appear — but the plan is the whole building, so a contractor with one door would see the layout. Off by default; their badge works either way.">
+            <input v-model="form.badge_floorplan" type="checkbox" class="toggle toggle-primary" />
           </FormField>
 
           <FormField label="Holiday calendars" hint="Calendars this site observes. Their dates close holiday-observing schedules here; multiple calendars compose (e.g. national + site-specific).">
