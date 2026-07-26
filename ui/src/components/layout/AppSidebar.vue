@@ -16,8 +16,18 @@ export interface NavItem { label: string; icon: string; path: string; child?: bo
 export interface NavSection { title?: string; items: NavItem[] }
 
 const props = withDefaults(
-  defineProps<{ sections: NavSection[]; brand?: string; home?: string }>(),
-  { home: '/' },
+  defineProps<{
+    sections: NavSection[]
+    brand?: string
+    home?: string
+    /**
+     * Extra entries for the account dropdown, above Sign out. For tools that belong to
+     * the signed-in operator rather than to a part of the system — they would be noise
+     * in the main nav, which is organised by what you are administering.
+     */
+    accountItems?: NavItem[]
+  }>(),
+  { home: '/', accountItems: () => [] },
 )
 
 const router = useRouter()
@@ -174,12 +184,30 @@ async function handleLogout() {
           <span class="text-base-content/40 text-lg leading-none pr-1">⋮</span>
         </div>
         <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box shadow-lg border border-base-300 w-56 p-1 mb-1 z-50">
+          <li v-for="item in accountItems" :key="item.path">
+            <router-link :to="item.path" @click="closeDropdown(); closeDrawer()">
+              <span>{{ item.icon }}</span><span>{{ item.label }}</span>
+            </router-link>
+          </li>
+          <li v-if="accountItems.length" class="menu-title p-0"><div class="divider my-1"></div></li>
           <li><a class="text-error" @click="handleLogout">🚪 Sign out</a></li>
         </ul>
       </div>
 
-      <!-- Compact: avatar + direct logout (the w-56 menu would overflow the rail). -->
+      <!-- Compact: avatar + direct logout (the w-56 menu would overflow the rail).
+           Account items become icon buttons rather than disappearing at this width. -->
       <template v-else>
+        <router-link
+          v-for="item in accountItems"
+          :key="item.path"
+          :to="item.path"
+          class="flex items-center justify-center w-full p-2 rounded-lg hover:bg-base-200 transition-all tooltip tooltip-right"
+          :data-tip="item.label"
+          :aria-label="item.label"
+          @click="closeDrawer"
+        >
+          <span class="text-lg">{{ item.icon }}</span>
+        </router-link>
         <div class="flex items-center justify-center w-full p-2 rounded-lg bg-base-200/50">
           <div class="avatar placeholder">
             <div class="bg-neutral text-neutral-content rounded-full w-8">

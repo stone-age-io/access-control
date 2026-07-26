@@ -17,10 +17,10 @@ import (
 //   - kind — whether the QR carries the credential VALUE (visitor) or an inert
 //     identifier (staff). Flipping a lanyard badge to `visitor` mints a permanent,
 //     photographable key out of an identifier that opened nothing.
-//
-// Extend this list whenever a field is added to badge_users that the holder is the
-// subject of rather than the author of.
-var protectedBadgeFields = []string{"cardholder", "kind"}
+//   - password_set — whether changing the password requires proving the current one.
+//     Clearing it lets a stolen session change the password unchallenged and lock the
+//     real holder out of their own badge.
+var protectedBadgeFields = []string{"cardholder", "kind", "password_set"}
 
 // RegisterGuards binds the field-level guard on badge_users self-update.
 //

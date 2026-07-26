@@ -181,14 +181,29 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   `portals.allow_remote_unlock` (default false, not mirrored) gates it, because "may walk through" and "may open
   from anywhere with no presence proof" are different permissions. **A badge action never publishes `.tap`** —
   `Tap.Source` exists so a physical read stays distinguishable. Every attempt writes an `audit_logs` row, including
-  denials: a deny never reaches the controller, so without it a holder could probe doors leaving no trace. The
-  package also holds the one *operator* route, `POST /api/badge/visitors` (`enroll`-gated): one transaction creating
+  denials: a deny never reaches the controller, so without it a holder could probe doors leaving no trace.
+  `POST /api/badge/password` lets a holder set/change their own password; `password_set` (migration `1750000034`)
+  decides whether the current one must be proved — an OTP-signed-in holder is setting a *first* password and has
+  nothing to prove, while demanding no proof from one who has a password would let a stolen session lock them out.
+  It cannot go through PocketBase's own record update, which always demands `oldPassword` from a non-manager.
+  The package also holds two *operator* routes (`enroll`-gated). `POST /api/badge/visitors`: one transaction creating
   cardholder + time-bound credential + `visitor` login, with the credential value from `crypto/rand` as uppercase
   base32 (QR alphanumeric mode, and inside the KV key charset). A repeat visitor is **reused**, not duplicated —
   auth collections have a unique email index, and the same person visiting twice is the same person.
+  `POST /api/badge/holders` is the staff counterpart, and the opposite shape: the cardholder and credential already
+  exist, so it creates *only* the login (upsert, since `badge_users` is uniquely indexed per cardholder). It
+  centralises the three things a caller must not get wrong — the `kind` discriminator, the throwaway password
+  PocketBase demands on every auth record, and `password_set`. An optional operator-set initial password is what
+  makes the tier usable **with no SMTP at all** (OTP and password-reset are both emails); it is handed over in
+  person and never mailed.
   The QR fork is the security-relevant decision: a *visitor* pass carries the credential value (it must work at a
   scanner, and lives hours), while every other badge carries the cardholder id — an identifier that opens nothing,
   because a staff badge hangs on a lanyard for years and gets photographed incidentally.
+  `RegisterGuards` (registered at startup, not in `OnServe`, since it guards the *collection* API) is the
+  field-level companion to the self-scoped `badge_users` update rule: a collection rule scopes which **records**
+  may be written, never which **fields**, so without it a holder PATCHing their own record could repoint
+  `cardholder` at anyone and inherit their doors, flip `kind` to `visitor` to make their QR a working key, or clear
+  `password_set` to skip the old-password proof. Same shape as the `users.permissions` guard in `internal/changelog`.
 - **Visitor sweep** (`internal/badgesweep`, accessd-side) — marks an expired *visitor* credential `revoked`. This is
   **hygiene, not enforcement**: `policy.Decide` already enforces `valid_from`/`valid_until` at the edge, offline
   included. It buys truth in the control plane (an `active` pass really is active) and stops a stale value being
@@ -266,9 +281,12 @@ NATS KV key charset used to save fine and then silently never mirror), `17500000
 **protected** file so its URL is not public to anyone holding the link), `1750000030` (the `badge_users` auth
 collection — OTP + OAuth2, password disabled, self-scoped reads, `enroll`-gated create because an auth
 collection's default create rule is OPEN SIGNUP), `1750000031` (`portals.allow_remote_unlock`, default false,
-control-plane only), `1750000032` (default rate limits for the badge routes), and `1750000033`
+control-plane only), `1750000032` (default rate limits for the badge routes), `1750000033`
 (`roles.visitor_preset` — the curated presets the visitor mint flow offers; on *roles* because the graph is
-cardholder → roles → groups, so a role is the assignable unit).
+cardholder → roles → groups, so a role is the assignable unit), and `1750000034` (**enable email+password**
+on `badge_users` alongside OTP/OAuth2, plus `password_set` and the stuffing/reset/change rate limits — 1750000030's
+"no passwords" left the whole tier inert on an install without SMTP, since every sign-in was an emailed code;
+that reasoning still holds for *visitors*, who are minted without one).
 The base `1750000000` stays frozen; everything is additive. `migratecmd`
 Automigrate snapshots dashboard collection edits into new Go files beside the hand-authored ones — review those
 before committing.

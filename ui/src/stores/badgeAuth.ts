@@ -10,9 +10,14 @@ import { badgePb } from '@/utils/badgePb'
  * no `permissions` concept at all. A badge holder has no capabilities; what they can
  * do is decided server-side by policy.Decide against their own credential.
  *
- * Sign-in is OTP (a code emailed to the address on the badge) or OAuth2. Password
- * auth is disabled on the collection — a visitor should never have to invent a
- * password for a one-day pass, and it removes a credential-stuffing surface.
+ * Three sign-in methods, all enabled on the collection (migrations 1750000030 and
+ * 1750000034):
+ *
+ *   - OTP      — a code emailed to the address on the badge. The visitor path.
+ *   - Password — email + password, for a staff holder who signs in for years and
+ *                should not wait on an email each time. Also the ONLY method that
+ *                works on an install with no SMTP configured at all.
+ *   - OAuth2   — for someone with an existing identity at the organisation.
  *
  * The two-step OTP flow: requestOtp() returns an `otpId` that must be held and
  * passed back to verifyOtp() with the code from the email. The id alone is useless —
@@ -27,6 +32,12 @@ export const useBadgeAuthStore = defineStore('badgeAuth', () => {
   const isAuthenticated = computed(() => !!record.value && badgePb.authStore.isValid)
   const email = computed(() => (record.value?.email as string) || '')
   const kind = computed(() => (record.value?.kind as string) || '')
+  /**
+   * Whether this badge has a password its holder knows. Drives "Set a password" vs
+   * "Change password", and whether the current one must be supplied. Mirrors the
+   * server's `password_set` — the server re-reads it and is the real gate.
+   */
+  const hasPassword = computed(() => !!record.value?.password_set)
 
   /**
    * Step 1: ask PocketBase to email a one-time code. Returns the otpId to pass to
@@ -45,6 +56,41 @@ export const useBadgeAuthStore = defineStore('badgeAuth', () => {
   async function verifyOtp(otpId: string, code: string) {
     const authData = await badgePb.collection('badge_users').authWithOTP(otpId, code)
     record.value = authData.record as unknown as Record<string, any>
+  }
+
+  /** Email + password sign-in, for a holder whose badge has one. */
+  async function loginWithPassword(address: string, password: string) {
+    const authData = await badgePb.collection('badge_users').authWithPassword(address, password)
+    record.value = authData.record as unknown as Record<string, any>
+  }
+
+  /**
+   * Send a password-reset email. Resolves regardless of whether the address has a
+   * badge — the caller must not learn which addresses exist, same reasoning as
+   * requestOtp.
+   */
+  async function requestPasswordReset(address: string) {
+    await badgePb.collection('badge_users').requestPasswordReset(address)
+  }
+
+  /**
+   * Set or change this holder's own password via POST /api/badge/password.
+   *
+   * `oldPassword` is required only when the badge already has one the holder knows
+   * (`password_set`); a holder who signed in by OTP is setting their first password
+   * and has nothing to prove.
+   *
+   * Changing a password rotates the record's tokenKey server-side, which invalidates
+   * EVERY session including this one. So we immediately re-authenticate with the new
+   * password rather than let the holder discover it as a 401 on their next tap.
+   */
+  async function setPassword(password: string, passwordConfirm: string, oldPassword?: string) {
+    const address = email.value
+    await badgePb.send('/api/badge/password', {
+      method: 'POST',
+      body: { password, passwordConfirm, oldPassword: oldPassword || '' },
+    })
+    await loginWithPassword(address, password)
   }
 
   /** OAuth2 sign-in for a contractor or staff member with an existing identity. */
@@ -92,8 +138,12 @@ export const useBadgeAuthStore = defineStore('badgeAuth', () => {
     isAuthenticated,
     email,
     kind,
+    hasPassword,
     requestOtp,
     verifyOtp,
+    loginWithPassword,
+    requestPasswordReset,
+    setPassword,
     loginWithOAuth2,
     listOAuth2Providers,
     logout,

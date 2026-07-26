@@ -127,14 +127,16 @@ so they call `authz.RequireCapability` per handler:
 | `GET /api/models` | any operator | enum/options metadata for the UI |
 | `POST /api/simulate` | any operator | access simulator — a decision oracle; operator-only |
 | `POST /api/badge/visitors` | `enroll` | mint a visitor: cardholder + time-bound credential + badge login |
+| `POST /api/badge/holders` | `enroll` | issue (or re-issue) a **staff** badge login for an existing cardholder |
 
-The badge tier has two routes of its own, gated by the **`badge_users`** collection
+The badge tier has three routes of its own, gated by the **`badge_users`** collection
 rather than by capability — see [Non-operator auth tiers](#non-operator-auth-tiers):
 
 | Route | Who | Purpose |
 |---|---|---|
 | `GET /api/badge/me` | a badge holder | their own badge: photo, QR, doors |
 | `POST /api/badge/unlock/{id}` | a badge holder | remote unlock, authorized by `policy.Decide` |
+| `POST /api/badge/password` | a badge holder | set or change their own password |
 
 Most of these bridge the UI to the **NATS command plane**; the wire subjects and
 bodies they publish are documented in [`protocol.md`](protocol.md#command-details).
@@ -199,10 +201,85 @@ Keeping those tiers apart takes two deliberate choices, both easy to get wrong:
    `apis.RequireAuth("users")` *alone* is also wrong — PocketBase's check is plain
    collection-name membership with no superuser exemption, so it would lock out the
    break-glass account. `RequireOperatorAuth` names both.
+3. **A self-scoped update rule still needs a field guard.** `badge_users` lets a holder
+   PATCH their own record (`id = @request.auth.id || …`), which is reasonable — but a
+   collection rule selects which **records** may be written and says nothing about which
+   **fields**, and there is no rule syntax that expresses "this record, but not these
+   columns". Without a further guard, "may edit my own record" means "may edit every
+   non-system field on it", and three of them are load-bearing:
+
+   | Field | What editing it would buy |
+   |---|---|
+   | `cardholder` | **whose** credentials `/api/badge/me` and `/api/badge/unlock` resolve — repoint it at anyone and inherit every door they can open |
+   | `kind` | whether the QR carries the credential value (`visitor`) or an inert identifier — flipping it turns a lanyard badge into a real key |
+   | `password_set` | whether a password change must prove the current one — clearing it lets a stolen session lock the real holder out |
+
+   [`badgeapi.RegisterGuards`](../internal/badgeapi/guards.go) rejects those changes from
+   anyone but a superuser or an `enroll` operator, mirroring the privilege-escalation
+   guard below. It binds a `*Request` hook, so it constrains API traffic only — accessd's
+   own `app.Save` writes (the issue and password routes, the visitor mint) set these
+   fields deliberately. It is registered at startup rather than in `OnServe`, because the
+   collection API is served whether or not the badge routes ever came up.
 
 Badge-tier routes live in `internal/badgeapi` and are authorized by
 `policy.Decide` (what that person's own credential opens, right now) rather than by
 capability — so a remote unlock can never exceed the holder's physical access.
+
+### Issuing a badge login
+
+The two kinds of badge are created by different flows, because they start from
+different places:
+
+| | **Visitor** | **Staff holder** |
+|---|---|---|
+| Where | **Visitors → New Visitor Pass** | **Cardholder detail → Badge login → Issue login** |
+| Route | `POST /api/badge/visitors` | `POST /api/badge/holders` |
+| Creates | cardholder + time-bound credential + login, in one transaction | *only* the login — the cardholder and credential already exist |
+| Access from | a curated `visitor_preset` role, chosen at mint | the roles already on that cardholder |
+| QR encodes | the credential value (works at a scanner) | the cardholder id (opens nothing) |
+| Usual sign-in | emailed one-time code | password |
+
+A staff badge is deliberately *not* created by enrollment: most cardholders never need
+a login, and issuing one to everybody would put a phone-openable surface on people who
+only ever tap a card. It is a separate, explicit act on the person's record.
+
+**A badge login is not access.** It controls who may *see* a badge and use remote
+unlock. Their credentials work at every door they are entitled to whether or not a
+login exists, and removing a login revokes nothing. To actually revoke access, set
+`credentials.status = revoked` (or disable the cardholder) — that is what propagates
+through the mirror to the edge. Issuing needs `enroll`; **removing needs `operators`**,
+since deleting an account is closer to account administration than to enrollment.
+
+### Sign-in methods
+
+All three are enabled on `badge_users`
+(migrations [`1750000030`](../pbmigrations/1750000030_badge_users.go) and
+[`1750000034`](../pbmigrations/1750000034_badge_password_auth.go)):
+
+| Method | For | Needs SMTP |
+|---|---|---|
+| **Password** (email + password) | staff holders, who sign in for years | no |
+| **One-time code** (emailed) | visitors; anyone who has not set a password | **yes** |
+| **OAuth2** | staff with an existing identity; providers are configured in the PocketBase admin | no |
+
+> **Without SMTP, a password is the only way in.** OTP and the forgot-password link are
+> both emails. On an install with no mail server, set an initial password when you issue
+> the login and hand it over in person — otherwise the badge tier is inert.
+
+An initial password is **optional and never emailed**: mail is stored indefinitely,
+forwarded, and synced to devices, so a door-opening password sent by mail would outlive
+every other control around it. The invite mail says only *where* to sign in.
+
+A holder sets or changes their own password from the badge page. The `password_set`
+flag records whether they have one, which decides whether the current password must be
+supplied to change it: a holder who signed in by one-time code is setting a *first*
+password and has nothing to prove, while one who already has a password must supply it
+so that a stolen session cannot silently lock them out of their own badge. Re-issuing
+from the cardholder page resets that password — the operator's path for someone who is
+locked out and has no working mail. Note that **changing a password signs out every
+device**, including the one making the change (PocketBase rotates the record's token
+key); the badge UI re-authenticates silently, so this is only visible on a holder's
+other phones.
 
 ## Privilege-escalation guard
 

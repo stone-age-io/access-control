@@ -206,11 +206,10 @@ func TestBadgeUsers(t *testing.T) {
 		t.Errorf("badge_users.ListRule = %v, want self-scoped", c.ListRule)
 	}
 
-	// Password auth off, OTP on: a visitor should not manage a password, and OTP is
-	// what makes an emailed badge link more than a bare bearer token.
-	if c.PasswordAuth.Enabled {
-		t.Error("badge_users password auth is enabled; want OTP/OAuth2 only")
-	}
+	// OTP must stay on whatever else is enabled: it is what makes an emailed badge
+	// link more than a bare bearer token, and it is the visitor's only sign-in path.
+	// (Password auth was off in this migration and is turned on by 1750000034 — see
+	// TestBadgePasswordAuth.)
 	if !c.OTP.Enabled {
 		t.Error("badge_users OTP is disabled; the visitor invite flow depends on it")
 	}
@@ -333,6 +332,84 @@ func TestBadgeRateLimits(t *testing.T) {
 	if !found || got.Label != unlock.Label {
 		t.Errorf("FindRateLimitRule for a concrete unlock path = (%+v, %v), want the prefix rule %q",
 			got, found, unlock.Label)
+	}
+}
+
+// TestBadgePasswordAuth verifies migration 1750000034: email+password sign-in on the
+// badge tier, plus the `password_set` flag and the limits that make passwords
+// defensible.
+func TestBadgePasswordAuth(t *testing.T) {
+	app := newApp(t)
+
+	c, err := app.FindCollectionByNameOrId("badge_users")
+	if err != nil {
+		t.Fatalf("badge_users collection: %v", err)
+	}
+
+	if !c.PasswordAuth.Enabled {
+		t.Error("badge_users password auth is disabled; without it the tier is inert on an install with no SMTP")
+	}
+	// Email only — badge_users has no username, and a second identity field would be
+	// a second way to name the same person.
+	if len(c.PasswordAuth.IdentityFields) != 1 || c.PasswordAuth.IdentityFields[0] != "email" {
+		t.Errorf("badge_users identity fields = %v, want [email]", c.PasswordAuth.IdentityFields)
+	}
+	// The other two methods must survive: OTP is the visitor path, OAuth2 the
+	// bring-your-own-identity one.
+	if !c.OTP.Enabled {
+		t.Error("enabling passwords disabled OTP; all three methods are meant to coexist")
+	}
+	if !c.OAuth2.Enabled {
+		t.Error("enabling passwords disabled OAuth2; all three methods are meant to coexist")
+	}
+
+	if c.Fields.GetByName("password_set") == nil {
+		t.Fatal("badge_users.password_set field missing")
+	}
+	// Existing logins were created with a throwaway nobody has seen, so the flag must
+	// start false — true would demand an old-password proof they cannot give.
+	all, err := app.FindAllRecords("badge_users")
+	if err != nil {
+		t.Fatalf("FindAllRecords badge_users: %v", err)
+	}
+	for _, r := range all {
+		if r.GetBool("password_set") {
+			t.Errorf("badge login %q has password_set = true after the migration; want false", r.Id)
+		}
+	}
+
+	// Password auth reopens a credential-stuffing surface, so it ships with limits.
+	rl := app.Settings().RateLimits
+	find := func(label string) (core.RateLimitRule, bool) {
+		for _, r := range rl.Rules {
+			if r.Label == label {
+				return r, true
+			}
+		}
+		return core.RateLimitRule{}, false
+	}
+	for _, tc := range []struct {
+		label string
+		why   string
+	}{
+		{"badge_users:authWithPassword", "credential stuffing against the badge tier"},
+		{"badge_users:requestPasswordReset", "a reset mail bomb"},
+		{"POST /api/badge/password", "guessing the current password from a stolen session"},
+	} {
+		r, ok := find(tc.label)
+		if !ok {
+			t.Errorf("no rate limit rule %q — nothing bounds %s", tc.label, tc.why)
+			continue
+		}
+		if r.MaxRequests <= 0 || r.Duration <= 0 {
+			t.Errorf("rule %q = %+v, want positive MaxRequests and Duration", tc.label, r)
+		}
+	}
+	// The two pre-token endpoints must not be @auth-scoped, or the rule never fires.
+	for _, label := range []string{"badge_users:authWithPassword", "badge_users:requestPasswordReset"} {
+		if r, ok := find(label); ok && r.Audience == core.RateLimitRuleAudienceAuth {
+			t.Errorf("rule %q is scoped to @auth, but its caller has no token yet — it would never apply", label)
+		}
 	}
 }
 

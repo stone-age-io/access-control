@@ -178,6 +178,8 @@ const TOPICS: Record<string, HelpTopic> = {
     sections: [
       { body: 'A cardholder is a person in the system. Their roles determine what they can open; their credentials are the cards/PINs they present.' },
       { heading: 'Status', body: 'A disabled cardholder is denied everywhere, regardless of credentials or roles — the check happens before the grant walk.' },
+      { heading: 'Badge login', body: 'Optional, and separate from access. It lets this person view their badge on a phone and use remote unlock at doors that allow it — their credentials work at every door they are entitled to whether or not a login exists. Removing a login revokes nothing; to revoke access, revoke the credential.' },
+      { heading: 'Passwords', body: 'A badge holder normally signs in with a password, or an emailed one-time code. Setting an initial password is optional but is the only way in on an install with no mail server — hand it over in person, it is never emailed. They can change it themselves from their badge page.' },
     ],
   },
   credentials: {

@@ -123,6 +123,9 @@ func Register(se *core.ServeEvent, nc *nats.Conn, kv jetstream.KeyValue, subj su
 	// POST /api/badge/visitors — the one OPERATOR route here (see visitors.go).
 	// Gated by the operator collection + `enroll`, never by a badge token.
 	h.registerVisitorRoutes(se)
+	// POST /api/badge/holders (operator + `enroll`) and POST /api/badge/password
+	// (a badge holder, for their own password) — see holders.go.
+	h.registerHolderRoutes(se)
 }
 
 // --- GET /api/badge/me ---

@@ -12,6 +12,7 @@ const ENROLL = 'enroll' // people: cardholders, credentials
 const POLICY = 'policy' // access logic: roles, access groups, schedules, holidays
 const TOPOLOGY = 'topology' // hardware: locations, controllers, portals, aux I/O
 const OPERATORS = 'operators' // operator accounts + audit log
+const COMMAND = 'command' // issue door commands (grant/posture)
 
 const routes: RouteRecordRaw[] = [
   {
@@ -81,7 +82,9 @@ const routes: RouteRecordRaw[] = [
       // as a portal id. (Vue Router ranks static above dynamic anyway; the ordering
       // makes the intent explicit.)
       { path: 'portals/placards', name: 'PortalPlacards', component: () => import('@/views/portals/PortalPlacardView.vue'), meta: { title: 'Door Placards' } },
-      { path: 'portals/scan', name: 'PortalScan', component: () => import('@/views/portals/MobileGrantView.vue'), meta: { title: 'Scan to Unlock' } },
+      // Scanning a door placard issues a grant, so it needs the same capability the
+      // command bar does — reachable from the account dropdown, not the main nav.
+      { path: 'portals/scan', name: 'PortalScan', component: () => import('@/views/portals/MobileGrantView.vue'), meta: { title: 'Scan to Unlock', capability: COMMAND } },
       { path: 'portals/:id', name: 'Portal', component: () => import('@/views/portals/PortalDetailView.vue'), meta: { title: 'Portal' } },
       { path: 'portals/:id/edit', name: 'PortalEdit', component: () => import('@/views/portals/PortalFormView.vue'), meta: { title: 'Edit Portal', capability: TOPOLOGY } },
 

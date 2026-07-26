@@ -134,6 +134,60 @@ function reasonText(reason?: string): string {
   }
 }
 
+// --- password management ---
+//
+// A holder who signed in by OTP has no password yet, so this is "Set a password"; one
+// who has is "Change password" and must supply the current one. The server re-reads
+// `password_set` and is the real gate — this only shapes the form.
+const showPasswordForm = ref(false)
+const oldPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const savingPassword = ref(false)
+const passwordError = ref('')
+const passwordSaved = ref(false)
+
+function togglePasswordForm() {
+  showPasswordForm.value = !showPasswordForm.value
+  oldPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  passwordError.value = ''
+  passwordSaved.value = false
+}
+
+async function savePassword() {
+  passwordError.value = ''
+  passwordSaved.value = false
+  if (newPassword.value.length < 8) {
+    passwordError.value = 'Use at least 8 characters.'
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    passwordError.value = 'The two passwords do not match.'
+    return
+  }
+  savingPassword.value = true
+  try {
+    // The store re-authenticates afterwards: changing a password rotates the record's
+    // token key server-side, which invalidates this very session.
+    await badgeAuth.setPassword(newPassword.value, confirmPassword.value, oldPassword.value)
+    oldPassword.value = ''
+    newPassword.value = ''
+    confirmPassword.value = ''
+    // Collapse the form so the confirmation below it is what the holder sees.
+    showPasswordForm.value = false
+    passwordSaved.value = true
+  } catch (err: any) {
+    passwordError.value =
+      err?.status === 429
+        ? 'Too many attempts. Wait a minute and try again.'
+        : err?.response?.message || 'Could not set your password.'
+  } finally {
+    savingPassword.value = false
+  }
+}
+
 async function signOut() {
   badgeAuth.logout()
   router.push('/badge/login')
@@ -252,6 +306,73 @@ onMounted(load)
 
         <div v-if="!me.portals.length" class="text-center text-sm text-base-content/50 py-4">
           No doors are assigned to your badge.
+        </div>
+
+        <!-- Password: set a first one (signed in by code) or change an existing one. -->
+        <div class="card bg-base-100 shadow-sm">
+          <div class="card-body gap-3">
+            <div class="flex items-center justify-between gap-2">
+              <div class="min-w-0">
+                <h2 class="card-title text-base">
+                  {{ badgeAuth.hasPassword ? 'Change password' : 'Set a password' }}
+                </h2>
+                <p class="text-xs text-base-content/60">
+                  {{
+                    badgeAuth.hasPassword
+                      ? 'Sign in without waiting for an emailed code.'
+                      : 'Optional. Lets you sign in without waiting for an emailed code.'
+                  }}
+                </p>
+              </div>
+              <button class="btn btn-sm btn-outline shrink-0" @click="togglePasswordForm">
+                {{ showPasswordForm ? 'Cancel' : badgeAuth.hasPassword ? 'Change' : 'Set' }}
+              </button>
+            </div>
+
+            <form v-if="showPasswordForm" class="space-y-3" @submit.prevent="savePassword">
+              <div v-if="passwordError" class="alert alert-error py-2 text-sm">{{ passwordError }}</div>
+
+              <label v-if="badgeAuth.hasPassword" class="form-control">
+                <span class="label-text mb-1">Current password</span>
+                <input
+                  v-model="oldPassword"
+                  type="password"
+                  autocomplete="current-password"
+                  class="input input-bordered input-sm"
+                  :disabled="savingPassword"
+                />
+              </label>
+              <label class="form-control">
+                <span class="label-text mb-1">New password</span>
+                <input
+                  v-model="newPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  class="input input-bordered input-sm"
+                  :disabled="savingPassword"
+                />
+              </label>
+              <label class="form-control">
+                <span class="label-text mb-1">Confirm new password</span>
+                <input
+                  v-model="confirmPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  class="input input-bordered input-sm"
+                  :disabled="savingPassword"
+                />
+              </label>
+              <p class="text-xs text-base-content/50">
+                At least 8 characters. Setting a password signs out your other devices.
+              </p>
+              <button type="submit" class="btn btn-primary btn-sm w-full" :disabled="savingPassword">
+                <span v-if="savingPassword" class="loading loading-spinner loading-sm"></span>
+                <span v-else>Save password</span>
+              </button>
+            </form>
+
+            <p v-else-if="passwordSaved" class="text-sm text-success">Your password has been set.</p>
+          </div>
         </div>
       </template>
     </div>

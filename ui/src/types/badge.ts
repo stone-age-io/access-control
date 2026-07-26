@@ -55,6 +55,46 @@ export interface BadgeMe {
   portals: BadgePortal[]
 }
 
+/**
+ * A badge_users record as an operator sees it. Only operators holding `enroll` may
+ * list this collection (migration 1750000030), so it never reaches a badge client.
+ */
+export interface BadgeUser {
+  id: string
+  email: string
+  cardholder: string
+  kind: BadgeKind
+  /** True when the holder knows their password; false = OTP/OAuth only. */
+  password_set?: boolean
+  verified?: boolean
+  created?: string
+  updated?: string
+}
+
+/** POST /api/badge/holders (operator-only) */
+export interface IssueHolderRequest {
+  /** cardholders record id. */
+  cardholder: string
+  /** Optional; defaults server-side to the cardholder's own email. */
+  email?: string
+  /** Optional; empty leaves the login OTP/OAuth-only. */
+  password?: string
+  /** Email the holder where to sign in. Never carries the password. */
+  sendInvite?: boolean
+}
+
+export interface IssueHolderResponse {
+  badgeUserId: string
+  cardholderId: string
+  email: string
+  passwordSet: boolean
+  /** False when an existing login was updated rather than a new one created. */
+  created: boolean
+  /** False when SMTP is unconfigured or the send failed; issuing still succeeded. */
+  inviteSent: boolean
+  badgeUrl: string
+}
+
 /** POST /api/badge/visitors (operator-only) */
 export interface MintVisitorRequest {
   name: string

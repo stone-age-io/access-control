@@ -12,7 +12,7 @@ import (
 // The badge_users update rule is `id = @request.auth.id || <operator enroll>`, so a
 // signed-in badge holder may PATCH their OWN record. A collection rule selects which
 // RECORDS may be written, never which FIELDS — so on its own it lets the holder rewrite
-// every non-system field on that record. Two of them are load-bearing; see
+// every non-system field on that record. Three of them are load-bearing; see
 // protectedBadgeFields in guards.go for what each one decides.
 //
 // Verified before the guard existed: all three PATCHes returned 200 and the stored
@@ -61,6 +61,7 @@ func seedGuardApp(t testing.TB) (*tests.TestApp, string) {
 	badge.SetEmail("attacker@test.dev")
 	badge.Set("cardholder", guardAttackerCh)
 	badge.Set("kind", KindHolder)
+	badge.Set("password_set", true)
 	badge.SetPassword("a-real-password-they-know")
 	if err := app.Save(badge); err != nil {
 		t.Fatalf("save badge user: %v", err)
@@ -98,6 +99,15 @@ func TestBadgeHolderCannotEscalateViaSelfUpdate(t *testing.T) {
 			check: func(t testing.TB, rec *core.Record) {
 				if got := rec.GetString("kind"); got != KindHolder {
 					t.Errorf("kind = %q, want %q — the QR would now carry the credential value", got, KindHolder)
+				}
+			},
+		},
+		{
+			name: "cannot clear password_set to skip the old-password proof",
+			body: `{"password_set":false}`,
+			check: func(t testing.TB, rec *core.Record) {
+				if !rec.GetBool("password_set") {
+					t.Error("password_set was cleared — a stolen session could now change the password without proving the current one")
 				}
 			},
 		},

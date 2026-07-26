@@ -43,8 +43,6 @@ const sections: NavSectionCap[] = [
     title: 'Facility',
     items: [
       { label: 'Locations', icon: '🏢', path: '/locations' },
-      { label: 'Scan to Unlock', icon: '📷', path: '/portals/scan', child: true },
-      { label: 'Door Placards', icon: '🖨️', path: '/portals/placards', child: true },
       { label: 'Controllers', icon: '⚙️', path: '/controllers' },
       { label: 'Portals', icon: '🚪', path: '/portals' },
       { label: 'Aux Inputs', icon: '🔌', path: '/aux-inputs' },
@@ -71,6 +69,16 @@ const visibleSections = computed<NavSection[]>(() =>
     .map((s) => ({ ...s, items: s.items.filter((i) => !i.capability || authStore.can(i.capability)) }))
     .filter((s) => s.items.length > 0),
 )
+
+// Account-dropdown entries: tools belonging to the signed-in operator rather than to a
+// part of the system. Scan to Unlock is a phone-in-hand utility for whoever is walking
+// the building — it sat under Facility, where it read as a thing you configure. Door
+// placards moved the other way, to a print action on the Portals list, since they are
+// generated FROM portals. Gated on `command`, because scanning issues a door grant.
+const accountItems = computed<NavItemCap[]>(() =>
+  ([{ label: 'Scan to Unlock', icon: '📷', path: '/portals/scan', capability: 'command' }] as NavItemCap[])
+    .filter((i) => !i.capability || authStore.can(i.capability)),
+)
 </script>
 
 <template>
@@ -90,7 +98,7 @@ const visibleSections = computed<NavSection[]>(() =>
     <!-- Sidebar -->
     <div class="drawer-side z-40">
       <label for="sidebar-drawer" class="drawer-overlay"></label>
-      <AppSidebar :sections="visibleSections" />
+      <AppSidebar :sections="visibleSections" :account-items="accountItems" />
     </div>
 
     <!-- Contextual help: slide-over panel (opened from the header icon on mobile, the inline button on desktop) -->
