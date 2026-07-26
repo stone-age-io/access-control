@@ -80,6 +80,8 @@ func Build(entries map[string][]byte) *Snapshot {
 			Groups:    make(map[string]policy.AccessGroup),
 			Creds:     make(map[string]policy.Credential),
 			Holidays:  make(map[string]policy.HolidaySet),
+			Areas:     make(map[string]policy.Area),
+			Outputs:   make(map[string]policy.Output),
 		},
 		locs:      make(map[string]*time.Location),
 		tzName:    make(map[string]string),
@@ -126,8 +128,11 @@ func Build(entries map[string][]byte) *Snapshot {
 			if json.Unmarshal(value, &w) != nil {
 				continue
 			}
+			canArm, canDisarm := policy.ArmRights(w.AreaRights)
 			s.graph.Groups[w.Code] = policy.AccessGroup{
 				Code: w.Code, Portals: toSet(w.Portals), Schedule: w.Schedule,
+				Areas: toSet(w.Areas), Outputs: toSet(w.AuxOutputs),
+				CanArm: canArm, CanDisarm: canDisarm,
 			}
 
 		case strings.HasPrefix(key, policykv.PrefixRole):
@@ -175,9 +180,22 @@ func Build(entries map[string][]byte) *Snapshot {
 				continue
 			}
 			s.areas[w.Code] = w
+			// Two copies with different jobs: s.areas keeps the arm-state fields
+			// ShouldReleaseDisarm needs, while the graph copy carries only what an
+			// AUTHORIZATION decision may see (existence + location).
+			s.graph.Areas[w.Code] = policy.Area{Code: w.Code, Location: w.Location}
+
+		case strings.HasPrefix(key, policykv.PrefixAuxOutput):
+			// Now relevant: an access group can grant an aux output (1750000037), so
+			// DecideOutput needs to know the output exists and where it is.
+			var w policykv.AuxOutput
+			if json.Unmarshal(value, &w) != nil {
+				continue
+			}
+			s.graph.Outputs[w.Code] = policy.Output{Code: w.Code, Location: w.Location}
 
 		default:
-			// controller / auxin / auxout: irrelevant to decision and arm-state.
+			// controller / auxin: irrelevant to decision, arm-state and grants.
 		}
 	}
 
@@ -231,33 +249,149 @@ func SnapshotKV(ctx context.Context, kv jetstream.KeyValue) (map[string][]byte, 
 // It exists for the badge view's door list. Ordering is not defined (map iteration),
 // so callers that display it should sort.
 func (s *Snapshot) PortalsFor(userID string) []string {
-	u, ok := s.graph.Users[userID]
-	if !ok {
-		return nil
-	}
 	seen := make(map[string]struct{})
-	for _, roleCode := range u.Roles {
-		role, ok := s.graph.Roles[roleCode]
-		if !ok {
-			continue // dangling reference — fail safe, contributes nothing
-		}
-		for _, groupCode := range role.Groups {
-			group, ok := s.graph.Groups[groupCode]
-			if !ok {
-				continue
-			}
-			for portalCode := range group.Portals {
-				if _, known := s.graph.Portals[portalCode]; known {
-					seen[portalCode] = struct{}{}
-				}
+	s.walkGroups(userID, func(g policy.AccessGroup) {
+		for portalCode := range g.Portals {
+			if _, known := s.graph.Portals[portalCode]; known {
+				seen[portalCode] = struct{}{}
 			}
 		}
-	}
+	})
 	out := make([]string, 0, len(seen))
 	for code := range seen {
 		out = append(out, code)
 	}
 	return out
+}
+
+// AreasFor returns the area codes the given cardholder id holds any arm right over,
+// paired with which rights those are — the area equivalent of PortalsFor, and like it
+// WITHOUT the schedule/credential checks, so it answers "which areas are on this
+// person's badge at all", not "which could they arm right now".
+//
+// An area reachable through a group that carries no arm right is omitted entirely:
+// showing it with both buttons disabled would tell a holder about an area they have
+// no authority over, and the operator's fix for that misconfiguration is on the group,
+// not the badge. Ordering is undefined (map iteration); callers that display it sort.
+func (s *Snapshot) AreasFor(userID string) map[string]ArmRights {
+	out := make(map[string]ArmRights)
+	s.walkGroups(userID, func(g policy.AccessGroup) {
+		if !g.CanArm && !g.CanDisarm {
+			return
+		}
+		for areaCode := range g.Areas {
+			if _, known := s.graph.Areas[areaCode]; !known {
+				continue // KV ahead of the DB, or mid-rename
+			}
+			// Union across groups: two groups granting different rights on one area
+			// give the holder both, exactly as two groups granting one portal give
+			// the union of their schedules.
+			r := out[areaCode]
+			r.CanArm = r.CanArm || g.CanArm
+			r.CanDisarm = r.CanDisarm || g.CanDisarm
+			out[areaCode] = r
+		}
+	})
+	return out
+}
+
+// ArmRights is which arm actions a badge holds over one area, unioned across every
+// group that grants it.
+type ArmRights struct {
+	CanArm    bool `json:"canArm"`
+	CanDisarm bool `json:"canDisarm"`
+}
+
+// OutputsFor returns the aux-output codes on the given cardholder's badge — the
+// output equivalent of PortalsFor, with the same caveats.
+func (s *Snapshot) OutputsFor(userID string) []string {
+	seen := make(map[string]struct{})
+	s.walkGroups(userID, func(g policy.AccessGroup) {
+		for code := range g.Outputs {
+			if _, known := s.graph.Outputs[code]; known {
+				seen[code] = struct{}{}
+			}
+		}
+	})
+	out := make([]string, 0, len(seen))
+	for code := range seen {
+		out = append(out, code)
+	}
+	return out
+}
+
+// walkGroups calls fn once per group reachable from the given cardholder id, skipping
+// dangling role/group references (fail-safe: they contribute nothing). A group reached
+// through two roles is visited twice; every caller unions, so that is harmless.
+func (s *Snapshot) walkGroups(userID string, fn func(policy.AccessGroup)) {
+	u, ok := s.graph.Users[userID]
+	if !ok {
+		return
+	}
+	for _, roleCode := range u.Roles {
+		role, ok := s.graph.Roles[roleCode]
+		if !ok {
+			continue
+		}
+		for _, groupCode := range role.Groups {
+			if group, ok := s.graph.Groups[groupCode]; ok {
+				fn(group)
+			}
+		}
+	}
+}
+
+// SimulateArea runs the real policy.DecideArea for a credential value, area code and
+// arm action, resolving the area's timezone the way Simulate resolves a portal's.
+// Returns the pure Decision — there is no posture to report and no strike to pulse.
+func (s *Snapshot) SimulateArea(cred, area, action string, atUTC time.Time) policy.Decision {
+	return policy.DecideArea(&s.graph, s.tzFor(s.areaLocation(area)), cred, area, action, atUTC)
+}
+
+// SimulateOutput runs the real policy.DecideOutput for a credential value and
+// aux-output code.
+func (s *Snapshot) SimulateOutput(cred, output string, atUTC time.Time) policy.Decision {
+	loc := ""
+	if o, ok := s.graph.Outputs[output]; ok {
+		loc = o.Location
+	}
+	return policy.DecideOutput(&s.graph, s.tzFor(loc), cred, output, atUTC)
+}
+
+// AreaLocation returns an area's location code and whether the area is known —
+// needed to address a command subject without re-reading PocketBase.
+func (s *Snapshot) AreaLocation(areaCode string) (string, bool) {
+	a, ok := s.graph.Areas[areaCode]
+	if !ok {
+		return "", false
+	}
+	return a.Location, true
+}
+
+// OutputLocation returns an aux output's location code and whether it is known.
+func (s *Snapshot) OutputLocation(code string) (string, bool) {
+	o, ok := s.graph.Outputs[code]
+	if !ok {
+		return "", false
+	}
+	return o.Location, true
+}
+
+func (s *Snapshot) areaLocation(areaCode string) string {
+	if a, ok := s.graph.Areas[areaCode]; ok {
+		return a.Location
+	}
+	return ""
+}
+
+// tzFor resolves a location code's timezone, falling back to UTC for an unknown or
+// unresolvable one — the same fallback Build and PolicyStore apply, so a decision
+// never fails for want of a timezone.
+func (s *Snapshot) tzFor(locCode string) *time.Location {
+	if l, ok := s.locs[locCode]; ok && l != nil {
+		return l
+	}
+	return time.UTC
 }
 
 // PortalLocation returns a portal's location code and whether the portal is known.
@@ -352,6 +486,30 @@ func (s *Snapshot) ShouldReleaseDisarm(areaCode string, atUTC time.Time) bool {
 	}
 	armed, resolved := s.baseArmState(areaCode, atUTC)
 	return resolved && !armed
+}
+
+// BaseArmState is baseArmState exported: an area's scheduled/standing arm-state at atUTC
+// with the durable arm_override EXCLUDED.
+//
+// Callers that want the effective state apply the override themselves, and accessd's badge
+// routes do that from the authoritative PocketBase record rather than from this snapshot's
+// copy. That is not pedantry — a holder who has just disarmed an area re-reads their badge
+// immediately, and the mirror plus this package's few-second snapshot cache would still be
+// reporting "armed", which reads as "it didn't work". The override is the one field a badge
+// holder can change, so it is the one where staleness is visible; the scheduled/standing
+// tiers below change only when an operator edits them, where a few seconds of lag is
+// invisible.
+//
+// What this resolves to is POLICY INTENT, not a report from the hardware. The authoritative
+// live state is the per-controller arm shadow in ACC_STATUS, which the operator console
+// reads and which can say "a box never reported" — not something a badge holder has any use
+// for. So callers rendering this to a holder should avoid wording that asserts the hardware
+// agrees.
+//
+// resolved is false when the area is unknown here or a configured auto_schedule has not
+// loaded yet; a caller must treat that as "don't know" rather than "disarmed".
+func (s *Snapshot) BaseArmState(areaCode string, atUTC time.Time) (armed, resolved bool) {
+	return s.baseArmState(areaCode, atUTC)
 }
 
 // baseArmState resolves an area's BASE arm-state at atUTC — the scheduled/standing

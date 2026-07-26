@@ -352,6 +352,13 @@ func keyAndValue(app core.App, r *core.Record) (string, []byte, error) {
 			Code:     r.GetString("code"),
 			Portals:  resolveCodes(app, "portals", r.GetStringSlice("portals")),
 			Schedule: resolveCode(app, "schedules", r.GetString("schedule")),
+			// Areas and aux outputs are targets exactly as portals are (1750000037).
+			// area_rights is carried verbatim: it is a fixed two-value vocabulary, not
+			// a relation, so there is nothing to resolve — and an empty list means
+			// "neither", which is the fail-closed reading the deciders apply.
+			Areas:      resolveCodes(app, "areas", r.GetStringSlice("areas")),
+			AuxOutputs: resolveCodes(app, "aux_output", r.GetStringSlice("aux_outputs")),
+			AreaRights: r.GetStringSlice("area_rights"),
 		}
 	case "roles":
 		payload = policykv.Role{

@@ -79,6 +79,29 @@ const (
 	ReasonDenyUnknownPoint      = "deny_unknown_point"
 )
 
+// Reason codes for the non-portal targets an access group can grant — an area's
+// arm-state and an aux output. Additive, and stable in the same way: they flow into
+// audit rows and the operator's simulator verbatim. See DecideArea / DecideOutput.
+const (
+	ReasonAllowAreaGrant   = "allow_area_grant"   // may arm/disarm this area now
+	ReasonAllowOutputGrant = "allow_output_grant" // may drive this aux output now
+
+	ReasonDenyUnknownArea   = "deny_unknown_area"   // no such area in the graph
+	ReasonDenyUnknownOutput = "deny_unknown_output" // no such aux output in the graph
+	// deny_no_area_right: a group DOES grant this area, but not the action asked for
+	// (arm vs disarm). Distinct from deny_no_access on purpose — it is the signature
+	// of a group with areas chosen and area_rights left empty, which is a
+	// misconfiguration an operator can fix, not an access decision.
+	ReasonDenyNoAreaRight = "deny_no_area_right"
+)
+
+// Arm actions a badge holder (or a keypad) can ask for on an area. They are
+// separate rights, not one: disarming turns intrusion detection off.
+const (
+	ArmActionArm    = "arm"
+	ArmActionDisarm = "disarm"
+)
+
 // Policy is the in-memory access-control graph. All cross-references are by code
 // (or credential value / user id), never by storage id, so the graph is
 // self-contained and human-readable. Reads of nil maps are safe (zero value,
@@ -91,6 +114,14 @@ type Policy struct {
 	Groups    map[string]AccessGroup // access-group code -> group
 	Creds     map[string]Credential  // credential value -> credential (the tap lookup)
 	Holidays  map[string]HolidaySet  // location code -> that site's holiday calendar
+
+	// The non-portal targets a group can grant. Both hold only what an
+	// authorization decision needs — existence and location (for the timezone the
+	// schedule is evaluated in). Operational state deliberately stays out: an
+	// area's arm-state is resolved by the controller (or accessd) like posture,
+	// never here.
+	Areas   map[string]Area   // area code -> area
+	Outputs map[string]Output // aux-output code -> output
 }
 
 // Schedule is a reusable set of weekly time windows. The owning site supplies
@@ -157,12 +188,38 @@ type Role struct {
 	Groups []string // access-group codes
 }
 
-// AccessGroup ("access level") grants a set of portals under exactly one
-// schedule. Portals is a set for O(1) membership at decision time.
+// AccessGroup ("access level") grants a set of targets under exactly one schedule.
+// Each target set is a map for O(1) membership at decision time; an empty (or nil)
+// set grants nothing of that kind, so a doors-only group is the zero case for the
+// other two.
+//
+// CanArm/CanDisarm are the two arm rights over Areas, flattened from the wire's
+// `areaRights` list at build time so the decision path does no slice scanning.
+// Both false means the group grants no arm action at all, even when Areas is
+// non-empty — see DecideArea and ReasonDenyNoAreaRight.
 type AccessGroup struct {
+	Code      string
+	Portals   map[string]struct{}
+	Schedule  string // schedule code
+	Areas     map[string]struct{}
+	Outputs   map[string]struct{}
+	CanArm    bool
+	CanDisarm bool
+}
+
+// Area is an arming grouping as the AUTHORIZATION path sees it: does it exist, and
+// which site's clock and holidays does its schedule evaluate against. Its arm-state
+// is absent on purpose — that is operational state, resolved outside this package.
+type Area struct {
 	Code     string
-	Portals  map[string]struct{}
-	Schedule string // schedule code
+	Location string
+}
+
+// Output is a named auxiliary relay as the authorization path sees it. Like Area, it
+// carries no operational state; the relay's wiring lives on the controller.
+type Output struct {
+	Code     string
+	Location string
 }
 
 // Credential is an opaque string presented at a reader, mapping to one user.

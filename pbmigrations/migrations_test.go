@@ -818,3 +818,82 @@ func TestFixtureSingleLocation(t *testing.T) {
 		t.Errorf("locations count = %d, want 1", len(locations))
 	}
 }
+
+// TestGroupTargets verifies migration 1750000037: an access group grants areas and
+// aux outputs alongside portals, with arm and disarm as separate rights.
+func TestGroupTargets(t *testing.T) {
+	app := newApp(t)
+
+	groups, err := app.FindCollectionByNameOrId("access_groups")
+	if err != nil {
+		t.Fatalf("access_groups collection: %v", err)
+	}
+
+	areas, ok := groups.Fields.GetByName("areas").(*core.RelationField)
+	if !ok {
+		t.Fatal("access_groups.areas is missing or not a relation")
+	}
+	if areas.MaxSelect < 2 {
+		t.Errorf("areas.MaxSelect = %d, want many (a group grants a SET of areas)", areas.MaxSelect)
+	}
+	outputs, ok := groups.Fields.GetByName("aux_outputs").(*core.RelationField)
+	if !ok {
+		t.Fatal("access_groups.aux_outputs is missing or not a relation")
+	}
+	if outputs.MaxSelect < 2 {
+		t.Errorf("aux_outputs.MaxSelect = %d, want many", outputs.MaxSelect)
+	}
+
+	// Both rights must be selectable together, or "may arm and disarm" — the common
+	// case — would be unrepresentable.
+	rights, ok := groups.Fields.GetByName("area_rights").(*core.SelectField)
+	if !ok {
+		t.Fatal("access_groups.area_rights is missing or not a select")
+	}
+	if rights.MaxSelect < 2 {
+		t.Errorf("area_rights.MaxSelect = %d, want 2", rights.MaxSelect)
+	}
+	want := map[string]bool{"arm": false, "disarm": false}
+	for _, v := range rights.Values {
+		if _, known := want[v]; !known {
+			t.Errorf("unexpected area_rights value %q", v)
+			continue
+		}
+		want[v] = true
+	}
+	for v, present := range want {
+		if !present {
+			t.Errorf("area_rights is missing the %q value", v)
+		}
+	}
+
+	// The rules are unchanged: granting an area is the same class of decision as
+	// granting a door, so it stays `policy`-gated rather than becoming `command`.
+	if groups.UpdateRule == nil || *groups.UpdateRule != `@request.auth.permissions ~ "policy"` {
+		t.Errorf("access_groups.UpdateRule = %v, want the unchanged policy capability", groups.UpdateRule)
+	}
+}
+
+// TestGroupTargetsFixture verifies 1750000038 — the demo group actually grants the
+// demo area, so a fresh checkout can exercise badge arm/disarm without hand-building
+// a graph. It is also what backs the mirror's code-resolution test.
+func TestGroupTargetsFixture(t *testing.T) {
+	app := newApp(t)
+
+	group, err := app.FindFirstRecordByData("access_groups", "code", "lobby-group")
+	if err != nil {
+		t.Fatalf("fixture group: %v", err)
+	}
+	if len(group.GetStringSlice("areas")) != 1 {
+		t.Errorf("lobby-group areas = %v, want the warehouse area", group.GetStringSlice("areas"))
+	}
+	if len(group.GetStringSlice("aux_outputs")) != 1 {
+		t.Errorf("lobby-group aux_outputs = %v, want the lobby gate", group.GetStringSlice("aux_outputs"))
+	}
+	if len(group.GetStringSlice("area_rights")) != 2 {
+		t.Errorf("lobby-group area_rights = %v, want arm and disarm", group.GetStringSlice("area_rights"))
+	}
+	if _, err := app.FindFirstRecordByData("aux_output", "code", "lobby-gate"); err != nil {
+		t.Errorf("fixture aux output lobby-gate missing: %v", err)
+	}
+}

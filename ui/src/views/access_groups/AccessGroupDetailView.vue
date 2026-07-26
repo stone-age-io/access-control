@@ -5,7 +5,7 @@ import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { policyKey } from '@/utils/policyKey'
-import type { AccessGroup, Role, Portal } from '@/types/pocketbase'
+import type { AccessGroup, Area, AuxOutput, Role, Portal } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import DataField from '@/components/ui/DataField.vue'
@@ -31,11 +31,27 @@ const portals = computed<Portal[]>(() => record.value?.expand?.portals || [])
 const portalLocation = (p: Portal) => p.expand?.location?.code || '—'
 const portalSearch = (p: Portal) => [p.code, p.name, p.expand?.location?.code].filter(Boolean).join(' ')
 
+const areas = computed<Area[]>(() => record.value?.expand?.areas || [])
+const auxOutputs = computed<AuxOutput[]>(() => record.value?.expand?.aux_outputs || [])
+const targetLocation = (t: Area | AuxOutput) => t.expand?.location?.code || '—'
+const targetSearch = (t: Area | AuxOutput) => [t.code, t.name, t.expand?.location?.code].filter(Boolean).join(' ')
+
+const canArm = computed(() => (record.value?.area_rights || []).includes('arm'))
+const canDisarm = computed(() => (record.value?.area_rights || []).includes('disarm'))
+/**
+ * Areas granted with no right: the group grants nothing over them. Called out here
+ * rather than left to be inferred, because it is the one configuration that looks
+ * complete on this page and does nothing at a badge.
+ */
+const rightsMissing = computed(() => areas.value.length > 0 && !canArm.value && !canDisarm.value)
+
 async function load() {
   loading.value = true
   try {
     const [g, r] = await Promise.all([
-      pb.collection('access_groups').getOne<AccessGroup>(recordId, { expand: 'portals.location,schedule' }),
+      pb.collection('access_groups').getOne<AccessGroup>(recordId, {
+        expand: 'portals.location,schedule,areas.location,aux_outputs.location',
+      }),
       pb.collection('roles').getFullList<Role>({ filter: `access_groups ~ "${recordId}"`, sort: 'code' }),
     ])
     record.value = g
@@ -122,6 +138,56 @@ onMounted(load)
         <code class="text-sm font-medium text-primary">{{ p.code }}</code>
         <span class="text-sm opacity-60 truncate flex-1">{{ p.name }}</span>
         <SoftBadge>{{ p.posture || '—' }}</SoftBadge>
+      </template>
+    </RelationList>
+
+    <!-- Areas, with the rights that make them mean something -->
+    <RelationList
+      title="Areas"
+      icon="🛰️"
+      :items="areas"
+      :to="(a) => `/areas/${a.id}`"
+      :group="targetLocation"
+      :search-text="targetSearch"
+      empty="No areas in this group."
+    >
+      <template #actions>
+        <div v-if="areas.length" class="flex gap-1">
+          <SoftBadge :tone="canArm ? 'success' : 'neutral'">
+            {{ canArm ? 'Arm' : 'No arm' }}
+          </SoftBadge>
+          <SoftBadge :tone="canDisarm ? 'warning' : 'neutral'">
+            {{ canDisarm ? 'Disarm' : 'No disarm' }}
+          </SoftBadge>
+        </div>
+      </template>
+      <template #item="{ item: a }">
+        <code class="text-sm font-medium text-primary">{{ a.code }}</code>
+        <span class="text-sm opacity-60 truncate flex-1">{{ a.name }}</span>
+        <SoftBadge>{{ a.arm_override || a.arm || 'disarmed' }}</SoftBadge>
+      </template>
+    </RelationList>
+
+    <div v-if="rightsMissing" class="alert alert-warning py-2 text-sm">
+      <span>
+        This group grants areas but neither arm nor disarm, so nothing can act on them.
+        Edit the group to choose a right.
+      </span>
+    </div>
+
+    <!-- Aux outputs -->
+    <RelationList
+      title="Aux outputs"
+      icon="⚡"
+      :items="auxOutputs"
+      :to="(o) => `/aux-outputs/${o.id}`"
+      :group="targetLocation"
+      :search-text="targetSearch"
+      empty="No aux outputs in this group."
+    >
+      <template #item="{ item: o }">
+        <code class="text-sm font-medium text-primary">{{ o.code }}</code>
+        <span class="text-sm opacity-60 truncate flex-1">{{ o.name }}</span>
       </template>
     </RelationList>
 

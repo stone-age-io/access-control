@@ -62,6 +62,12 @@ export interface Location extends BaseRecord {
   coordinates: GeoPoint
   /** Uploaded floor-plan image filename (UI only; '' = none). */
   floorplan: string
+  /**
+   * Whether badge holders may see this site's floor plan with their own doors on it
+   * (1750000041). Off by default: the pins are scoped to one badge, but the plan is the
+   * whole building, so "may open a door here" does not imply "may see the layout".
+   */
+  badge_floorplan: boolean
   /** Holiday calendar ids this site observes (M:N). Their dates union into the location's holiday set. */
   holiday_calendars: string[]
   expand?: { holiday_calendars?: HolidayCalendar[] }
@@ -190,6 +196,12 @@ export interface Area extends BaseRecord {
   auto_schedule: string
   /** Email opted-in operators (users.notify) when this area raises an intrusion alarm. */
   notify_on_alarm: boolean
+  /**
+   * Whether a badge holder granted this area may arm/disarm it remotely (1750000039).
+   * Their access group still decides WHICH action and WHEN; this decides only whether
+   * it may be done with nobody on site. Control-plane only, never mirrored.
+   */
+  allow_remote_arm: boolean
   expand?: { location?: Location; auto_schedule?: Schedule }
 }
 
@@ -203,18 +215,38 @@ export interface AuxOutput extends BaseRecord {
   relay_index: number
   /** Default momentary-pulse duration (seconds) for the "pulse" action. */
   pulse_seconds: number
+  /**
+   * Whether a badge holder granted this output may pulse it remotely
+   * (1750000039). Control-plane only, never mirrored — it gates a central route, and
+   * the edge has no remote-actuation path. A badge can only ever pulse, never latch.
+   */
+  allow_remote: boolean
   /** {x, y} pixel position on the location's floorplan (UI only; null/absent = not placed). */
   floorplan_position?: { x: number; y: number } | null
   expand?: { location?: Location; controller?: Controller }
 }
 
 /** A set of portals under one schedule (an "access level"). */
+/** Which arm actions a group grants over its areas. Empty grants NEITHER. */
+export type AreaRight = 'arm' | 'disarm'
+
 export interface AccessGroup extends BaseRecord {
   code: string
   name: string
   portals: string[]
   schedule: string
-  expand?: { portals?: Portal[]; schedule?: Schedule }
+  /** Areas this group grants arm/disarm over, gated by area_rights. */
+  areas: string[]
+  /** Aux outputs this group grants (one action: drive it). */
+  aux_outputs: string[]
+  /**
+   * Arm and disarm are separate rights — disarming turns intrusion detection off,
+   * and "may lock up but not silence the building" is a real role. An empty list
+   * grants neither, even when `areas` is non-empty; the server reports that case as
+   * `deny_no_area_right` so a half-filled group is diagnosable rather than silent.
+   */
+  area_rights: AreaRight[]
+  expand?: { portals?: Portal[]; schedule?: Schedule; areas?: Area[]; aux_outputs?: AuxOutput[] }
 }
 
 /** A named bundle of access groups assigned to cardholders. */
@@ -257,8 +289,18 @@ export interface Cardholder extends BaseRecord {
   password_set?: boolean
   /** Set by PocketBase itself on a first successful OTP sign-in. */
   verified?: boolean
+  /**
+   * The `users` record of the same human, when this person also signs in to the console
+   * ('' = not an operator). A pointer, not a merge — it grants nothing in either
+   * direction; it only lets an operator view their own badge (1750000040).
+   *
+   * The relation is on THIS side deliberately: `users` is self-writable (an operator
+   * changes their own password there), so the mirror-image field would let any operator
+   * repoint it at someone else's cardholder and inherit that badge.
+   */
+  operator?: string
 
-  expand?: { roles?: Role[] }
+  expand?: { roles?: Role[]; operator?: User }
 }
 
 /** An opaque string presented at a reader, mapped to one cardholder. */

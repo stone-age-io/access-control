@@ -133,6 +133,8 @@ func NewPolicyStore(bindKV KVBinder, log *logger.Logger, m *metrics.Metrics) *Po
 			Groups:    make(map[string]policy.AccessGroup),
 			Creds:     make(map[string]policy.Credential),
 			Holidays:  make(map[string]policy.HolidaySet),
+			Areas:     make(map[string]policy.Area),
+			Outputs:   make(map[string]policy.Output),
 		},
 		ready: make(chan struct{}),
 	}
@@ -773,8 +775,16 @@ func (s *PolicyStore) apply(key string, value []byte) bool {
 		if !s.unmarshal(key, value, &w) {
 			return false
 		}
+		canArm, canDisarm := policy.ArmRights(w.AreaRights)
 		s.graph.Groups[w.Code] = policy.AccessGroup{
 			Code: w.Code, Portals: toSet(w.Portals), Schedule: w.Schedule,
+			// Area/output grants are authorized centrally today (accessd's badge
+			// routes), so nothing on this box reads these yet. They are mapped anyway
+			// so the edge graph is a faithful copy of the wire: the day a keypad arms
+			// a partition at the reader, policy.DecideArea works here with no wire
+			// change and no risk of an empty set reading as "no grant".
+			Areas: toSet(w.Areas), Outputs: toSet(w.AuxOutputs),
+			CanArm: canArm, CanDisarm: canDisarm,
 		}
 
 	case strings.HasPrefix(key, policykv.PrefixRole):
@@ -825,6 +835,7 @@ func (s *PolicyStore) apply(key string, value []byte) bool {
 			return false
 		}
 		s.auxOutputs[w.Code] = w
+		s.graph.Outputs[w.Code] = policy.Output{Code: w.Code, Location: w.Location}
 
 	case strings.HasPrefix(key, policykv.PrefixArea):
 		var w policykv.Area
@@ -832,6 +843,10 @@ func (s *PolicyStore) apply(key string, value []byte) bool {
 			return false
 		}
 		s.areas[w.Code] = w
+		// The graph copy carries only existence + location (the timezone an area
+		// grant's schedule evaluates in). Arm-state stays in s.areas, where the
+		// AreaManager resolves it — the pure package must not see operational state.
+		s.graph.Areas[w.Code] = policy.Area{Code: w.Code, Location: w.Location}
 
 	default:
 		s.log.Warn("policystore: unknown key prefix, ignoring", "key", key)
@@ -872,9 +887,13 @@ func (s *PolicyStore) remove(key string) {
 	case strings.HasPrefix(key, policykv.PrefixAuxInput):
 		delete(s.auxInputs, strings.TrimPrefix(key, policykv.PrefixAuxInput))
 	case strings.HasPrefix(key, policykv.PrefixAuxOutput):
-		delete(s.auxOutputs, strings.TrimPrefix(key, policykv.PrefixAuxOutput))
+		code := strings.TrimPrefix(key, policykv.PrefixAuxOutput)
+		delete(s.auxOutputs, code)
+		delete(s.graph.Outputs, code)
 	case strings.HasPrefix(key, policykv.PrefixArea):
-		delete(s.areas, strings.TrimPrefix(key, policykv.PrefixArea))
+		code := strings.TrimPrefix(key, policykv.PrefixArea)
+		delete(s.areas, code)
+		delete(s.graph.Areas, code)
 	default:
 		s.log.Warn("policystore: unknown key prefix on delete, ignoring", "key", key)
 		return
