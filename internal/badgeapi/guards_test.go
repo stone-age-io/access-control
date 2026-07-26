@@ -205,3 +205,51 @@ func TestOperatorCanStillManageBadgeFields(t *testing.T) {
 	}
 	scenario.Test(t)
 }
+
+// TestOTPWouldEraseAKnownPassword pins the predicate behind bindOTPPasswordPreservation.
+//
+// The bug it guards against is silent and unrecoverable by the holder: PocketBase
+// randomises an auth record's password when a first OTP sign-in flips `verified`, so an
+// operator-set initial password — the only path that works with no SMTP — is destroyed
+// by the holder choosing the emailed code instead. `password_set` stays true, so the
+// self-service change route then demands a password that no longer exists.
+func TestOTPWouldEraseAKnownPassword(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("NewTestApp: %v", err)
+	}
+	defer app.Cleanup()
+
+	col, err := app.FindCollectionByNameOrId(BadgeCollection)
+	if err != nil {
+		t.Fatalf("badge_users collection: %v", err)
+	}
+
+	cases := []struct {
+		name        string
+		passwordSet bool
+		verified    bool
+		want        bool
+	}{
+		{"operator-set password, not yet verified", true, false, true},
+		{"operator-set password, already verified", true, true, false},
+		{"throwaway password only", false, false, false},
+		{"throwaway password, verified", false, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := core.NewRecord(col)
+			rec.Set("password_set", tc.passwordSet)
+			rec.SetVerified(tc.verified)
+			if got := otpWouldEraseAKnownPassword(rec); got != tc.want {
+				t.Errorf("otpWouldEraseAKnownPassword() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	// A nil record must not panic: the hook runs on request traffic, and an event with
+	// no resolved record is a shape the handler has to tolerate rather than crash on.
+	if otpWouldEraseAKnownPassword(nil) {
+		t.Error("otpWouldEraseAKnownPassword(nil) = true, want false")
+	}
+}
