@@ -92,6 +92,14 @@ func main() {
 	// only fire once serving anyway.
 	changelog.Register(pb, cfg.Accessd.AuditRetentionDays, log)
 
+	// Badge-tier field guard: a badge login may edit its own record (the collection
+	// rule is self-scoped), but a collection rule cannot scope WHICH FIELDS — so
+	// without this a holder could repoint `cardholder` at anyone else and inherit
+	// their doors. Registered here rather than in OnServe because it guards the
+	// COLLECTION API, which is served whether or not the badge routes (and the NATS
+	// resources they need) ever came up.
+	badgeapi.RegisterGuards(pb)
+
 	// Events-projection retention: a daily prune of the rebuildable events read
 	// model (JetStream stays the system of record). Pure PocketBase cron, like the
 	// changelog prune, so it registers here rather than in OnServe. No-op unless
