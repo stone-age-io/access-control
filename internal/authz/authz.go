@@ -8,7 +8,34 @@
 // Superusers (the break-glass account) always pass.
 package authz
 
-import "github.com/pocketbase/pocketbase/core"
+import (
+	"github.com/pocketbase/pocketbase/apis"
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
+)
+
+// OperatorCollections are the auth collections whose records may reach accessd's
+// operator routes: the operator tier plus the break-glass superuser.
+//
+// Both names are load-bearing, in opposite directions:
+//
+//   - apis.RequireAuth() with NO argument admits a record from ANY auth
+//     collection. That was harmless while `users` was the only one, but it widens
+//     silently the moment a second auth tier exists (badge_users, migration
+//     1750000030). /api/simulate is the sharp case — a decision oracle over the
+//     entire policy graph.
+//   - apis.RequireAuth("users") ALONE is also wrong: PocketBase's requireAuth is a
+//     plain collection-name membership test with no superuser exemption, so it
+//     would lock out the break-glass account that RequireCapability deliberately
+//     admits (and that collection rules bypass entirely).
+var OperatorCollections = []string{"users", core.CollectionNameSuperusers}
+
+// RequireOperatorAuth is apis.RequireAuth scoped to OperatorCollections. Prefer it
+// over bare apis.RequireAuth() on every operator route, so the operator/badge
+// boundary is stated in one place rather than re-derived per route.
+func RequireOperatorAuth() *hook.Handler[*core.RequestEvent] {
+	return apis.RequireAuth(OperatorCollections...)
+}
 
 // Capability constants — the values of users.permissions.
 const (

@@ -137,6 +137,13 @@ export interface Portal extends BaseRecord {
   disarm_on_grant: boolean
   /** Email opted-in operators (users.notify) when this portal raises a forced/held-open alarm. */
   notify_on_alarm: boolean
+  /**
+   * Whether a badge holder may open this door remotely from their badge page.
+   * Defaults false: being on someone's badge is necessary but not sufficient, since
+   * "may walk through" and "may open from anywhere with no presence proof" are
+   * different permissions. Checked centrally in accessd, never mirrored to KV.
+   */
+  allow_remote_unlock: boolean
   /** {x, y} pixel position on the location's floorplan (UI only; null/absent = not placed). */
   floorplan_position?: { x: number; y: number } | null
   expand?: { location?: Location; controller?: Controller; auto_schedule?: Schedule; area?: Area }
@@ -213,6 +220,12 @@ export interface Role extends BaseRecord {
   code: string
   name: string
   access_groups: string[]
+  /**
+   * Offer this role in the visitor mint flow. Curating a few reusable roles
+   * ("Lobby + Elevator, business hours") keeps the policy graph the size of the
+   * building rather than the size of its visitor log.
+   */
+  visitor_preset: boolean
   expand?: { access_groups?: AccessGroup[] }
 }
 
@@ -223,6 +236,12 @@ export interface Cardholder extends BaseRecord {
   email: string
   status: CardholderStatus | ''
   roles: string[]
+  /**
+   * Filename of the cardholder's photo, or '' when none. A PROTECTED file field:
+   * build its URL with `useFileUrl().url(record, record.photo, '100x100')`, never
+   * `pb.files.getURL()` directly — without a file token the request 403s.
+   */
+  photo: string
   expand?: { roles?: Role[] }
 }
 

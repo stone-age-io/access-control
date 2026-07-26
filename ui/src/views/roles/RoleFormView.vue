@@ -22,6 +22,7 @@ const form = ref({
   code: '',
   name: '',
   access_groups: [] as string[],
+  visitor_preset: false,
 })
 
 const groups = ref<AccessGroup[]>([])
@@ -49,6 +50,7 @@ async function loadRecord() {
       code: r.code || '',
       name: r.name || '',
       access_groups: [...(r.access_groups || [])],
+      visitor_preset: !!r.visitor_preset,
     }
     markClean()
   } catch (err: any) {
@@ -77,6 +79,7 @@ async function handleSubmit() {
       code: form.value.code.trim(),
       name: form.value.name.trim(),
       access_groups: form.value.access_groups,
+      visitor_preset: form.value.visitor_preset,
     }
     if (isEdit.value) {
       await pb.collection('roles').update(recordId!, data)
@@ -121,6 +124,10 @@ onMounted(async () => {
           </FormField>
           <FormField label="Name">
             <input v-model="form.name" type="text" placeholder="Staff" class="input input-bordered" />
+          </FormField>
+          <FormField inline label="Offer to visitors"
+                     hint="Make this role selectable when minting a visitor pass. Curate a few reusable presets (e.g. 'Lobby + Elevator, business hours') rather than choosing doors per visitor.">
+            <input v-model="form.visitor_preset" type="checkbox" class="toggle toggle-primary" />
           </FormField>
         </div>
       </BaseCard>

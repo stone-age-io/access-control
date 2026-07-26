@@ -205,6 +205,32 @@ morning, re-arms the next window — with no operator action. An area with **no*
 `autoSchedule` has no scheduled arm to revert to, so its disarm override stays until an
 operator clears it (`arm-clear`).
 
+**Badge remote unlock adds no wire surface.** A badge holder opening a door from
+their badge page (`POST /api/badge/unlock/{portalId}`, `internal/badgeapi`) publishes
+the **existing** `cmd.grant` — no new subject, no new KV key, no controller change.
+From the edge's point of view it is indistinguishable from an operator grant, which
+is exactly right: the physical effect is the same one-shot strike pulse. Two things
+make it safe on the accessd side rather than the edge side:
+
+- **Authorization is `policy.Decide`**, run centrally over a live snapshot of
+  `ACC_POLICY` (`internal/policysnapshot`, the same package the access simulator
+  uses). So a remote unlock can never exceed what that person's credential opens in
+  person, and schedules, holidays, validity bounds and the posture gate all apply
+  with no second implementation to drift.
+- **`portals.allow_remote_unlock`** (default false) is a per-door opt-in, checked
+  before the graph is consulted. It is control-plane only and deliberately **not
+  mirrored** to KV — the decision happens before publishing, so the edge never needs
+  to know the flag exists.
+
+The published `actor` is `badge:<cardholderId>` rather than an operator email, so the
+audit trail attributes the person. Note the grant carries no `cred`, so — like an
+operator door-pop — a badge remote unlock **cannot** trigger entry-disarm.
+
+A badge action never publishes to `.tap`. `Tap.Source` exists so a physical read is
+distinguishable from a synthesized one; a phone-initiated open is a command, and
+recording it as a credential presentation would make the audit trail assert something
+untrue.
+
 Each input's **contact sense** is configurable per install (`dpsContact`/
 `rexContact`/`aux_input.contact`, see Policy KV below): a normally-open vs
 normally-closed contact is folded onto the board's electrical polarity so "active"

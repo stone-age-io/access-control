@@ -5,6 +5,7 @@ import { watchDebounced } from '@vueuse/core'
 import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import { useFileUrl } from '@/composables/useFileUrl'
 import { pb } from '@/utils/pb'
 import type { Cardholder, Role } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
@@ -18,6 +19,8 @@ import Avatar from '@/components/ui/Avatar.vue'
 const router = useRouter()
 const toast = useToast()
 const { confirm } = useConfirm()
+// cardholders.photo is a protected file — its URL needs a session file token.
+const { url: fileUrl } = useFileUrl()
 
 const { items: cardholders, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
   usePagination<Cardholder>('cardholders', 50)
@@ -101,13 +104,13 @@ onMounted(reload)
       <ResponsiveList :items="cardholders" :columns="columns" :loading="loading" @row-click="(c) => router.push(`/cardholders/${c.id}`)">
         <template #cell-name="{ item }">
           <div class="flex items-center gap-2.5">
-            <Avatar :name="item.name" :seed="item.id" />
+            <Avatar :name="item.name" :seed="item.id" :src="fileUrl(item, item.photo, '100x100')" />
             <span class="font-medium">{{ item.name || 'Unnamed' }}</span>
           </div>
         </template>
         <template #card-name="{ item }">
           <div class="flex items-center gap-2 min-w-0">
-            <Avatar :name="item.name" :seed="item.id" size="xs" />
+            <Avatar :name="item.name" :seed="item.id" size="xs" :src="fileUrl(item, item.photo, '100x100')" />
             <span class="text-sm font-bold text-primary truncate">{{ item.name || 'Unnamed' }}</span>
           </div>
         </template>

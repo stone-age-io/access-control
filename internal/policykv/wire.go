@@ -8,6 +8,24 @@
 // and self-contained.
 package policykv
 
+// CredentialValuePattern is the character set a credential value may use, as a Go
+// regexp. A credential is stored at KV key "cred.<value>", so the value must keep
+// that key inside the charset NATS JetStream accepts (jetstream.keyValid:
+// `^[-/_=.a-zA-Z0-9]+$`, and no leading or trailing '.'). The trailing-dot rule is
+// folded in by requiring a non-dot final character; a leading dot cannot matter
+// because the "cred." prefix always precedes it.
+//
+// Unlike a location/portal code this is NOT a subject-token restriction — a
+// credential value never appears in a subject, only in a message body — so '.' is
+// allowed inside the value.
+//
+// It is the single source of truth for two paired checks: mirror.validKey (which
+// keeps a malformed value from reaching the KV Put) and the `credentials.value`
+// field Pattern (which rejects it at the API boundary, where the operator can see
+// the error). Without the second, the failure is invisible: the record saves, the
+// UI shows an active credential, and it silently never reaches a controller.
+const CredentialValuePattern = `^[-/_=.a-zA-Z0-9]*[-/_=a-zA-Z0-9]$`
+
 // Key prefixes. One KV key per record: "<prefix><natural-key>", e.g.
 // "cred.CARD-001", "user.<pbid>", "portal.lobby-main".
 const (

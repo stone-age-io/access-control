@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/stone-age-io/access-control/internal/authz"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/policy"
 	"github.com/stone-age-io/access-control/internal/policysnapshot"
@@ -34,9 +34,16 @@ type handler struct {
 }
 
 // Register wires POST /api/simulate onto the serve event's router.
+//
+// Scoped to the operator collections, NOT bare apis.RequireAuth(): bare
+// RequireAuth admits an authenticated record from any auth collection, and this
+// route is a decision oracle over the entire policy graph — it answers "would this
+// credential open this portal" for any credential and any portal. Exposing it to
+// the badge tier (migration 1750000030) would let a visitor enumerate the whole
+// graph door-by-door, which is strictly worse than reading the collections.
 func Register(se *core.ServeEvent, kv jetstream.KeyValue, log *logger.Logger) {
 	h := &handler{kv: kv, log: log.With("component", "simulateapi")}
-	se.Router.POST("/api/simulate", h.simulate).Bind(apis.RequireAuth())
+	se.Router.POST("/api/simulate", h.simulate).Bind(authz.RequireOperatorAuth())
 }
 
 type request struct {
@@ -54,7 +61,7 @@ func (h *handler) simulate(e *core.RequestEvent) error {
 
 	ctx, cancel := context.WithTimeout(e.Request.Context(), kvSnapshotTimeout)
 	defer cancel()
-	entries, err := snapshotKV(ctx, h.kv)
+	entries, err := policysnapshot.SnapshotKV(ctx, h.kv)
 	if err != nil {
 		return e.InternalServerError("failed to read policy", err)
 	}
@@ -88,39 +95,6 @@ func evaluate(entries map[string][]byte, req request, now time.Time) (policysnap
 		atUTC = t.UTC()
 	}
 	return policysnapshot.Build(entries).Simulate(req.Credential, req.Portal, atUTC, req.Posture), nil
-}
-
-// snapshotKV reads the current value of every key in the bucket via a one-shot
-// WatchAll drain: WatchAll re-delivers each key's latest value, then a nil sentinel
-// marks "all current keys delivered" — exactly the snapshot the controller's
-// PolicyStore syncs on boot, without an ongoing watch.
-func snapshotKV(ctx context.Context, kv jetstream.KeyValue) (map[string][]byte, error) {
-	w, err := kv.WatchAll(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = w.Stop() }()
-
-	out := make(map[string][]byte)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case entry, ok := <-w.Updates():
-			if !ok {
-				return out, nil
-			}
-			if entry == nil {
-				return out, nil // initial sync complete
-			}
-			switch entry.Operation() {
-			case jetstream.KeyValuePut:
-				out[entry.Key()] = entry.Value()
-			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
-				delete(out, entry.Key())
-			}
-		}
-	}
 }
 
 // badInput is a sentinel for a 400 (vs. a 500): a client error carrying the message.

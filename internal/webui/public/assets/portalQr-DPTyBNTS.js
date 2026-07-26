@@ -1,0 +1,1 @@
+var e=`portal:`;function t(e){let t=(e||``).trim();return t.startsWith(`portal:`)&&t.slice(7).trim()||null}export{t as n,e as t};

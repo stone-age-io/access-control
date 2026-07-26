@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useBadgeAuthStore } from '@/stores/badgeAuth'
 import { useToast } from '@/composables/useToast'
 import MainLayout from '@/components/layout/MainLayout.vue'
 
@@ -18,6 +19,25 @@ const routes: RouteRecordRaw[] = [
     name: 'Login',
     component: () => import('@/views/auth/LoginView.vue'),
     meta: { requiresAuth: false, title: 'Sign in' },
+  },
+
+  // --- Badge tier (cardholders + visitors, NOT operators) ---
+  // Its own routes, its own layout (no operator chrome), its own auth store and
+  // PocketBase client. `badge: true` takes them out of the operator guard entirely:
+  // a badge holder is not a half-authenticated operator, and must never be bounced
+  // to /login. Lazy-loaded, so a visitor's phone never downloads the operator
+  // console.
+  {
+    path: '/badge/login',
+    name: 'BadgeLogin',
+    component: () => import('@/views/badge/BadgeLoginView.vue'),
+    meta: { requiresAuth: false, badge: true, title: 'Badge sign-in' },
+  },
+  {
+    path: '/badge',
+    name: 'Badge',
+    component: () => import('@/views/badge/BadgeView.vue'),
+    meta: { requiresAuth: false, badge: true, badgeAuth: true, title: 'My badge' },
   },
   {
     path: '/',
@@ -57,6 +77,11 @@ const routes: RouteRecordRaw[] = [
       // Portals
       { path: 'portals', name: 'Portals', component: () => import('@/views/portals/PortalListView.vue'), meta: { title: 'Portals' } },
       { path: 'portals/new', name: 'PortalNew', component: () => import('@/views/portals/PortalFormView.vue'), meta: { title: 'New Portal', capability: TOPOLOGY } },
+      // Static segments before the :id route so a placard/scan path is never matched
+      // as a portal id. (Vue Router ranks static above dynamic anyway; the ordering
+      // makes the intent explicit.)
+      { path: 'portals/placards', name: 'PortalPlacards', component: () => import('@/views/portals/PortalPlacardView.vue'), meta: { title: 'Door Placards' } },
+      { path: 'portals/scan', name: 'PortalScan', component: () => import('@/views/portals/MobileGrantView.vue'), meta: { title: 'Scan to Unlock' } },
       { path: 'portals/:id', name: 'Portal', component: () => import('@/views/portals/PortalDetailView.vue'), meta: { title: 'Portal' } },
       { path: 'portals/:id/edit', name: 'PortalEdit', component: () => import('@/views/portals/PortalFormView.vue'), meta: { title: 'Edit Portal', capability: TOPOLOGY } },
 
@@ -102,6 +127,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'cardholders/:id', name: 'Cardholder', component: () => import('@/views/cardholders/CardholderDetailView.vue'), meta: { title: 'Cardholder' } },
       { path: 'cardholders/:id/edit', name: 'CardholderEdit', component: () => import('@/views/cardholders/CardholderFormView.vue'), meta: { title: 'Edit Cardholder', capability: ENROLL } },
 
+      // Visitors (badge tier, operator side): time-bound passes for guests
+      { path: 'visitors', name: 'Visitors', component: () => import('@/views/visitors/VisitorListView.vue'), meta: { title: 'Visitors' } },
+      { path: 'visitors/new', name: 'VisitorNew', component: () => import('@/views/visitors/VisitorMintView.vue'), meta: { title: 'New Visitor Pass', capability: ENROLL } },
+
       // Credentials (a credential belongs to one cardholder)
       { path: 'credentials', name: 'Credentials', component: () => import('@/views/credentials/CredentialListView.vue'), meta: { title: 'Credentials' } },
       { path: 'credentials/new', name: 'CredentialNew', component: () => import('@/views/credentials/CredentialFormView.vue'), meta: { title: 'New Credential', capability: ENROLL } },
@@ -139,6 +168,24 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from, next) => {
+  // Badge routes are guarded by the BADGE session, never the operator one. Handled
+  // first and returned from, so no operator rule below can redirect a badge holder to
+  // the operator login (or vice versa) — the two tiers share a browser but nothing
+  // else.
+  if (to.meta.badge) {
+    const badgeAuth = useBadgeAuthStore()
+    if (to.meta.badgeAuth && !badgeAuth.isAuthenticated) {
+      next('/badge/login')
+      return
+    }
+    if (to.path === '/badge/login' && badgeAuth.isAuthenticated) {
+      next('/badge')
+      return
+    }
+    next()
+    return
+  }
+
   const authStore = useAuthStore()
   if (to.meta.requiresAuth !== false && !authStore.isAuthenticated) {
     next('/login')

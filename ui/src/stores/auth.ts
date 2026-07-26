@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { pb } from '@/utils/pb'
+import { clearFileToken } from '@/composables/useFileUrl'
 
 /**
  * Auth store — operator sign-in for the management UI.
@@ -34,6 +35,9 @@ export const useAuthStore = defineStore('auth', () => {
   async function logout() {
     pb.authStore.clear()
     user.value = null
+    // Protected-file tokens are bound to the session that minted them, so a stale
+    // one would 403 for whoever signs in next in this tab.
+    clearFileToken()
   }
 
   /**

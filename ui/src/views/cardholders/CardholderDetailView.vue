@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import { useFileUrl } from '@/composables/useFileUrl'
 import { policyKey } from '@/utils/policyKey'
 import type { Cardholder, Credential, Role, AccessGroup, Portal } from '@/types/pocketbase'
 import DetailLayout from '@/components/ui/DetailLayout.vue'
@@ -19,6 +20,8 @@ const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 const { confirm } = useConfirm()
+// cardholders.photo is a protected file — its URL needs a session file token.
+const { url: fileUrl } = useFileUrl()
 
 const recordId = route.params.id as string
 const record = ref<Cardholder | null>(null)
@@ -123,7 +126,12 @@ onMounted(load)
     <!-- Summary -->
     <BaseCard>
       <div class="flex items-center gap-3 mb-5">
-        <Avatar :name="record.name || record.email" :seed="record.id" size="md" />
+        <Avatar
+          :name="record.name || record.email"
+          :seed="record.id"
+          size="md"
+          :src="fileUrl(record, record.photo, '400x400')"
+        />
         <div class="min-w-0">
           <div class="font-bold truncate">{{ record.name || 'Unnamed' }}</div>
           <div class="text-sm text-base-content/60 truncate">{{ record.email || '—' }}</div>

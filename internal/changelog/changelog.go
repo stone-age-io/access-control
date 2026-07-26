@@ -33,6 +33,10 @@ var audited = []string{
 	"cardholders", "credentials", "holidays",
 	"locations", "schedules", "controllers", "portals",
 	"access_groups", "roles", "aux_input", "aux_output", "users",
+	// badge_users is an auth tier: minting a badge login (and especially a visitor
+	// one) is a control-plane grant of access to a person, so it belongs in the
+	// operator change log alongside credentials.
+	"badge_users",
 }
 
 type recorder struct {
