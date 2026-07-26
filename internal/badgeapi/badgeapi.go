@@ -1,13 +1,18 @@
 // Package badgeapi serves the BADGE TIER: the routes a cardholder or visitor signed
 // into the `cardholders` auth collection may call.
 //
-//	GET  /api/badge/me                 this person's badge — photo, QR, doors
-//	POST /api/badge/unlock/{portalId}  remote unlock, authorized by policy.Decide
-//	POST /api/badge/password           set or change one's own password
+//	GET  /api/badge/me                     this person's badge — photo, QR, what it opens
+//	POST /api/badge/unlock/{portalId}      remote unlock, authorized by policy.Decide
+//	POST /api/badge/areas/{id}/arm         arm an area, authorized by policy.DecideArea
+//	POST /api/badge/areas/{id}/disarm      disarm an area, same decider
+//	POST /api/badge/outputs/{id}/pulse     drive an aux output, policy.DecideOutput
+//	POST /api/badge/password               set or change one's own password
 //
-// All three are bound to `cardholders` alone. They are NOT operator routes and share
+// All of them are bound to `cardholders` alone. They are NOT operator routes and share
 // no authorization with internal/commandapi: a cardholder has no `permissions` field,
-// so capability checks are meaningless here.
+// so capability checks are meaningless here. The area and output routes live in
+// areas.go; see that file for why arming is a durable record write and an output is a
+// fire-and-forget command.
 //
 // The package also serves the OPERATOR routes that mint and end a visit
 // (visitors.go), gated the opposite way — operator collection plus the `enroll`
@@ -100,6 +105,7 @@ import (
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
+	"github.com/stone-age-io/access-control/internal/authz"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/policysnapshot"
 	"github.com/stone-age-io/access-control/internal/subjects"
@@ -163,9 +169,21 @@ type handler struct {
 	cachedAt time.Time
 }
 
-// Register wires the badge routes. apis.RequireAuth names ONLY `cardholders`: an
-// operator token must not reach these (an operator is not a person with a badge), and
-// a bare RequireAuth() would admit any auth collection.
+// meCollections are the auth collections that may read a badge: the badge tier itself,
+// plus the operator tier and the break-glass superuser reading their OWN badge through
+// cardholders.operator (migration 1750000040).
+//
+// Naming them explicitly matters in both directions, the same way authz.OperatorCollections
+// does: a bare apis.RequireAuth() would admit any auth collection, and omitting
+// superusers would lock the break-glass account out of a route its own operators can use.
+var meCollections = append([]string{BadgeCollection}, authz.OperatorCollections...)
+
+// Register wires the badge routes. Every route that actuates something names ONLY
+// `cardholders`: an operator who wants to open a door uses the operator command routes
+// with their `command` capability, where it is audited as an operator action. Reading a
+// badge is the sole exception — see meCollections.
+//
+// A bare RequireAuth() would admit any auth collection, which is why none of these use it.
 func Register(se *core.ServeEvent, nc *nats.Conn, kv jetstream.KeyValue, subj subjects.Subjects, log *logger.Logger) {
 	h := &handler{
 		app:  se.App,
@@ -174,8 +192,15 @@ func Register(se *core.ServeEvent, nc *nats.Conn, kv jetstream.KeyValue, subj su
 		subj: subj,
 		log:  log.With("component", "badgeapi"),
 	}
-	se.Router.GET("/api/badge/me", h.me).Bind(apis.RequireAuth(BadgeCollection))
+	// /me is the ONE badge route an operator token may call, resolved through
+	// cardholders.operator — see subjectCardholder. Every route that ACTUATES stays
+	// bound to `cardholders` alone.
+	se.Router.GET("/api/badge/me", h.me).Bind(apis.RequireAuth(meCollections...))
 	se.Router.POST("/api/badge/unlock/{portalId}", h.unlock).Bind(apis.RequireAuth(BadgeCollection))
+	// Arm/disarm an area, drive an aux output. See areas.go.
+	h.registerAreaRoutes(se)
+	// The holder's own things placed on a site's floor plan. See live.go.
+	h.registerLiveRoute(se)
 	// The OPERATOR routes: mint a visitor, end a visit. Gated by the operator
 	// collection + `enroll`, never by a badge token. See visitors.go.
 	h.registerVisitorRoutes(se)
@@ -215,6 +240,10 @@ type meResponse struct {
 	PassState string `json:"passState"`
 
 	Portals []badgePortal `json:"portals"`
+	// The non-door targets this badge grants (migration 1750000037). Both are empty
+	// for the overwhelming majority of badges, which grant doors only.
+	Areas   []badgeArea   `json:"areas"`
+	Outputs []badgeOutput `json:"outputs"`
 }
 
 // badgePortal is one door on this badge. `id` is the PocketBase record id (what the
@@ -226,8 +255,47 @@ type badgePortal struct {
 	RemoteUnlock bool   `json:"remoteUnlock"`
 }
 
+// subjectCardholder resolves whose badge this request is about.
+//
+// For a badge token it is the authenticated record itself — the holder IS the
+// cardholder, which is the whole point of the collapse. For an operator token it is the
+// cardholder whose `operator` relation points back at them (migration 1750000040), so
+// an operator who also carries a card can see their own badge without signing in twice.
+//
+// The second case is the ONLY place the two tiers meet, and it is deliberately
+// one-directional and read-only:
+//
+//   - It resolves an operator to their own cardholder, never the reverse, and never to
+//     someone else's: the link is a single indexed lookup on a field only an `enroll`
+//     holder can write, and it is uniquely indexed so two cardholders cannot claim one
+//     operator.
+//   - Only GET /api/badge/me uses it. An operator token cannot unlock, arm, disarm, or
+//     pulse through the badge tier — those routes name `cardholders` alone. Operators
+//     already have the command routes for that, gated by `command` and audited as
+//     operator actions; letting the same human act through two paths would make the
+//     audit trail ambiguous about which authority they used.
+//
+// An operator with no linked cardholder gets (nil, false), which the caller turns into
+// a 404 — the honest answer to "show me my badge" when there is no badge.
+func (h *handler) subjectCardholder(e *core.RequestEvent) (*core.Record, bool) {
+	if e.Auth == nil {
+		return nil, false
+	}
+	if e.Auth.Collection().Name == BadgeCollection {
+		return e.Auth, true
+	}
+	rec, err := h.app.FindFirstRecordByData(BadgeCollection, "operator", e.Auth.Id)
+	if err != nil {
+		return nil, false
+	}
+	return rec, true
+}
+
 func (h *handler) me(e *core.RequestEvent) error {
-	cardholder := e.Auth
+	cardholder, ok := h.subjectCardholder(e)
+	if !ok {
+		return e.NotFoundError("no badge is linked to this account", nil)
+	}
 
 	kind := cardholder.GetString("kind")
 	creds, err := h.credentialsFor(cardholder.Id)
@@ -261,7 +329,7 @@ func (h *handler) me(e *core.RequestEvent) error {
 		resp.QR, resp.QRSecret = "", false
 	}
 
-	// Door list, from the same graph the decision uses.
+	// Everything this badge can act on, from the same graph the decisions use.
 	snap, err := h.snapshot(e.Request.Context())
 	if err != nil {
 		// Fail soft: the identity half of the badge is still useful and correct
@@ -270,7 +338,10 @@ func (h *handler) me(e *core.RequestEvent) error {
 		h.log.Error("badge me: policy snapshot unavailable", "cardholder", cardholder.Id, "error", err)
 		return e.JSON(http.StatusOK, resp)
 	}
+	now := time.Now().UTC()
 	resp.Portals = h.portalsForBadge(snap, cardholder.Id)
+	resp.Areas = h.areasForBadge(snap, cardholder.Id, now)
+	resp.Outputs = h.outputsForBadge(snap, cardholder.Id)
 	return e.JSON(http.StatusOK, resp)
 }
 
@@ -294,12 +365,7 @@ func (h *handler) portalsForBadge(snap *policysnapshot.Snapshot, cardholderID st
 		if p.Name == "" {
 			p.Name = code // never render a nameless door
 		}
-		if loc, err := h.app.FindRecordById("locations", rec.GetString("location")); err == nil {
-			p.Location = loc.GetString("name")
-			if p.Location == "" {
-				p.Location = loc.GetString("code")
-			}
-		}
+		p.Location = h.locationName(rec.GetString("location"))
 		out = append(out, p)
 	}
 	return out
@@ -552,18 +618,33 @@ func dateRFC3339(r *core.Record, field string) string {
 //
 // The allowed path is also audited downstream by the controller's event, but the
 // DENIED path never reaches the controller — without this a badge holder could
-// probe every door in the building and leave no trace. Fail-safe: an audit failure
-// is logged, never propagated, since the unlock decision has already been made.
+// probe every door in the building and leave no trace.
 func (h *handler) audit(e *core.RequestEvent, cardholderID, portalCode string, allowed bool, reason string) {
+	h.auditAction(e, cardholderID, "portals", portalCode, "badge_remote_unlock", allowed, reason)
+}
+
+// auditAction writes one audit_logs row for a badge action against a target record —
+// an unlock, an arm, a disarm, an output pulse. Every attempt is recorded, allowed or
+// not, for the reason above: a denial never reaches a controller, so this is the only
+// trace it leaves, and probing is exactly what wants a trace.
+//
+// The target is named by its stable CODE rather than its record id, so a row stays
+// readable after the record is renamed or deleted — the same choice the changelog
+// makes. event_type is "update" (an action on a thing, not a record mutation); the
+// route path in request_url plus `action` in the payload say which action it was.
+//
+// Fail-safe: the decision has already been made and acted on by the time this runs, so
+// an audit failure is logged, never propagated.
+func (h *handler) auditAction(e *core.RequestEvent, cardholderID, collectionName, targetCode, action string, allowed bool, reason string) {
 	col, err := h.app.FindCollectionByNameOrId("audit_logs")
 	if err != nil {
 		h.log.Error("audit sink unavailable", "error", err)
 		return
 	}
 	rec := core.NewRecord(col)
-	rec.Set("event_type", "update") // an action on a portal, not a record mutation
-	rec.Set("collection_name", "portals")
-	rec.Set("record_id", portalCode)
+	rec.Set("event_type", "update")
+	rec.Set("collection_name", collectionName)
+	rec.Set("record_id", targetCode)
 	if e.Auth != nil {
 		rec.Set("actor_id", e.Auth.Id)
 		rec.Set("actor_email", e.Auth.Email())
@@ -576,14 +657,14 @@ func (h *handler) audit(e *core.RequestEvent, cardholderID, portalCode string, a
 	}
 	rec.Set("timestamp", types.NowDateTime())
 	rec.Set("after", map[string]any{
-		"action":     "badge_remote_unlock",
+		"action":     action,
 		"cardholder": cardholderID,
-		"portal":     portalCode,
+		"target":     targetCode,
 		"allowed":    allowed,
 		"reason":     reason,
 	})
 	if err := h.app.Save(rec); err != nil {
-		h.log.Error("failed to write badge audit row", "portal", portalCode, "error", err)
+		h.log.Error("failed to write badge audit row", "target", targetCode, "error", err)
 	}
 }
 

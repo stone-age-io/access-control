@@ -189,6 +189,11 @@ onBeforeUnmount(() => {
             {{ record.notify_on_alarm ? 'emails opted-in operators' : 'off' }}
           </SoftBadge>
         </DataField>
+        <DataField label="Remote arm/disarm">
+          <SoftBadge :tone="record.allow_remote_arm ? 'warning' : 'neutral'" dot>
+            {{ record.allow_remote_arm ? 'badge holders may, off site' : 'on site only' }}
+          </SoftBadge>
+        </DataField>
         <DataField label="Auto schedule">
           <router-link v-if="record.expand?.auto_schedule" :to="`/schedules/${record.expand.auto_schedule.id}`" class="link link-primary">
             {{ record.expand.auto_schedule.code }}
