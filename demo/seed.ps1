@@ -150,7 +150,7 @@ Write-Host "`n== Aux inputs / outputs =="
 New-Rec aux_input  @{ code='dc-motion-1';  name='DC Warehouse Motion'; location=$ID['dc']; controller=$ID['ctrl-dc-1']; input_index=1; point_type='intrusion';  area=$ID['dc-warehouse']; contact='' } | Out-Null
 New-Rec aux_input  @{ code='dc-glassbreak';name='DC Glassbreak';       location=$ID['dc']; controller=$ID['ctrl-dc-1']; input_index=2; point_type='tamper_24h'; area=$ID['dc-warehouse']; contact='' } | Out-Null
 New-Rec aux_output @{ code='dc-siren';        name='DC Warehouse Siren'; location=$ID['dc'];          controller=$ID['ctrl-dc-1'];   relay_index=6; pulse_seconds=30 } | Out-Null
-New-Rec aux_output @{ code='east-gate-strike';name='East Gate Strike';   location=$ID['east-office']; controller=$ID['ctrl-east-1']; relay_index=5; pulse_seconds=4  } | Out-Null
+$ID['east-gate-strike'] = New-Rec aux_output @{ code='east-gate-strike';name='East Gate Strike';   location=$ID['east-office']; controller=$ID['ctrl-east-1']; relay_index=5; pulse_seconds=4  }
 
 Write-Host "`n== Access groups =="
 $allPortals = @('lobby-main','lobby-public','hq-server-room','hq-east-stair','dc-main-entrance','dc-dock-1','dc-dock-2','dc-gate','dc-turnstile','east-lobby','east-elevator','east-garage','east-server-room') | ForEach-Object { $ID[$_] } | Where-Object { $_ }
@@ -162,15 +162,23 @@ $cleaning    = @('lobby-main','hq-east-stair','east-lobby') | ForEach-Object { $
 
 $ID['ag-all-247']    = New-Rec access_groups @{ code='ag-all-247';    name='All Doors 24/7';            schedule=$ID['always'];          portals=$allPortals }
 $ID['ag-office']     = New-Rec access_groups @{ code='ag-office';     name='Office Doors (Office Hours)';schedule=$ID['office-hours'];    portals=$officeDoors }
-$ID['ag-warehouse']  = New-Rec access_groups @{ code='ag-warehouse';  name='Warehouse Access';          schedule=$ID['extended-hours'];  portals=$warehouse }
+# Warehouse Access carries the AREA as well as the doors, with both rights: the crew who
+# work in there are the people who disarm it on the way in and arm it on the way out.
+$ID['ag-warehouse']  = New-Rec access_groups @{ code='ag-warehouse';  name='Warehouse Access';          schedule=$ID['extended-hours'];  portals=$warehouse; areas=@($ID['dc-warehouse']); area_rights=@('arm','disarm') }
 $ID['ag-server']     = New-Rec access_groups @{ code='ag-server';     name='Server Rooms';              schedule=$ID['always'];          portals=$serverRooms }
 $ID['ag-parking']    = New-Rec access_groups @{ code='ag-parking';    name='Parking & Gates';           schedule=$ID['extended-hours'];  portals=$gates }
-$ID['ag-cleaning']   = New-Rec access_groups @{ code='ag-cleaning';   name='Cleaning Access';           schedule=$ID['cleaning-crew'];   portals=$cleaning }
+# Cleaning Access is the asymmetry worth demonstrating: the crew may ARM the warehouse
+# when they finish, and may NOT disarm it. "May lock up but not silence the building" is
+# why arm and disarm are separate rights rather than one boolean.
+$ID['ag-cleaning']   = New-Rec access_groups @{ code='ag-cleaning';   name='Cleaning Access';           schedule=$ID['cleaning-crew'];   portals=$cleaning; areas=@($ID['dc-warehouse']); area_rights=@('arm') }
+# Gates & relays: the vehicle-gate strike as an aux output on a badge, which is the
+# ordinary case for this feature (let a delivery in without opening a door).
+$ID['ag-relays']     = New-Rec access_groups @{ code='ag-relays';     name='Gate Relays';               schedule=$ID['extended-hours'];  aux_outputs=@($ID['east-gate-strike']) }
 
 Write-Host "`n== Roles =="
 $ID['management']     = New-Rec roles @{ code='management';     name='Management';      access_groups=@($ID['ag-all-247']) }
-$ID['security']       = New-Rec roles @{ code='security';       name='Security';        access_groups=@($ID['ag-all-247']) }
-$ID['facilities']     = New-Rec roles @{ code='facilities';     name='Facilities';      access_groups=@($ID['ag-office'], $ID['ag-parking']) }
+$ID['security']       = New-Rec roles @{ code='security';       name='Security';        access_groups=@($ID['ag-all-247'], $ID['ag-warehouse'], $ID['ag-relays']) }
+$ID['facilities']     = New-Rec roles @{ code='facilities';     name='Facilities';      access_groups=@($ID['ag-office'], $ID['ag-parking'], $ID['ag-relays']) }
 $ID['it']             = New-Rec roles @{ code='it';             name='IT';              access_groups=@($ID['ag-office'], $ID['ag-server']) }
 $ID['warehouse-staff']= New-Rec roles @{ code='warehouse-staff';name='Warehouse Staff'; access_groups=@($ID['ag-warehouse'], $ID['ag-parking']) }
 # visitor_preset marks a role as offerable in the visitor mint flow. Without at least
@@ -322,6 +330,33 @@ Write-Host "`n== Remote unlock (badge page) =="
 Set-Rec portals $ID['east-lobby']     @{ allow_remote_unlock=$true } 'east-lobby      allow_remote_unlock=true'
 Set-Rec portals $ID['hq-east-stair']  @{ allow_remote_unlock=$true } 'hq-east-stair   allow_remote_unlock=true'
 
+# The same split for the other two badge actions. Each is per-record and defaults FALSE:
+# an access group deciding WHO may arm is separate from whether it may be done with
+# nobody on site. Both are opted in here so the badge Access tab has working buttons.
+Set-Rec areas      $ID['dc-warehouse']     @{ allow_remote_arm=$true } 'dc-warehouse    allow_remote_arm=true'
+Set-Rec aux_output $ID['east-gate-strike'] @{ allow_remote=$true }     'east-gate-strike allow_remote=true'
+
+# The floor plan on badges: on for the East office only, so the demo shows both halves —
+# a site where holders get a plan with their own doors pinned, and sites where they get
+# the list. Needs a floorplan image uploaded to the location to actually render.
+Set-Rec locations  $ID['east-office'] @{ badge_floorplan=$true } 'east-office     badge_floorplan=true'
+
+Write-Host "`n== Operator's own badge =="
+# One human, two records: the console account and the cardholder. Linking them lets that
+# operator view their OWN badge from the console's profile menu without signing in twice.
+# It grants nothing in either direction — a pointer, not a merge.
+#
+# The relation lives on the CARDHOLDER because the users collection is self-writable (an
+# operator changes their own password there), so the mirror-image field would let any
+# operator repoint it and inherit someone else's badge. Uses the fixture's admin account,
+# which is the only operator a fresh install has.
+$adminId = Get-Id users email 'admin@local.dev'
+if ($adminId -and $ID['ch:sarah.chen@stoneage.example']) {
+  Set-Rec cardholders $ID['ch:sarah.chen@stoneage.example'] @{ operator=$adminId } 'Sarah Chen      operator=admin@local.dev'
+} else {
+  Write-Host '  = no admin@local.dev operator found; skipping the badge link'
+}
+
 Write-Host "`n== Events (recent activity + unacknowledged alarms) =="
 $evtSeeded = Get-Id events credential 'CARD-1001'
 if ($evtSeeded) {
@@ -370,3 +405,4 @@ Write-Host  "  visitor  dana.whitfield@acme.example   -> emailed one-time code (
 Write-Host  "  fixture  alice@example.com            /  changeme123"
 Write-Host ""
 Write-Host "Operator console (http://127.0.0.1:8090/login):  admin@local.dev / changeme123"
+Write-Host "  That account is linked to Sarah Chen's cardholder, so 'My badge' in the profile menu works."

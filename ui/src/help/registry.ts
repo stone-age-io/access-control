@@ -69,6 +69,7 @@ const TOPICS: Record<string, HelpTopic> = {
     sections: [
       { body: 'A location is a site or building. It carries the timezone used to evaluate schedule windows and scopes a controller’s command and fire-alarm subscriptions.' },
       { heading: 'Why it matters', body: 'Schedule windows (and the holidays they observe) are evaluated in the location’s timezone, so set it correctly before relying on time-based access.' },
+      { heading: 'Floor plan on badges', body: 'Off by default. When on, a badge holder sees this site’s plan with their own doors and controls pinned on it — only their own, but the plan is the whole building, so a contractor with one door would see the layout. Their badge works either way; with it off they get a list instead.' },
     ],
   },
   schedules: {
@@ -137,6 +138,7 @@ const TOPICS: Record<string, HelpTopic> = {
         ],
       },
       { heading: 'Binding', body: 'An aux output is driven by the controller whose code matches its Controller field; the Relay index is a logical line the model maps to a physical relay.' },
+      { heading: 'Giving it to badge holders', body: 'An access group can grant an output, which puts a button on a badge holder’s phone — useful for a vehicle gate. It also needs “Allow remote use” here, off by default. A badge only ever pulses: it cannot latch the relay on and walk away.' },
     ],
   },
   areas: {
@@ -146,6 +148,7 @@ const TOPICS: Record<string, HelpTopic> = {
       { body: 'An area is a group of aux inputs and portals that arm together (intrusion-lite). While the area is armed, an intrusion input, a 24-hour tamper, or a forced-open on a member portal raises an intrusion alarm. A grant or REX open is normal passage and never trips.' },
       { heading: 'Arm state', body: 'The effective arm state resolves arm override → scheduled auto-arm → standing arm, failing safe to disarmed. Arming is a durable record write (not a fire-and-forget command), so a reboot can’t silently disarm an area. Each controller writes a per-controller arm shadow, so the console can tell “all armed” from “a box never reported.”' },
       { heading: 'Entry-disarm', body: 'A valid credential grant at a portal marked “disarm on grant” durably disarms that portal’s area — the inverse of arming, handled centrally because an area can span controllers.' },
+      { heading: 'Who else can arm it', body: 'An access group can grant arm and/or disarm over an area, which puts the buttons on a badge holder’s phone. Doing it off site also needs “Allow remote arm/disarm” here — off by default, because disarming a building with nobody present is a different act from disarming it at the keypad by the door.' },
     ],
   },
   controllers: {
@@ -160,8 +163,11 @@ const TOPICS: Record<string, HelpTopic> = {
     title: 'Access Groups',
     icon: '🗝️',
     sections: [
-      { body: 'An access group grants a set of portals during one schedule’s windows. It’s the join between where (portals) and when (schedule).' },
+      { body: 'An access group grants a set of things during one schedule’s windows. It’s the join between what (portals, areas, aux outputs) and when (schedule).' },
       { heading: 'How access is granted', body: 'A credential opens a portal when one of its roles includes an access group that contains the portal and whose schedule window is open (and the day isn’t an observed holiday).' },
+      { heading: 'Areas and aux outputs', body: 'The same group can grant arming an area or driving a relay, under the same schedule — “warehouse staff, Mon–Fri 06:00–18:00” is one window whether it authorizes a door, a disarm, or a gate. The three lists are independent, so an area-only group is one with no portals.' },
+      { heading: 'Arm and disarm are separate', body: 'Disarming turns intrusion detection off; arming turns it on. Closing staff who lock up can be given Arm alone. Both are pre-selected when you add an area, since ticking an area plainly means to grant something — but if you clear both, the group grants nothing over those areas and the reason code says so (deny_no_area_right).' },
+      { heading: 'Acting remotely is a separate opt-in', body: 'A grant here works at the door or keypad. Doing it from a phone also needs the per-record flag — Allow remote unlock on the portal, Allow remote arm/disarm on the area, Allow remote use on the output. All off by default.' },
     ],
   },
   roles: {
@@ -169,7 +175,7 @@ const TOPICS: Record<string, HelpTopic> = {
     icon: '🏷️',
     sections: [
       { body: 'A role bundles access groups. Cardholders are assigned roles; the roles decide which access groups — and therefore which portals and schedules — apply to them.' },
-      { body: 'The graph mirrors the operator’s mental model: user → roles → access groups → (portals + one schedule).' },
+      { body: 'The graph mirrors the operator’s mental model: user → roles → access groups → (portals, areas, aux outputs + one schedule).' },
     ],
   },
   cardholders: {
@@ -182,6 +188,7 @@ const TOPICS: Record<string, HelpTopic> = {
       { heading: 'Badge login', body: 'A checkbox on the cardholder form, because it is one field on the person: whether they can sign in to view their badge on a phone and use remote unlock at doors that allow it. It is separate from access — their credentials work at every door they are entitled to whether or not they can sign in, and turning the checkbox off revokes nothing. To take away access at the door, revoke the credential.' },
       { heading: 'A login with no credential', body: 'The badge signs in and honestly says no pass has been issued yet. Roles and effective access are not enough on their own — a person needs a credential to open anything, in person or remotely.' },
       { heading: 'Passwords', body: 'A badge holder normally signs in with a password, or an emailed one-time code. Setting an initial password is optional but is the only way in on an install with no mail server — hand it over in person, it is never emailed. They can change it themselves from their badge page.' },
+      { heading: 'Operator account', body: 'If this person also signs in to the console, link their operator account here. It only lets them view this badge from their profile menu — it grants no console access and no door access, both of which are decided where they already are. One operator account links to one cardholder.' },
     ],
   },
   visitors: {

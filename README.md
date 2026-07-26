@@ -74,6 +74,15 @@ see [`docs/operators.md`](docs/operators.md). A PocketBase **superuser**
 (`accessd superuser upsert <email> <pass>`) is the break-glass account and also
 signs into the admin UI at `/_`.
 
+There is a **second, much smaller surface for the people the system is about**: a
+cardholder or visitor signs in at `/login?as=badge` and sees one page — their badge
+(photo, QR, validity) and what it grants. Where an operator has opted the door, area, or
+relay in, they can also open it, arm/disarm it, or pulse it from their phone; every such
+action is authorized by the same pure decision function the edge runs, so a badge can
+never do remotely what it could not do in person. `cardholders` is itself the auth
+collection for this tier — one person is one record whether or not they ever sign in — and
+`docs/operators.md` covers the boundary between the two tiers.
+
 The console is **rebrandable at runtime without a rebuild**: point `branding.dir`
 (env `SA_BRANDING_DIR`) at a host directory of `theme.css` / `logo.svg` /
 `branding.json` to override the app name, logo, and DaisyUI theme. See

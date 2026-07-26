@@ -44,8 +44,19 @@ should report `created=0 failed=0`.
 | People | 13 employees + contractors across 6 roles, one suspended |
 | No-inbox cards | "Loading Dock Spare Card" and "Fire Dept Lockbox" — cardholders with no email, which cannot sign in by any method |
 | Visitors | three passes, one live, one expired, one revoked |
-| Remote unlock | enabled on `east-lobby` and `hq-east-stair` only |
+| Area rights | `ag-warehouse` grants arm **and** disarm on `dc-warehouse`; `ag-cleaning` grants **arm only** |
+| Aux output on a badge | `ag-relays` grants the East gate strike (Facilities and Security hold it) |
+| Remote opt-ins | unlock on `east-lobby` + `hq-east-stair`; arm/disarm on `dc-warehouse`; the gate strike; floor plan on `east-office` |
+| Operator's own badge | `admin@local.dev` is linked to Sarah Chen's cardholder, so "My badge" in the profile menu works |
 | History | 9 taps and 3 unacknowledged alarms, backdated minutes to hours |
+
+The arm-rights asymmetry is the part worth looking at: the cleaning crew can arm the
+warehouse when they finish and **cannot** disarm it. That is why arm and disarm are
+separate rights rather than one checkbox, and it is what `deny_no_area_right` reports when
+a group has areas but no rights at all.
+
+The floor plan on badges needs an image: `east-office` is opted in, but nothing renders
+until you upload a floorplan to that location and place a portal or two on it.
 
 ### Signing in
 

@@ -1,1 +1,0 @@
-import{P as e,d as t,f as n,j as r,v as i,xt as a}from"./pocketbase.es-BGGtpHwX.js";var o={key:0,class:`badge-dot`},s=i({__name:`SoftBadge`,props:{tone:{default:`neutral`},dot:{type:Boolean,default:!1}},setup(i){return(s,c)=>(r(),n(`span`,{class:a([`badge-soft`,`badge-soft-${i.tone}`])},[i.dot?(r(),n(`span`,o)):t(``,!0),e(s.$slots,`default`)],2))}});export{s as t};

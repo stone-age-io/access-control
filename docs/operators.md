@@ -57,6 +57,33 @@ The five names are constants in [`internal/authz`](../internal/authz/authz.go)
 operator's whole authorization surface — there is no role field to drift out of
 sync with the permissions.
 
+> **`policy` also decides who may disarm.** An access group grants **areas** and **aux
+> outputs** alongside portals (migration
+> [`1750000037`](../pbmigrations/1750000037_group_targets.go)), so editing a group can hand
+> a badge holder the ability to disarm an area or drive a relay. That stays under `policy`
+> rather than moving to `command`: choosing *who may* disarm the warehouse on their shift
+> is the same kind of decision as choosing who may open its door, where `command` is
+> "disarm it, now, myself". Note the asymmetry that follows — a `policy` holder with no
+> `command` cannot arm anything themselves, but can decide who can.
+
+### Access groups grant three kinds of thing
+
+A group is `{portals, areas, aux_outputs}` under **one schedule**, plus `area_rights`. The
+three relations are independent, so an area-only group is simply one with no portals.
+
+**Arm and disarm are separate rights.** `area_rights` is a two-value multi-select, and an
+**empty list grants neither** — closing staff who lock up can hold `arm` alone, and
+disarming (which turns intrusion detection off) is the one worth withholding. The form
+pre-selects both the moment you add an area, because an operator who ticks an area plainly
+means to grant something; narrowing it is then a deliberate click. If rights are left empty
+anyway, the decision reports `deny_no_area_right` — distinct from `deny_no_access`
+precisely so this misconfiguration is diagnosable in the reason code the action returns and
+in the `audit_logs` row it writes, rather than looking like a person with no access. (The
+access simulator is portal-only for now, so it will not reproduce this one.)
+
+A holder acting on any of it also needs the per-record remote opt-in (see the route table
+below); at a keypad or reader, the group grant is the whole story.
+
 ### Cardholder photos (PII)
 
 `cardholders.photo` (migration
@@ -134,14 +161,32 @@ There is deliberately **no** route for "give this cardholder a badge login": it 
 field on the cardholder (`badge_login`), so it is an ordinary record update the
 collection rules already govern.
 
-The badge tier has three routes of its own, gated by the **`cardholders`** collection
-rather than by capability — see [Non-operator auth tiers](#non-operator-auth-tiers):
+The badge tier has routes of its own, gated by the **`cardholders`** collection rather than
+by capability — see [Non-operator auth tiers](#non-operator-auth-tiers):
 
 | Route | Who | Purpose |
 |---|---|---|
-| `GET /api/badge/me` | a badge holder | their own badge: photo, QR, doors |
+| `GET /api/badge/me` | a badge holder **or an operator** | their own badge: photo, QR, and what it grants |
 | `POST /api/badge/unlock/{id}` | a badge holder | remote unlock, authorized by `policy.Decide` |
+| `POST /api/badge/areas/{id}/arm` · `/disarm` | a badge holder | arm/disarm, authorized by `policy.DecideArea` |
+| `POST /api/badge/outputs/{id}/pulse` | a badge holder | pulse an aux relay, authorized by `policy.DecideOutput` |
+| `GET /api/badge/live` | a badge holder | their own doors/controls placed on a site's floor plan |
 | `POST /api/badge/password` | a badge holder | set or change their own password |
+
+`/api/badge/me` is the **only** one an operator token may call, resolving through
+`cardholders.operator` (migration `1750000040`) so one human who holds accounts in both
+tiers can see their own badge from the console's profile menu without a second sign-in.
+Everything that *actuates* names `cardholders` alone: an operator opening a door uses
+`POST /api/portals/{id}/grant` with their `command` capability, where it is audited as an
+operator action, rather than through a second path that would leave the audit trail
+ambiguous about which authority they used.
+
+Each badge action also has a **per-record opt-in**, all default false, all control-plane
+only (never mirrored to KV): `portals.allow_remote_unlock`, `areas.allow_remote_arm`,
+`aux_output.allow_remote`, and `locations.badge_floorplan`. None of them widens anything —
+the pure decider still has to grant the action — they only separate "may act here" from
+"may act from anywhere, with nobody present", and in the floor plan's case "may open a door
+here" from "may see the layout of the building".
 
 Most of these bridge the UI to the **NATS command plane**; the wire subjects and
 bodies they publish are documented in [`protocol.md`](protocol.md#command-details).
