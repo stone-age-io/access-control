@@ -231,9 +231,19 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   filter. Areas never appear on the plan (only portals and aux I/O carry a `floorplan_position`; an area is a set with
   no single place to pin), and there is no live state or realtime — the badge polls `/me` for the one piece of state a
   holder can act on.
+  `GET /api/badge/preview/{id}` (`enroll`, operator-only, `preview.go`) is the **operator's** read of a holder's badge,
+  for "my pass doesn't work" — it returns the holder's own `/me` and `/live` payloads (the same `buildMe`/`buildLive`
+  builders serve both, so a preview that differs from their screen is a bug) plus the three facts a badge cannot show
+  about itself (`badgeLogin`/`passwordSet`/`status`), and the console renders it with the badge's own Vue components.
+  It **mints nothing**: `NewStaticAuthToken` would have let an operator press the holder's buttons, but a badge action
+  stamps the *cardholder* as `actor_id`, so a borrowed badge session would write rows indistinguishable from the
+  holder's own — "did this visitor open the loading bay, or someone checking on them?" must stay answerable from the
+  log. The trade is that it cannot prove an unlock works end-to-end, only what the server would decide; an operator
+  who needs the door opened uses the command routes under their own `command`. Every preview writes an `audit_logs`
+  row, because reading a badge is reading someone's photo, QR payload, and every door they hold.
   One human can hold an account in both tiers, so `cardholders.operator` (migration `1750000040`) points at the
-  `users` record of the same person and `GET /api/badge/me` — **alone among these routes** — accepts an operator token,
-  resolving through it (`subjectCardholder`). Everything that *actuates* names `cardholders` only: an operator opening
+  `users` record of the same person and `GET /api/badge/me` — **alone among the holder routes** — accepts an operator
+  token, resolving through it (`subjectCardholder`). Everything that *actuates* names `cardholders` only: an operator opening
   a door uses the command routes with their `command` capability, where it is audited as an operator action, rather
   than through a second path that would make the audit trail ambiguous about which authority they used. The pointer
   lives on `cardholders` because `users.UpdateRule` is self — a `users.cardholder` field would be self-writable, so
@@ -254,7 +264,13 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   `POST /api/badge/visitors` (`enroll`) mints a visitor in one transaction: the cardholder (`kind: visitor`,
   `badge_login`) plus a time-bound credential whose value comes from `crypto/rand` as uppercase base32 (QR
   alphanumeric mode, and inside the KV key charset). A repeat visitor is **reused**, not duplicated — email is
-  uniquely indexed, and the same person visiting twice is the same person.
+  uniquely indexed, and the same person visiting twice is the same person; that reuse path is also how a visit is
+  **extended** (the UI's "Reissue"), because a visitor's QR carries the credential *value*, so pushing an existing
+  one's `valid_until` out would silently re-arm every screenshot of it. An optional `password` on the request is the
+  same never-mailed operator-set initial password the enrollment path has (`setInitialPassword`, which is a **no-op**
+  when blank — that is what lets `bindPasswordFill` supply the random value on create and leaves a returning
+  visitor's existing password intact); without it a mint on an SMTP-less install produced a pass its holder could
+  never see, since OTP and password-reset are both emails.
   `POST /api/badge/visitors/{id}/revoke` ends a visit: it revokes the credentials and **keeps** the person, so the
   visit stays on the record and a returning visitor is still recognised. Delete is the retention decision, and it
   now works — `credentials.user` cascades (`1750000036`), so removing a person removes their cards, through the

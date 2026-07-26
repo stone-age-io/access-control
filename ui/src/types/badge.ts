@@ -202,6 +202,14 @@ export interface MintVisitorRequest {
   /** RFC3339; required — a visitor pass must expire. */
   validUntil: string
   label?: string
+  /**
+   * An optional initial password, handed over in person and never mailed.
+   *
+   * Without one a minted visitor's only route in is an emailed one-time code, so on an
+   * install with no SMTP the mint produces a pass its holder can never see. Minimum 8
+   * characters (the server checks the same bound).
+   */
+  password?: string
 }
 
 export interface MintVisitorResponse {
@@ -215,9 +223,41 @@ export interface MintVisitorResponse {
   badgeUrl: string
   /** True when an existing visitor was refreshed rather than a duplicate created. */
   reused: boolean
+  /**
+   * Whether the visitor can sign in with a password. What tells the operator whether they
+   * have anything to hand over when `inviteSent` is false.
+   */
+  passwordSet: boolean
 }
 
 /** POST /api/badge/visitors/{id}/revoke (operator-only) */
 export interface RevokeVisitorResponse {
   cardholderId: string
+}
+
+/**
+ * GET /api/badge/preview/{cardholderId} (operator + `enroll`)
+ *
+ * What that person's own badge says, for troubleshooting "my pass doesn't work". `me` and
+ * `live` are byte-for-byte the holder's own payloads — the server reuses the same builders
+ * — so a preview that differs from their screen is a bug, not a rendering choice.
+ *
+ * It mints no session and actuates nothing: badge actions stamp the CARDHOLDER as actor,
+ * so an operator acting through a borrowed badge session would write rows indistinguishable
+ * from the holder's own. An operator who needs a door opened uses the command routes, where
+ * it is audited under their own `command` capability.
+ */
+export interface BadgePreview {
+  me: BadgeMe
+  live: BadgeLive
+  /**
+   * Whether this person can sign in at all. The commonest cause of "I can't get in" that
+   * the badge payload cannot show — without it they never reach a badge, so `me` looks
+   * perfectly healthy while they sit at a sign-in form being refused.
+   */
+  badgeLogin: boolean
+  /** Whether they can use a password, or depend on an emailed code (and so on SMTP). */
+  passwordSet: boolean
+  /** The cardholder's own status — `passState` collapses `suspended` into itself. */
+  status: string
 }

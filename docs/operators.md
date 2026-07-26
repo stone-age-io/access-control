@@ -156,10 +156,38 @@ so they call `authz.RequireCapability` per handler:
 | `POST /api/badge/visitors` | `enroll` | mint a visitor: cardholder + time-bound credential, in one transaction |
 | `POST /api/badge/visitors/{id}/revoke` | `enroll` | end a visit: revoke the pass, keep the person |
 | `POST /api/badge/invite/{id}` | `enroll` | email a badge holder where to sign in (never the password) |
+| `GET /api/badge/preview/{id}` | `enroll` | **read** what that cardholder's own badge shows them |
 
 There is deliberately **no** route for "give this cardholder a badge login": it is a
 field on the cardholder (`badge_login`), so it is an ordinary record update the
 collection rules already govern.
+
+#### Seeing a holder's badge (`/api/badge/preview`)
+
+"My pass doesn't work" is the support call, and almost every cause of it is invisible from
+the operator side without cross-referencing four collections: no credential issued at all, a
+window that has not opened, a suspended person, a group that grants nothing, a door that
+grants in person but not remotely, a `badge_login` that was never ticked. The badge already
+reduces all of that to one sentence and one list, so this route returns **the holder's own
+`/me` and `/live` payloads** — the same Go builders serve both — plus the three
+operator-only facts a badge cannot show about itself (`badgeLogin`, `passwordSet`,
+`status`). The console renders it with the badge's own Vue components, so if the preview
+looks wrong, it *is* wrong.
+
+**It is a read, and mints nothing.** PocketBase can issue a session for another record
+(`NewStaticAuthToken`), which would have let an operator press the holder's buttons. That
+was rejected: a badge action stamps the **cardholder** as `actor_id`, because that is who
+the audit trail is about — so an operator driving a borrowed badge session would write rows
+indistinguishable from the holder's own, and "did this visitor open the loading bay, or
+someone checking on them?" would stop being answerable from the log. It is exactly the sort
+of question only asked after something has gone wrong.
+
+The trade, stated plainly: this cannot prove a holder's unlock button works end-to-end. It
+proves what the server would decide, which is where essentially every "my badge is broken"
+actually lives. An operator who needs the door opened uses `POST /api/portals/{id}/grant`
+with their own `command` capability. Reading a badge means reading someone's photo, QR
+payload, and every door they hold, so **every preview writes an `audit_logs` row** —
+looks at people are what an access-control system should be able to account for afterwards.
 
 The badge tier has routes of its own, gated by the **`cardholders`** collection rather than
 by capability — see [Non-operator auth tiers](#non-operator-auth-tiers):
@@ -308,7 +336,25 @@ different places:
 | Access from | a curated `visitor_preset` role, chosen at mint | the roles already on that cardholder |
 | QR encodes | the credential value (works at a scanner) | the cardholder id (opens nothing) |
 | Usual sign-in | emailed one-time code | password |
+| Extending it | **Reissue** — a new pass, the old code revoked | issue or extend a credential |
 | Ending it | **Revoke** (pass dies, person kept) or **Delete** (both) | untick the checkbox — the credential is untouched |
+
+**Reissue, not extend.** A visitor's QR carries the credential *value* — a working key, on a
+screen, for hours — so it gets photographed, screenshotted and forwarded as a matter of
+course. Pushing that same value's `valid_until` out would silently re-arm every copy of it,
+so extending a visit goes through `POST /api/badge/visitors` again: the route recognises the
+returning visitor by email and refreshes them in place (`reused: true`), minting a new value
+from the server's CSPRNG and revoking the previous one, all in one transaction. It costs the
+visitor one refresh of their badge.
+
+**With no mail server, set an initial password.** A visitor's default route in is an emailed
+one-time code, and password reset is also an email, so an install with no SMTP would mint
+passes nobody could open. Both flows therefore accept an optional initial password
+(`password` on the mint request; the Badge login section of the cardholder form for staff) —
+handed over at the desk and **never** emailed, since mail is stored indefinitely, forwarded,
+and synced to devices, so a door-opening password sent that way would outlive every control
+around it. The mint success screen also shows the badge link and a QR of it; both are safe to
+display, because the link carries no code and no token.
 
 A staff badge login is deliberately *not* granted by enrollment: most cardholders never
 need one, and giving everybody a login would put a phone-openable surface on people who

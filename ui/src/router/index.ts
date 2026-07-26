@@ -127,9 +127,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'cardholders/:id', name: 'Cardholder', component: () => import('@/views/cardholders/CardholderDetailView.vue'), meta: { title: 'Cardholder' } },
       { path: 'cardholders/:id/edit', name: 'CardholderEdit', component: () => import('@/views/cardholders/CardholderFormView.vue'), meta: { title: 'Edit Cardholder', capability: ENROLL } },
 
-      // Visitors (badge tier, operator side): time-bound passes for guests
+      // Visitors (badge tier, operator side): time-bound passes for guests.
+      // `new` before `:id` so the mint path is never matched as a cardholder id.
       { path: 'visitors', name: 'Visitors', component: () => import('@/views/visitors/VisitorListView.vue'), meta: { title: 'Visitors' } },
       { path: 'visitors/new', name: 'VisitorNew', component: () => import('@/views/visitors/VisitorMintView.vue'), meta: { title: 'New Visitor Pass', capability: ENROLL } },
+      { path: 'visitors/:id', name: 'Visitor', component: () => import('@/views/visitors/VisitorDetailView.vue'), meta: { title: 'Visitor' } },
 
       // Credentials (a credential belongs to one cardholder)
       { path: 'credentials', name: 'Credentials', component: () => import('@/views/credentials/CredentialListView.vue'), meta: { title: 'Credentials' } },

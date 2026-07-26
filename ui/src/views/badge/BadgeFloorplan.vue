@@ -24,7 +24,21 @@ import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
  * Areas are deliberately absent: only portals and aux I/O carry a position, because an
  * area is a set of points with no single place to put a pin. They live in the list.
  */
-const props = defineProps<{ location: BadgeLiveLocation; enabled: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    location: BadgeLiveLocation
+    enabled: boolean
+    /**
+     * Why a tap does nothing, when `enabled` is false. Supplied because there is more than
+     * one reason: the holder's own badge is disabled by an unusable pass, while the
+     * operator's read-only preview is disabled by having no session to act with — and
+     * telling an operator their pass is invalid, while looking at a valid one, would send
+     * them off diagnosing the wrong thing.
+     */
+    disabledNote?: string
+  }>(),
+  { disabledNote: 'Your pass is not currently valid' },
+)
 
 const natural = ref<{ w: number; h: number } | null>(null)
 const busy = ref<Record<string, boolean>>({})
@@ -84,7 +98,7 @@ async function tap(pin: Pin) {
 
   if (!pin.remote) return // already said so; a second tap changes nothing
   if (!props.enabled) {
-    note(pin.id, false, 'Your pass is not currently valid')
+    note(pin.id, false, props.disabledNote)
     return
   }
 

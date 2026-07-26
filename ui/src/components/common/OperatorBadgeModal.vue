@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { pb } from '@/utils/pb'
-import QrCode from '@/components/ui/QrCode.vue'
-import SoftBadge from '@/components/ui/SoftBadge.vue'
+import BadgePassPanel from '@/views/badge/BadgePassPanel.vue'
 import type { BadgeMe } from '@/types/badge'
 
 /**
@@ -24,6 +23,11 @@ import type { BadgeMe } from '@/types/badge'
  *
  * A modal rather than a page because it is a thing you glance at and dismiss, not a
  * place you navigate to and lose your position on the console for.
+ *
+ * The face itself is BadgePassPanel — the holder's own component, given the operator
+ * PocketBase client so the PROTECTED photo resolves against this session's file token. It
+ * used to be a near-copy of that panel, and the two had already drifted: the photo-loading
+ * code was duplicated, and the pass state was re-derived here into its own labels.
  */
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [boolean] }>()
@@ -33,27 +37,10 @@ const loading = ref(false)
 /** Set when the operator has no cardholder linked — an explanation, not an error. */
 const noBadge = ref(false)
 const loadError = ref('')
-const photoUrl = ref('')
 
 const grantCount = computed(() => {
   const m = me.value
   return m ? m.portals.length + m.areas.length + m.outputs.length : 0
-})
-
-const passTone = computed(() => (me.value?.passState === 'valid' ? 'success' : 'warning'))
-const passLabel = computed(() => {
-  switch (me.value?.passState) {
-    case 'valid':
-      return 'Pass valid'
-    case 'expired':
-      return 'Pass expired'
-    case 'not_yet_valid':
-      return 'Pass not started'
-    case 'suspended':
-      return 'Badge suspended'
-    default:
-      return 'No pass issued'
-  }
 })
 
 async function load() {
@@ -61,36 +48,14 @@ async function load() {
   noBadge.value = false
   loadError.value = ''
   me.value = null
-  photoUrl.value = ''
   try {
     me.value = await pb.send<BadgeMe>('/api/badge/me', { method: 'GET' })
-    await loadPhoto()
   } catch (err: any) {
     // 404 is the honest answer to "show me my badge" when no cardholder is linked.
     if (err?.status === 404) noBadge.value = true
     else loadError.value = 'Could not load your badge.'
   } finally {
     loading.value = false
-  }
-}
-
-/**
- * `cardholders.photo` is a PROTECTED file, so the URL needs a short-lived file token.
- * An operator passes the collection's view rule (migration 1750000027), which is what
- * makes the download succeed for this tier.
- */
-async function loadPhoto() {
-  const m = me.value
-  if (!m?.photoFile || !m.photoRecord) return
-  try {
-    const token = await pb.files.getToken()
-    photoUrl.value = pb.files.getURL(
-      { id: m.photoRecord, collectionId: 'cardholders', collectionName: 'cardholders' },
-      m.photoFile,
-      { token, thumb: '400x400' },
-    )
-  } catch {
-    photoUrl.value = '' // no photo beats a broken image
   }
 }
 
@@ -127,38 +92,9 @@ function close() {
       </div>
 
       <div v-else-if="me" class="space-y-4">
-        <div class="flex flex-col items-center text-center gap-3">
-          <img
-            v-if="photoUrl"
-            :src="photoUrl"
-            :alt="me.name"
-            class="w-20 h-20 rounded-full object-cover bg-base-300"
-          />
-          <div
-            v-else
-            class="w-20 h-20 rounded-full bg-base-300 flex items-center justify-center text-xl font-semibold"
-          >
-            {{ (me.name || '?').slice(0, 1).toUpperCase() }}
-          </div>
-
-          <div>
-            <div class="font-bold">{{ me.name || 'Cardholder' }}</div>
-            <div class="text-xs text-base-content/60">{{ me.email }}</div>
-          </div>
-
-          <SoftBadge :tone="passTone" dot>{{ passLabel }}</SoftBadge>
-
-          <!-- Whatever the server sent: an inert identifier for a staff badge, nothing
-               at all for a suspended one. Never re-derived here. -->
-          <template v-if="me.qr">
-            <QrCode :value="me.qr" :size="176" />
-            <p class="text-xs text-base-content/60">
-              {{ me.qrSecret
-                ? 'This code opens doors — treat it like a key.'
-                : 'For identification. This code does not open doors.' }}
-            </p>
-          </template>
-        </div>
+        <!-- The holder's own badge face, on the holder's own payload. `client` is the
+             operator one so the PROTECTED photo resolves against this session. -->
+        <BadgePassPanel :me="me" :client="pb" compact />
 
         <!-- What the badge covers, as a count plus names. Read-only: acting on any of it
              belongs on the console, where it is audited as an operator action. -->

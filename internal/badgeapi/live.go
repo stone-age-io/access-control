@@ -1,6 +1,7 @@
 package badgeapi
 
 import (
+	"context"
 	"net/http"
 	"sort"
 
@@ -72,14 +73,20 @@ func (h *handler) registerLiveRoute(se *core.ServeEvent) {
 }
 
 func (h *handler) live(e *core.RequestEvent) error {
-	cardholder := e.Auth
+	return e.JSON(http.StatusOK, h.buildLive(e.Request.Context(), e.Auth.Id))
+}
 
-	snap, err := h.snapshot(e.Request.Context())
+// buildLive projects one cardholder's placed things onto each opted-in site's plan.
+//
+// Extracted from the route for the same reason as buildMe: the operator's read-only
+// preview must render the holder's actual plan, pins and all, not a lookalike.
+func (h *handler) buildLive(ctx context.Context, cardholderID string) liveResponse {
+	snap, err := h.snapshot(ctx)
 	if err != nil {
 		// Fail soft with an empty list: the Access tab's own list still works, so a NATS
 		// hiccup costs the plan rather than the page.
-		h.log.Error("badge live: policy snapshot unavailable", "cardholder", cardholder.Id, "error", err)
-		return e.JSON(http.StatusOK, liveResponse{Locations: []liveLocation{}})
+		h.log.Error("badge live: policy snapshot unavailable", "cardholder", cardholderID, "error", err)
+		return liveResponse{Locations: []liveLocation{}}
 	}
 
 	// Group the holder's placed things by location record id.
@@ -126,7 +133,7 @@ func (h *handler) live(e *core.RequestEvent) error {
 		return entry
 	}
 
-	portalCodes := snap.PortalsFor(cardholder.Id)
+	portalCodes := snap.PortalsFor(cardholderID)
 	sort.Strings(portalCodes)
 	for _, code := range portalCodes {
 		rec, err := h.app.FindFirstRecordByData("portals", "code", code)
@@ -142,7 +149,7 @@ func (h *handler) live(e *core.RequestEvent) error {
 		}
 	}
 
-	outputCodes := snap.OutputsFor(cardholder.Id)
+	outputCodes := snap.OutputsFor(cardholderID)
 	sort.Strings(outputCodes)
 	for _, code := range outputCodes {
 		rec, err := h.app.FindFirstRecordByData("aux_output", "code", code)
@@ -169,7 +176,7 @@ func (h *handler) live(e *core.RequestEvent) error {
 		out = append(out, *entry)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return e.JSON(http.StatusOK, liveResponse{Locations: out})
+	return liveResponse{Locations: out}
 }
 
 // placedPoint reads a record's floorplan_position, reporting false when it is absent or

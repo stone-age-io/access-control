@@ -198,6 +198,79 @@ func TestDeletingACardholderTakesTheirCards(t *testing.T) {
 	}
 }
 
+// setInitialPassword's NO-OP case is the load-bearing one, and it is load-bearing in two
+// opposite directions:
+//
+//   - On create, leaving the field untouched is what lets bindPasswordFill put a random
+//     value there. Writing "" instead would fail PocketBase's password validator, so a
+//     visitor could not be minted at all without the operator inventing a password.
+//   - On reuse, it leaves a returning visitor's existing password intact. Writing ""
+//     would take away a sign-in method they were already using.
+func TestSetInitialPasswordLeavesBlankAlone(t *testing.T) {
+	app := newGuardedApp(t)
+
+	// Create with no password: the fill must still happen, and must not claim the person
+	// knows the value.
+	col, err := app.FindCollectionByNameOrId("cardholders")
+	if err != nil {
+		t.Fatalf("cardholders collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("name", "Walk In")
+	rec.SetEmail("walkin@test.dev")
+	rec.Set("status", "active")
+	rec.Set("kind", KindVisitor)
+	rec.Set("badge_login", true)
+	setInitialPassword(rec, "")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save visitor with no initial password: %v", err)
+	}
+	if rec.GetBool("password_set") {
+		t.Error("password_set = true after no password was supplied; a change would demand a proof nobody can give")
+	}
+
+	// A later visit that supplies one flips the flag, so POST /api/badge/password knows to
+	// ask for the current one.
+	setInitialPassword(rec, "handed-over-at-the-desk")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save visitor with an initial password: %v", err)
+	}
+	if !rec.GetBool("password_set") {
+		t.Error("password_set = false after an operator set a password in person")
+	}
+
+	// And omitting one on a subsequent visit must not undo it.
+	setInitialPassword(rec, "")
+	if !rec.GetBool("password_set") {
+		t.Error("a mint with no password cleared password_set; the returning visitor just lost their sign-in")
+	}
+}
+
+// The initial password is what makes a visitor pass usable on an install with NO SMTP:
+// without it their only route in is an emailed one-time code, and bindPasswordFill's value
+// is random and has never been seen by anyone. It must actually authenticate.
+func TestVisitorInitialPasswordSignsIn(t *testing.T) {
+	app := newGuardedApp(t)
+	ch := mkCardholder(t, app, "Desk Handover", "desk@test.dev", map[string]any{
+		"kind": KindVisitor, "badge_login": true,
+	})
+	setInitialPassword(ch, "desk-handover-pass")
+	if err := app.Save(ch); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	reloaded, err := app.FindAuthRecordByEmail("cardholders", "desk@test.dev")
+	if err != nil {
+		t.Fatalf("find by email: %v", err)
+	}
+	if !reloaded.ValidatePassword("desk-handover-pass") {
+		t.Error("the operator-set password does not authenticate; the SMTP-less handover is broken")
+	}
+	if reloaded.ValidatePassword("some-other-pass") {
+		t.Error("a wrong password authenticated")
+	}
+}
+
 // TestRevokingAVisitorKeepsThePerson is the end-of-visit contract. Revoke, not delete:
 // the pass must stop working while the record that they were here survives, so a
 // returning visitor is recognised rather than duplicated.

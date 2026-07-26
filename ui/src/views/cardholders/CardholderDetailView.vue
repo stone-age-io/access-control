@@ -14,12 +14,15 @@ import RecordMeta from '@/components/ui/RecordMeta.vue'
 import RelationList from '@/components/ui/RelationList.vue'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 import Avatar from '@/components/ui/Avatar.vue'
+import BadgePreviewModal from '@/components/common/BadgePreviewModal.vue'
+import { useAuthStore } from '@/stores/auth'
 import type { SoftTone } from '@/utils/badges'
 
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 const { confirm } = useConfirm()
+const auth = useAuthStore()
 // cardholders.photo is a protected file — its URL needs a session file token.
 const { url: fileUrl } = useFileUrl()
 
@@ -90,6 +93,20 @@ const badgeMethods = computed<string[]>(() => {
  */
 const badgeHasNoCredential = computed(() => hasBadgeLogin.value && credentials.value.length === 0)
 
+/**
+ * A read-only look at what this person's own badge shows them (GET /api/badge/preview/{id}).
+ *
+ * Offered for every cardholder, not just visitors: "my badge doesn't work" is the same
+ * support call whoever makes it, and the causes — no credential in window, a suspended
+ * person, a group that grants nothing, a door that grants in person but not remotely — are
+ * the same ones that take four collections to rule out by hand.
+ *
+ * Gated on `enroll` to match the route, and offered even without a badge login, because
+ * "they cannot sign in at all" is one of the answers it gives.
+ */
+const showBadgePreview = ref(false)
+const canPreviewBadge = computed(() => auth.can('enroll'))
+
 async function load() {
   loading.value = true
   try {
@@ -158,6 +175,9 @@ onMounted(load)
     :breadcrumbs="[{ label: 'Cardholders', to: '/cardholders' }, { label: title }]"
   >
     <template #actions>
+      <button v-if="canPreviewBadge" class="btn btn-sm btn-ghost" @click="showBadgePreview = true">
+        View their badge
+      </button>
       <router-link :to="`/cardholders/${record.id}/edit`" class="btn btn-sm btn-primary">Edit</router-link>
       <button class="btn btn-sm btn-ghost text-error" :disabled="deleting" @click="handleDelete">Delete</button>
     </template>
@@ -271,5 +291,7 @@ onMounted(load)
     />
 
     <RecordMeta :record="record" :kv-key="kvKey" />
+
+    <BadgePreviewModal v-model:open="showBadgePreview" :cardholder-id="record.id" :name="title" />
   </DetailLayout>
 </template>

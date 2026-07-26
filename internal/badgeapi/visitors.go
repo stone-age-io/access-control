@@ -88,6 +88,17 @@ type mintRequest struct {
 	ValidFrom  string `json:"validFrom"`  // RFC3339; empty = now
 	ValidUntil string `json:"validUntil"` // RFC3339; required
 	Label      string `json:"label"`      // optional note on the credential
+	// Password is an OPTIONAL initial password, handed over in person.
+	//
+	// Without it a minted visitor's only route in is an emailed one-time code, so on an
+	// install with no SMTP the mint produced a pass its holder could never see: no mail
+	// means no OTP, and `bindPasswordFill` leaves a random password nobody has ever read.
+	// The operator had to go and edit the cardholder afterwards to rescue it.
+	//
+	// Never mailed — see sendVisitorInvite, and mailBadgeInvite for the same rule on the
+	// enrollment path. Mail is stored indefinitely, forwarded, and synced to devices, so
+	// emailing a door-opening password would outlive every control around it.
+	Password string `json:"password"`
 }
 
 type mintResponse struct {
@@ -108,6 +119,10 @@ type mintResponse struct {
 	// refreshed and their previous credential revoked, rather than a duplicate person
 	// being created. Surfaced so the UI can say so plainly.
 	Reused bool `json:"reused"`
+	// PasswordSet reports whether the visitor can sign in with a password, i.e. whether
+	// the caller supplied one. It is what tells the operator whether they have anything to
+	// hand over when InviteSent is false.
+	PasswordSet bool `json:"passwordSet"`
 }
 
 // findCardholderByEmail returns the cardholder for an address, or nil when there is
@@ -204,6 +219,12 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 	if _, err := mail.ParseAddress(req.Email); err != nil {
 		return e.BadRequestError("a valid email is required (it is how the visitor receives their sign-in code)", nil)
 	}
+	// Checked here rather than left to the record validator so the operator gets the rule
+	// stated, on the field they typed, instead of a validation error surfacing from inside
+	// a transaction that has already created half a visitor.
+	if req.Password != "" && len(req.Password) < minBadgePasswordLength {
+		return e.BadRequestError("an initial password must be at least 8 characters", nil)
+	}
 
 	// The role must be one an operator explicitly curated for visitors. Without this
 	// check the route would be a way to grant ANY role while only holding `enroll`.
@@ -296,6 +317,12 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 			ch.Set("status", "active")
 			ch.Set("roles", []string{role.Id})
 			ch.Set("badge_login", true)
+			// A supplied password REPLACES whatever the previous visit left. That
+			// rotates the record's tokenKey and so ends any session from last time,
+			// which is the right end of the trade for a returning visitor: the old
+			// visit is over. Omitting one leaves their existing password alone, rather
+			// than silently taking away a method they were already using.
+			setInitialPassword(ch, req.Password)
 			if err := tx.Save(ch); err != nil {
 				return fmt.Errorf("update visitor: %w", err)
 			}
@@ -322,9 +349,12 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 			// bindOTPPasswordPreservation) — moot here, since a visitor is minted
 			// with no password to lose, but it keeps the two paths consistent.
 			ch.SetVerified(true)
-			// No password is set: bindPasswordFill supplies an unguessable random
-			// one and leaves `password_set` false, so a visitor never has to invent
-			// or manage a password for a one-day pass. OTP is their route in.
+			// With no password supplied, bindPasswordFill supplies an unguessable
+			// random one and leaves `password_set` false, so a visitor never has to
+			// invent or manage a password for a one-day pass — OTP is their route in.
+			// With one supplied, that IS their route in, which is what makes this flow
+			// work on an install with no SMTP at all.
+			setInitialPassword(ch, req.Password)
 			if err := tx.Save(ch); err != nil {
 				return fmt.Errorf("create visitor: %w", err)
 			}
@@ -355,6 +385,10 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 			ValidUntil:   until.Format(time.RFC3339),
 			BadgeURL:     "/login?as=badge",
 			Reused:       existing != nil,
+			// Read back off the record rather than from the request, so a repeat visitor
+			// who already had a password is reported honestly when this mint supplied
+			// none.
+			PasswordSet: ch.GetBool("password_set"),
 		}
 		return nil
 	})
@@ -371,6 +405,26 @@ func (h *handler) mintVisitor(e *core.RequestEvent) error {
 		"cardholder", resp.CardholderID, "role", role.GetString("code"),
 		"validUntil", resp.ValidUntil, "inviteSent", resp.InviteSent)
 	return e.JSON(http.StatusCreated, resp)
+}
+
+// setInitialPassword applies an operator-supplied initial password, and does nothing at
+// all when there is none.
+//
+// The no-op case is the load-bearing one: leaving the field untouched is what lets
+// bindPasswordFill put a random value there on create (PocketBase requires a non-blank
+// password on every auth record) and what leaves a returning visitor's existing password
+// intact on reuse. Writing "" here instead would fail validation on one path and wipe a
+// working sign-in on the other.
+//
+// `password_set` is ours, not PocketBase's: it records that a human has actually been
+// told this password, which is what POST /api/badge/password uses to decide whether to
+// demand the current one before changing it.
+func setInitialPassword(rec *core.Record, password string) {
+	if password == "" {
+		return
+	}
+	rec.SetPassword(password)
+	rec.Set("password_set", true)
 }
 
 // newVisitorCredentialValue returns a KV-key-safe, QR-alphanumeric-friendly random
@@ -456,16 +510,18 @@ func (h *handler) auditMint(e *core.RequestEvent, resp mintResponse, roleCode st
 		rec.Set("request_url", e.Request.URL.Path)
 	}
 	rec.Set("timestamp", types.NowDateTime())
-	// Deliberately NOT the credential value — an audit row is widely readable and
-	// must never become a place to harvest working credentials.
+	// Deliberately NOT the credential value, and NOT the initial password — an audit row
+	// is widely readable and must never become a place to harvest either. That a password
+	// was set is recorded; what it was is not.
 	rec.Set("after", map[string]any{
-		"action":     "mint_visitor",
-		"cardholder": resp.CardholderID,
-		"credential": resp.CredentialID,
-		"role":       roleCode,
-		"email":      resp.Email,
-		"validFrom":  resp.ValidFrom,
-		"validUntil": resp.ValidUntil,
+		"action":      "mint_visitor",
+		"cardholder":  resp.CardholderID,
+		"credential":  resp.CredentialID,
+		"role":        roleCode,
+		"email":       resp.Email,
+		"validFrom":   resp.ValidFrom,
+		"validUntil":  resp.ValidUntil,
+		"passwordSet": resp.PasswordSet,
 	})
 	if err := h.app.Save(rec); err != nil {
 		h.log.Error("failed to write visitor mint audit row", "cardholder", resp.CardholderID, "error", err)

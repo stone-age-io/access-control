@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useBrandingStore } from '@/stores/branding'
 import BrandLogo from '@/components/common/BrandLogo.vue'
+import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import OperatorSignIn from './OperatorSignIn.vue'
 import BadgeSignIn from './BadgeSignIn.vue'
 
@@ -99,6 +100,13 @@ const subtitle = computed(() =>
 
 <template>
   <div class="min-h-screen flex items-center justify-center p-4 bg-base-200">
+    <!-- Absolutely positioned so it cannot shift the centred card, and reachable before
+         signing in: someone squinting at a bright form at night should not have to get
+         past it first. -->
+    <div class="fixed top-2 right-2 pad-safe-top z-10">
+      <ThemeToggle size="sm" />
+    </div>
+
     <div class="w-full max-w-sm">
       <div class="flex flex-col items-center gap-3 mb-6">
         <BrandLogo :size="56" />

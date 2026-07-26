@@ -1,21 +1,41 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
+import type PocketBase from 'pocketbase'
 import { badgePb } from '@/utils/badgePb'
-import { useBadgeAuthStore } from '@/stores/badgeAuth'
 import QrCode from '@/components/ui/QrCode.vue'
 import type { BadgeMe, BadgePassState } from '@/types/badge'
 
 /**
- * The badge FACE: photo, name, QR, validity, and the holder's own password.
+ * The badge FACE: photo, name, QR, and validity.
  *
  * Everything shown comes from GET /api/badge/me (fetched by the parent) — this panel
  * never queries the policy collections, because the badge tier deliberately cannot read
- * them. Split from the shell so the Access tab can grow a floorplan without this file
- * growing with it.
+ * them.
+ *
+ * # Why it takes a client
+ *
+ * `cardholders.photo` is a PROTECTED file, so its URL needs a short-lived file token, and
+ * the token must be issued against whichever session is asking. The holder's own device
+ * uses the badge client; the operator's read-only preview uses the operator one. Passing
+ * the client in is what lets ONE component serve both — the alternative was a second
+ * near-copy of this file, which is how the operator's badge modal and this panel had
+ * already drifted into two versions of the same photo-loading code.
+ *
+ * The password form is deliberately NOT here any more: it lives in BadgePasswordModal,
+ * reached from the account menu. It is a rare, deliberate act, and having it permanently
+ * under the QR was most of the reason a badge did not fit a phone screen.
  */
-const props = defineProps<{ me: BadgeMe }>()
+const props = withDefaults(
+  defineProps<{
+    me: BadgeMe
+    /** Which session's file token to build the photo URL with. */
+    client?: PocketBase
+    /** Trims the chrome for an embedded/preview context: smaller QR, no holder advice. */
+    compact?: boolean
+  }>(),
+  { client: () => badgePb, compact: false },
+)
 
-const badgeAuth = useBadgeAuthStore()
 const photoUrl = ref('')
 
 function dateLabel(raw?: string): string {
@@ -25,6 +45,74 @@ function dateLabel(raw?: string): string {
 }
 const validFromLabel = computed(() => dateLabel(props.me.validFrom))
 const validUntilLabel = computed(() => dateLabel(props.me.validUntil))
+
+/**
+ * A live clock, but only while there is a deadline worth watching.
+ *
+ * "Valid until 26 Jul 2026, 18:00" is the wrong unit for the person who most needs it: a
+ * visitor with a few hours left wants "expires in 2h 40m". So the absolute time stays (it
+ * is what you tell reception) and the countdown sits under it.
+ *
+ * The interval only exists when there IS an expiry — a staff badge with an open-ended
+ * credential must not run a timer for the years it hangs on a lanyard.
+ */
+const now = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | undefined
+
+function stopTicker() {
+  if (ticker !== undefined) {
+    clearInterval(ticker)
+    ticker = undefined
+  }
+}
+
+const expiresAt = computed(() => {
+  if (props.me.passState !== 'valid' || !props.me.validUntil) return 0
+  const t = new Date(props.me.validUntil).getTime()
+  return isNaN(t) ? 0 : t
+})
+
+watch(
+  expiresAt,
+  (at) => {
+    stopTicker()
+    if (!at) return
+    now.value = Date.now()
+    // A minute is the finest unit shown, so a minute is how often it needs redrawing.
+    ticker = setInterval(() => {
+      now.value = Date.now()
+    }, 30_000)
+  },
+  { immediate: true },
+)
+onUnmounted(stopTicker)
+
+/**
+ * "2h 40m" / "3 days" / '' when there is nothing to count down to.
+ *
+ * Days rather than hours past 48h: nobody reads "71h left", and a contractor's week-long
+ * pass would otherwise show a number that changes constantly and means nothing.
+ */
+const remainingLabel = computed(() => {
+  const at = expiresAt.value
+  if (!at) return ''
+  const ms = at - now.value
+  if (ms <= 0) return 'Expiring now'
+  const minutes = Math.floor(ms / 60_000)
+  if (minutes < 60) return `Expires in ${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) {
+    const rem = minutes % 60
+    return rem ? `Expires in ${hours}h ${rem}m` : `Expires in ${hours}h`
+  }
+  return `Expires in ${Math.floor(hours / 24)} days`
+})
+
+/** Under an hour is worth a colour: it is the window in which someone should act. */
+const remainingUrgent = computed(() => {
+  const at = expiresAt.value
+  return !!at && at - now.value < 60 * 60_000
+})
 
 /**
  * The pass banner: one message per server-decided state, and nothing at all when the
@@ -66,9 +154,8 @@ const passNotice = computed<{ text: string; tone: 'warning' | 'error' } | null>(
 const passUsable = computed(() => props.me.passState === 'valid')
 
 /**
- * The cardholder photo is a PROTECTED file, so its URL needs a short-lived file token.
- * Built with the badge client (not the operator one) so the token is issued against the
- * badge session.
+ * The cardholder photo is a PROTECTED file, so its URL needs a short-lived file token,
+ * issued against whichever session is asking (see the `client` prop).
  */
 async function loadPhoto() {
   const m = props.me
@@ -77,8 +164,8 @@ async function loadPhoto() {
     return
   }
   try {
-    const token = await badgePb.files.getToken()
-    photoUrl.value = badgePb.files.getURL(
+    const token = await props.client.files.getToken()
+    photoUrl.value = props.client.files.getURL(
       { id: m.photoRecord, collectionId: 'cardholders', collectionName: 'cardholders' },
       m.photoFile,
       { token, thumb: '400x400' },
@@ -88,182 +175,67 @@ async function loadPhoto() {
   }
 }
 watch(() => [props.me.photoRecord, props.me.photoFile], loadPhoto, { immediate: true })
-
-// --- password management ---
-//
-// A holder who signed in by OTP has no password yet, so this is "Set a password"; one
-// who has is "Change password" and must supply the current one. The server re-reads
-// `password_set` and is the real gate — this only shapes the form.
-const showPasswordForm = ref(false)
-const oldPassword = ref('')
-const newPassword = ref('')
-const confirmPassword = ref('')
-const savingPassword = ref(false)
-const passwordError = ref('')
-const passwordSaved = ref(false)
-
-function togglePasswordForm() {
-  showPasswordForm.value = !showPasswordForm.value
-  oldPassword.value = ''
-  newPassword.value = ''
-  confirmPassword.value = ''
-  passwordError.value = ''
-  passwordSaved.value = false
-}
-
-async function savePassword() {
-  passwordError.value = ''
-  passwordSaved.value = false
-  if (newPassword.value.length < 8) {
-    passwordError.value = 'Use at least 8 characters.'
-    return
-  }
-  if (newPassword.value !== confirmPassword.value) {
-    passwordError.value = 'The two passwords do not match.'
-    return
-  }
-  savingPassword.value = true
-  try {
-    // The store re-authenticates afterwards: changing a password rotates the record's
-    // token key server-side, which invalidates this very session.
-    await badgeAuth.setPassword(newPassword.value, confirmPassword.value, oldPassword.value)
-    oldPassword.value = ''
-    newPassword.value = ''
-    confirmPassword.value = ''
-    // Collapse the form so the confirmation below it is what the holder sees.
-    showPasswordForm.value = false
-    passwordSaved.value = true
-  } catch (err: any) {
-    passwordError.value =
-      err?.status === 429
-        ? 'Too many attempts. Wait a minute and try again.'
-        : err?.response?.message || 'Could not set your password.'
-  } finally {
-    savingPassword.value = false
-  }
-}
 </script>
 
 <template>
-  <div class="space-y-4">
-    <!-- The badge -->
-    <div class="card bg-base-100 shadow-sm">
-      <div class="card-body items-center text-center gap-3">
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body items-center text-center gap-3 p-4">
+      <div class="flex items-center gap-3 w-full text-left">
         <img
           v-if="photoUrl"
           :src="photoUrl"
           :alt="me.name"
-          class="w-24 h-24 rounded-full object-cover bg-base-300"
+          class="w-16 h-16 rounded-full object-cover bg-base-300 shrink-0"
         />
         <div
           v-else
-          class="w-24 h-24 rounded-full bg-base-300 flex items-center justify-center text-2xl font-semibold"
+          class="w-16 h-16 rounded-full bg-base-300 flex items-center justify-center text-xl font-semibold shrink-0"
         >
           {{ (me.name || '?').slice(0, 1).toUpperCase() }}
         </div>
 
-        <div>
-          <div class="font-bold text-lg">{{ me.name || 'Cardholder' }}</div>
-          <div class="text-sm text-base-content/60">{{ me.email }}</div>
-        </div>
-
-        <div v-if="me.kind === 'visitor'" class="badge badge-outline">Visitor</div>
-
-        <!-- Why this badge does not work, when it does not. Says nothing at all
-             when the pass is valid. -->
-        <div
-          v-if="passNotice"
-          class="alert py-2 text-sm w-full"
-          :class="passNotice.tone === 'error' ? 'alert-error' : 'alert-warning'"
-        >
-          <span>{{ passNotice.text }}</span>
-        </div>
-
-        <!-- The QR is whatever the server sent: the credential value for a live
-             visitor pass, an inert identifier for a staff badge, nothing at all for
-             a suspended one. A staff badge keeps showing its identifier while a
-             credential is pending — it identifies the person, which is true
-             regardless, and it says so below. -->
-        <template v-if="me.qr">
-          <QrCode :value="me.qr" :size="200" />
-          <p v-if="me.qrSecret" class="text-xs text-base-content/60">
-            This code opens doors — treat it like a key and do not share a screenshot.
-          </p>
-          <p v-else class="text-xs text-base-content/60">
-            For identification. This code does not open doors.
-          </p>
-        </template>
-
-        <div v-if="passUsable && validUntilLabel" class="text-xs text-base-content/50">
-          Valid until {{ validUntilLabel }}
+        <div class="min-w-0 flex-1">
+          <div class="font-bold truncate">{{ me.name || 'Cardholder' }}</div>
+          <div class="text-sm text-base-content/60 truncate">{{ me.email }}</div>
+          <div v-if="me.kind === 'visitor'" class="badge badge-outline badge-sm mt-1">Visitor</div>
         </div>
       </div>
-    </div>
 
-    <!-- Password: set a first one (signed in by code) or change an existing one. -->
-    <div class="card bg-base-100 shadow-sm">
-      <div class="card-body gap-3">
-        <div class="flex items-center justify-between gap-2">
-          <div class="min-w-0">
-            <h2 class="card-title text-base">
-              {{ badgeAuth.hasPassword ? 'Change password' : 'Set a password' }}
-            </h2>
-            <p class="text-xs text-base-content/60">
-              {{
-                badgeAuth.hasPassword
-                  ? 'Sign in without waiting for an emailed code.'
-                  : 'Optional. Lets you sign in without waiting for an emailed code.'
-              }}
-            </p>
-          </div>
-          <button class="btn btn-sm btn-outline shrink-0" @click="togglePasswordForm">
-            {{ showPasswordForm ? 'Cancel' : badgeAuth.hasPassword ? 'Change' : 'Set' }}
-          </button>
+      <!-- Why this badge does not work, when it does not. Says nothing at all
+           when the pass is valid. -->
+      <div
+        v-if="passNotice"
+        class="alert py-2 text-sm w-full text-left"
+        :class="passNotice.tone === 'error' ? 'alert-error' : 'alert-warning'"
+      >
+        <span>{{ passNotice.text }}</span>
+      </div>
+
+      <!-- The QR is whatever the server sent: the credential value for a live
+           visitor pass, an inert identifier for a staff badge, nothing at all for
+           a suspended one. A staff badge keeps showing its identifier while a
+           credential is pending — it identifies the person, which is true
+           regardless, and it says so below. -->
+      <template v-if="me.qr">
+        <QrCode :value="me.qr" :size="compact ? 148 : 180" />
+        <p v-if="!compact" class="text-xs text-base-content/60">
+          {{
+            me.qrSecret
+              ? 'This code opens doors — treat it like a key and do not share a screenshot.'
+              : 'For identification. This code does not open doors.'
+          }}
+        </p>
+      </template>
+
+      <div v-if="passUsable && validUntilLabel" class="text-xs">
+        <div
+          v-if="remainingLabel"
+          class="font-medium"
+          :class="remainingUrgent ? 'text-warning' : 'text-base-content/70'"
+        >
+          {{ remainingLabel }}
         </div>
-
-        <form v-if="showPasswordForm" class="space-y-3" @submit.prevent="savePassword">
-          <div v-if="passwordError" class="alert alert-error py-2 text-sm">{{ passwordError }}</div>
-
-          <label v-if="badgeAuth.hasPassword" class="form-control">
-            <span class="label-text mb-1">Current password</span>
-            <input
-              v-model="oldPassword"
-              type="password"
-              autocomplete="current-password"
-              class="input input-bordered input-sm"
-              :disabled="savingPassword"
-            />
-          </label>
-          <label class="form-control">
-            <span class="label-text mb-1">New password</span>
-            <input
-              v-model="newPassword"
-              type="password"
-              autocomplete="new-password"
-              class="input input-bordered input-sm"
-              :disabled="savingPassword"
-            />
-          </label>
-          <label class="form-control">
-            <span class="label-text mb-1">Confirm new password</span>
-            <input
-              v-model="confirmPassword"
-              type="password"
-              autocomplete="new-password"
-              class="input input-bordered input-sm"
-              :disabled="savingPassword"
-            />
-          </label>
-          <p class="text-xs text-base-content/50">
-            At least 8 characters. Setting a password signs out your other devices.
-          </p>
-          <button type="submit" class="btn btn-primary btn-sm w-full" :disabled="savingPassword">
-            <span v-if="savingPassword" class="loading loading-spinner loading-sm"></span>
-            <span v-else>Save password</span>
-          </button>
-        </form>
-
-        <p v-else-if="passwordSaved" class="text-sm text-success">Your password has been set.</p>
+        <div class="text-base-content/50">Valid until {{ validUntilLabel }}</div>
       </div>
     </div>
   </div>

@@ -8,6 +8,10 @@
 //	POST /api/badge/outputs/{id}/pulse     drive an aux output, policy.DecideOutput
 //	POST /api/badge/password               set or change one's own password
 //
+// Plus one OPERATOR route that reads a badge without becoming one:
+//
+//	GET  /api/badge/preview/{id}           what this cardholder's own badge says (preview.go)
+//
 // All of them are bound to `cardholders` alone. They are NOT operator routes and share
 // no authorization with internal/commandapi: a cardholder has no `permissions` field,
 // so capability checks are meaningless here. The area and output routes live in
@@ -201,6 +205,9 @@ func Register(se *core.ServeEvent, nc *nats.Conn, kv jetstream.KeyValue, subj su
 	h.registerAreaRoutes(se)
 	// The holder's own things placed on a site's floor plan. See live.go.
 	h.registerLiveRoute(se)
+	// The OPERATOR's read-only look at a holder's badge, for troubleshooting. See
+	// preview.go — it mints no session and actuates nothing.
+	h.registerPreviewRoute(se)
 	// The OPERATOR routes: mint a visitor, end a visit. Gated by the operator
 	// collection + `enroll`, never by a badge token. See visitors.go.
 	h.registerVisitorRoutes(se)
@@ -296,11 +303,29 @@ func (h *handler) me(e *core.RequestEvent) error {
 	if !ok {
 		return e.NotFoundError("no badge is linked to this account", nil)
 	}
+	resp, err := h.buildMe(e.Request.Context(), cardholder)
+	if err != nil {
+		return e.InternalServerError("failed to load credentials", err)
+	}
+	return e.JSON(http.StatusOK, resp)
+}
 
+// buildMe assembles one cardholder's badge: the face (photo, QR, pass state) and
+// everything the badge grants.
+//
+// Split out of the route so the operator's read-only preview (preview.go) renders the
+// EXACT payload the holder's own device gets, rather than a second projection that could
+// drift from it. A troubleshooting view that shows something subtly different from what
+// the holder sees is worse than no view at all — the whole point is to answer "what does
+// their screen say", and a reimplementation answers "what does a similar screen say".
+//
+// It takes the cardholder record rather than the request event for the same reason:
+// nothing in here may depend on WHO asked, only on whose badge it is.
+func (h *handler) buildMe(ctx context.Context, cardholder *core.Record) (meResponse, error) {
 	kind := cardholder.GetString("kind")
 	creds, err := h.credentialsFor(cardholder.Id)
 	if err != nil {
-		return e.InternalServerError("failed to load credentials", err)
+		return meResponse{}, err
 	}
 	state, describe := evaluatePass(creds, cardholder.GetString("status"), time.Now().UTC())
 
@@ -311,6 +336,14 @@ func (h *handler) me(e *core.RequestEvent) error {
 		PhotoRecord: cardholder.Id,
 		PhotoFile:   cardholder.GetString("photo"),
 		PassState:   state,
+		// Empty, not nil. A nil slice marshals to JSON `null`, and the client reads these
+		// as arrays (`portals.length`) — so on the fail-soft path below, where the policy
+		// snapshot is unavailable and none of the three is ever assigned, a `null` would
+		// turn a degraded badge into a blank screen. The whole point of failing soft there
+		// is that the identity half still renders.
+		Portals: []badgePortal{},
+		Areas:   []badgeArea{},
+		Outputs: []badgeOutput{},
 	}
 	if describe != nil {
 		resp.ValidFrom = dateRFC3339(describe, "valid_from")
@@ -330,19 +363,19 @@ func (h *handler) me(e *core.RequestEvent) error {
 	}
 
 	// Everything this badge can act on, from the same graph the decisions use.
-	snap, err := h.snapshot(e.Request.Context())
+	snap, err := h.snapshot(ctx)
 	if err != nil {
 		// Fail soft: the identity half of the badge is still useful and correct
 		// without the door list, and a visitor staring at a blank screen because
 		// NATS hiccuped is worse than a badge with no buttons.
 		h.log.Error("badge me: policy snapshot unavailable", "cardholder", cardholder.Id, "error", err)
-		return e.JSON(http.StatusOK, resp)
+		return resp, nil
 	}
 	now := time.Now().UTC()
 	resp.Portals = h.portalsForBadge(snap, cardholder.Id)
 	resp.Areas = h.areasForBadge(snap, cardholder.Id, now)
 	resp.Outputs = h.outputsForBadge(snap, cardholder.Id)
-	return e.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 // portalsForBadge resolves the graph's portal codes to display records. A code with
@@ -498,6 +531,13 @@ func (h *handler) snapshot(reqCtx context.Context) (*policysnapshot.Snapshot, er
 	defer h.mu.Unlock()
 	if h.cached != nil && time.Since(h.cachedAt) < snapshotTTL {
 		return h.cached, nil
+	}
+	// Unreachable in accessd (OnServe fails before Register if the bucket cannot be
+	// bound), but an error rather than a panic: every caller already has a considered
+	// fail-soft or fail-closed branch for "no policy", and a nil interface would reach
+	// SnapshotKV's first method call instead and take the request down.
+	if h.kv == nil {
+		return nil, errors.New("policy KV is not bound")
 	}
 	// Deliberately NOT derived from reqCtx: a client that disconnects mid-drain
 	// would otherwise poison the shared refresh for everyone else.
