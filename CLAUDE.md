@@ -230,7 +230,16 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   `lock_relay`/`reader_address`/the policy code, and "portal in a group in a role I hold" is a deep back-relation
   filter. Areas never appear on the plan (only portals and aux I/O carry a `floorplan_position`; an area is a set with
   no single place to pin), and there is no live state or realtime — the badge polls `/me` for the one piece of state a
-  holder can act on.
+  holder can act on (and that state is policy *intent* from `armStateFor`, not a hardware report; nothing in the badge
+  tier reads `point_status`).
+  The Access tab is an **adaptive** switcher over plan / doors / areas / controls / on-site (`BadgeAccessPanel`), not
+  the operator Monitor's fixed segments: a segment renders only if the holder has something in it, and with one
+  segment there is no switcher at all. A site has hundreds of points and an operator is hunting; a holder typically
+  has a handful of doors and no areas or controls, so fixed segments would be mostly-empty chrome over a three-item
+  list — the common badge collapses to plan-vs-list, which is the only choice most holders have. "On site" sits beside
+  the three kinds because the split a holder cares about is press-a-button vs walk-to, and past a few doors that list
+  wants grouping by building (`BadgeOnSiteList`) which the action lists do not. Showing one view at a time is also why
+  the action lists no longer bound their own height: the nested scroll existed because four cards were stacked.
   `GET /api/badge/preview/{id}` (`enroll`, operator-only, `preview.go`) is the **operator's** read of a holder's badge,
   for "my pass doesn't work" — it returns the holder's own `/me` and `/live` payloads (the same `buildMe`/`buildLive`
   builders serve both, so a preview that differs from their screen is a bug) plus the three facts a badge cannot show

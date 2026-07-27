@@ -209,6 +209,16 @@ Everything that *actuates* names `cardholders` alone: an operator opening a door
 operator action, rather than through a second path that would leave the audit trail
 ambiguous about which authority they used.
 
+The holder's Access tab presents these as an **adaptive** switcher — plan, doors, areas,
+controls, on-site — where a segment appears only if that badge has something in it, and a
+badge with one segment gets no switcher at all. It is deliberately not a copy of the
+operator's Live View: that has fixed segments because a site has hundreds of points and an
+operator is hunting through them, whereas a holder typically has a handful of doors and no
+areas or controls, so the common badge collapses to a plan-versus-list choice. Nor does it
+show live hardware state — an area's chip is the policy *intent* the server resolved, and
+door open/closed never appears. Watching a building is the console's job; a badge is what
+you use to get into one.
+
 Each badge action also has a **per-record opt-in**, all default false, all control-plane
 only (never mirrored to KV): `portals.allow_remote_unlock`, `areas.allow_remote_arm`,
 `aux_output.allow_remote`, and `locations.badge_floorplan`. None of them widens anything —

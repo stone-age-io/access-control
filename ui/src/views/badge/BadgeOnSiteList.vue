@@ -156,9 +156,12 @@ function toggle(location: string) {
         </button>
       </label>
 
-      <!-- Bounded with its own scroll: a badge with thirty doors must not push the QR tab,
-           or the buttons above this, off the screen. -->
-      <div class="max-h-56 overflow-y-auto overscroll-contain -mx-1 px-1">
+      <!-- Bounded with its own scroll so the filter above stays reachable: on a badge with
+           thirty doors, a filter you have to scroll back up to find is a filter nobody uses.
+           A viewport fraction rather than a fixed 14rem, because this is now one view of a
+           switcher rather than one card among four — the old bound left most of the screen
+           empty while the list inside it scrolled. -->
+      <div class="max-h-[55vh] overflow-y-auto overscroll-contain -mx-1 px-1">
         <p v-if="!groups.length" class="text-sm text-base-content/50 py-4 text-center">
           Nothing matches “{{ query }}”.
         </p>

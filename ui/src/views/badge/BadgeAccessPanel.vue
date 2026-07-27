@@ -77,13 +77,12 @@ const nothingGranted = computed(
 
 // --- floor plans -----------------------------------------------------------
 //
-// A best-effort request when the caller supplied none: the list above is the complete
-// surface, and a plan is an upgrade a location opts into (`locations.badge_floorplan`). Most
+// A best-effort request when the caller supplied none: the lists are the complete surface,
+// and a plan is an upgrade a location opts into (`locations.badge_floorplan`). Most
 // installs return an empty list, so a failure here is silent — there is nothing to tell the
 // holder about a picture they were never promised.
 const fetchedPlans = ref<BadgeLive['locations']>([])
 const plans = computed<BadgeLive['locations']>(() => props.plans ?? fetchedPlans.value)
-const showPlan = ref(true)
 
 onMounted(async () => {
   if (props.plans !== undefined) return // the caller already has them
@@ -94,6 +93,74 @@ onMounted(async () => {
     fetchedPlans.value = []
   }
 })
+
+// --- which view is showing --------------------------------------------------
+//
+// The operator's Live View switches between a floor plan, portals, areas, and aux I/O. This
+// is the same idea sized for a badge, with one rule that makes the difference: a segment
+// exists only if the holder has something in it, and with nothing to choose between the
+// switcher does not render at all. A site has hundreds of points and an operator is hunting;
+// a holder typically has a handful of doors and no areas or controls at all, so fixed
+// segments would be mostly-empty chrome over a three-item list.
+//
+// "On site" sits beside the three kinds rather than under them because the split a holder
+// cares about is what they can press a button for versus what they must walk to — and past
+// a few doors that list wants grouping by building, which BadgeOnSiteList does and the
+// action lists do not.
+type ViewKey = 'plan' | 'doors' | 'areas' | 'controls' | 'onsite'
+interface ViewTab {
+  key: ViewKey
+  label: string
+  icon: string
+  /** Shown beside the label; omitted for the plan, which is one thing not a count of them. */
+  count?: number
+}
+
+const VIEW_STORAGE_KEY = 'sa.badge.view'
+
+const views = computed<ViewTab[]>(() => {
+  const out: ViewTab[] = []
+  if (plans.value.length) out.push({ key: 'plan', label: 'Plan', icon: '🗺️' })
+  if (remotePortals.value.length)
+    out.push({ key: 'doors', label: 'Doors', icon: '🚪', count: remotePortals.value.length })
+  if (remoteAreas.value.length)
+    out.push({ key: 'areas', label: 'Areas', icon: '🛡️', count: remoteAreas.value.length })
+  if (remoteOutputs.value.length)
+    out.push({ key: 'controls', label: 'Controls', icon: '⚡', count: remoteOutputs.value.length })
+  if (onSiteItems.value.length)
+    out.push({ key: 'onsite', label: 'On site', icon: '📍', count: onSiteItems.value.length })
+  return out
+})
+
+function storedView(): ViewKey | '' {
+  // Never in the operator's preview: it renders this component to show what the HOLDER
+  // sees, so a segment chosen while troubleshooting must not follow the operator to their
+  // own badge.
+  if (props.readonly) return ''
+  const raw = localStorage.getItem(VIEW_STORAGE_KEY)
+  return raw === 'plan' || raw === 'doors' || raw === 'areas' || raw === 'controls' || raw === 'onsite'
+    ? raw
+    : ''
+}
+const chosen = ref<ViewKey | ''>(storedView())
+
+/**
+ * The view actually rendered. Resolved rather than stored, so the two ways a choice can go
+ * stale are handled in one place: nothing chosen yet, and a choice whose segment is gone —
+ * a location that opted out of plans, or a pass whose grants changed. Falling through to the
+ * first segment also means the plan takes over once `/api/badge/live` lands, which is the
+ * right default: "which door am I at" is the question a plan answers and a list does not.
+ */
+const activeView = computed<ViewKey | ''>(() => {
+  const available = views.value
+  if (chosen.value && available.some((v) => v.key === chosen.value)) return chosen.value
+  return available[0]?.key ?? ''
+})
+
+function setView(key: ViewKey) {
+  chosen.value = key
+  if (!props.readonly) localStorage.setItem(VIEW_STORAGE_KEY, key)
+}
 
 /**
  * Run one badge action. `refresh` re-fetches the badge afterwards, which arming needs:
@@ -146,17 +213,36 @@ function stateLabel(state: BadgeArea['state']) {
       </span>
     </div>
 
-    <!-- Floor plans, when a location opted in. Shown above the lists because "which door
-         am I at" is the question a plan answers better than a list ever does — and
-         collapsible, because a list is faster once you know the building. -->
-    <template v-if="plans.length">
-      <div class="flex justify-end">
-        <button class="btn btn-xs btn-ghost gap-1" @click="showPlan = !showPlan">
-          {{ showPlan ? '☰ List only' : '🗺️ Show plan' }}
-        </button>
-      </div>
+    <!-- The switcher. Wrapping buttons rather than DaisyUI `tabs-boxed`, which clips labels
+         and double-scrolls once several segments overflow a phone (the same reason Reports
+         does it this way); `min-h-11` because this is badge chrome a thumb aims at. Hidden
+         entirely at one segment — a switcher with nothing to switch to is decoration. -->
+    <div v-if="views.length > 1" role="tablist" class="flex flex-wrap gap-2">
+      <button
+        v-for="v in views"
+        :key="v.key"
+        type="button"
+        role="tab"
+        :aria-selected="activeView === v.key"
+        class="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium whitespace-nowrap transition-colors"
+        :class="
+          activeView === v.key
+            ? 'bg-primary text-primary-content shadow-sm'
+            : 'bg-base-200 text-base-content/70 hover:bg-base-300'
+        "
+        @click="setView(v.key)"
+      >
+        <span aria-hidden="true">{{ v.icon }}</span>
+        <span>{{ v.label }}</span>
+        <span v-if="v.count" class="opacity-60">{{ v.count }}</span>
+      </button>
+    </div>
+
+    <!-- Floor plans, when a location opted in. First segment, because "which door am I at"
+         is the question a plan answers better than a list ever does. -->
+    <template v-if="activeView === 'plan'">
       <BadgeFloorplan
-        v-for="plan in showPlan ? plans : []"
+        v-for="plan in plans"
         :key="plan.id"
         :location="plan"
         :enabled="canAct"
@@ -164,12 +250,16 @@ function stateLabel(state: BadgeArea['state']) {
       />
     </template>
 
-    <!-- Doors. Bounded with its own scroll for the same reason as the on-site list: a badge
-         with twenty remote doors must not turn this tab into a document. -->
-    <div v-if="remotePortals.length" class="card bg-base-100 shadow-sm">
+    <!-- Doors.
+         These three lists used to bound themselves to ~256px and scroll inside the page,
+         because all of them were stacked and a badge with twenty remote doors turned the
+         tab into a document. With one view on screen at a time that reason is gone, and
+         what is left is a nested scroll region on a phone — so they grow and the page's own
+         scroll carries them. -->
+    <div v-if="activeView === 'doors'" class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3 p-4">
         <h2 class="card-title text-base">Open a door</h2>
-        <div class="max-h-64 overflow-y-auto overscroll-contain space-y-2 -mx-1 px-1">
+        <div class="space-y-2">
           <div v-for="p in remotePortals" :key="p.id" class="space-y-1">
             <button
               class="btn btn-primary w-full justify-between"
@@ -196,10 +286,10 @@ function stateLabel(state: BadgeArea['state']) {
 
     <!-- Areas. Arm and disarm are separate rights, so they are separate buttons and
          either may be absent. -->
-    <div v-if="remoteAreas.length" class="card bg-base-100 shadow-sm">
+    <div v-if="activeView === 'areas'" class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3 p-4">
         <h2 class="card-title text-base">Areas</h2>
-        <div class="max-h-64 overflow-y-auto overscroll-contain space-y-3 -mx-1 px-1">
+        <div class="space-y-3">
           <div v-for="a in remoteAreas" :key="a.id" class="space-y-2">
             <div class="flex items-center justify-between gap-2">
               <div class="min-w-0">
@@ -240,10 +330,10 @@ function stateLabel(state: BadgeArea['state']) {
     </div>
 
     <!-- Aux outputs: one momentary action each. -->
-    <div v-if="remoteOutputs.length" class="card bg-base-100 shadow-sm">
+    <div v-if="activeView === 'controls'" class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3 p-4">
         <h2 class="card-title text-base">Controls</h2>
-        <div class="max-h-64 overflow-y-auto overscroll-contain space-y-2 -mx-1 px-1">
+        <div class="space-y-2">
           <div v-for="o in remoteOutputs" :key="o.id" class="space-y-1">
             <button
               class="btn btn-outline w-full justify-between"
@@ -270,7 +360,7 @@ function stateLabel(state: BadgeArea['state']) {
 
     <!-- Everything on the badge that can only be used in person: grouped by building,
          collapsible, filterable, and bounded. See BadgeOnSiteList. -->
-    <BadgeOnSiteList v-if="onSiteItems.length" :items="onSiteItems" :pass-usable="passUsable" />
+    <BadgeOnSiteList v-if="activeView === 'onsite'" :items="onSiteItems" :pass-usable="passUsable" />
 
     <div v-if="nothingGranted" class="text-center text-sm text-base-content/50 py-8">
       {{ readonly ? 'Nothing is assigned to this badge yet.' : 'Nothing is assigned to your badge yet.' }}
