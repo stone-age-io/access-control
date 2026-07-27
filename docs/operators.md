@@ -330,7 +330,7 @@ different places:
 
 | | **Visitor** | **Staff holder** |
 |---|---|---|
-| Where | **Visitors → New Visitor Pass** | **Cardholder form → Badge login** (a checkbox) |
+| Where | **Cardholders → Visitor Pass** | **Cardholder form → Badge login** (a checkbox) |
 | Route | `POST /api/badge/visitors` | none — it is a field update |
 | Creates | the person + a time-bound credential, in one transaction | nothing; the person already exists |
 | Access from | a curated `visitor_preset` role, chosen at mint | the roles already on that cardholder |
@@ -338,6 +338,18 @@ different places:
 | Usual sign-in | emailed one-time code | password |
 | Extending it | **Reissue** — a new pass, the old code revoked | issue or extend a credential |
 | Ending it | **Revoke** (pass dies, person kept) or **Delete** (both) | untick the checkbox — the credential is untouched |
+
+**One page, one filter.** Only the *minting* is a separate flow; after that a visitor is an
+ordinary row on **Cardholders**, found under its **Visitors** filter (server-side on `kind`,
+remembered per browser, defaulting to **Permanent** so a lobby of guests does not bury the
+roster). Their page is the cardholder page, which grows the pass state, its window, and the
+visit actions when `kind = "visitor"`. There were two pages over this one collection until
+the merge, and searching the roster for someone who happened to be a visitor returned nothing
+with no hint the other page existed — so search now spans every kind whatever the filter
+shows, and says how many matches it is hiding. The pass-state chips are the one thing scoped
+to the Visitors filter: a state is derived from the newest of a person's credentials, a row in
+another collection, so it narrows the loaded page rather than the query — sound on 50
+newest-first visits, misleading on a name-sorted roster of thousands.
 
 **Reissue, not extend.** A visitor's QR carries the credential *value* — a working key, on a
 screen, for hours — so it gets photographed, screenshotted and forwarded as a matter of

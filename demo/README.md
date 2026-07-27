@@ -48,7 +48,7 @@ should report `created=0 failed=0`.
 | Aux output on a badge | `ag-relays` grants the East gate strike (Facilities and Security hold it) |
 | Remote opt-ins | unlock on `east-lobby` + `hq-east-stair`; arm/disarm on `dc-warehouse`; the gate strike; floor plan on `east-office` |
 | Operator's own badge | `admin@local.dev` is linked to Sarah Chen's cardholder, so "My badge" in the profile menu works |
-| Troubleshooting a badge | the expired and revoked visitors are the ones to open — **View their badge** on a visitor or cardholder shows what that person's own screen says, which is how you tell "expired" from "never issued" from "no login" without cross-referencing four collections |
+| Troubleshooting a badge | the expired and revoked visitors are the ones to open — find them on **Cardholders** under the **Visitors** filter, then **View their badge** shows what that person's own screen says, which is how you tell "expired" from "never issued" from "no login" without cross-referencing four collections |
 | History | 9 taps and 3 unacknowledged alarms, backdated minutes to hours |
 
 The arm-rights asymmetry is the part worth looking at: the cleaning crew can arm the

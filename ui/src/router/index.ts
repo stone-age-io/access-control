@@ -128,10 +128,20 @@ const routes: RouteRecordRaw[] = [
       { path: 'cardholders/:id/edit', name: 'CardholderEdit', component: () => import('@/views/cardholders/CardholderFormView.vue'), meta: { title: 'Edit Cardholder', capability: ENROLL } },
 
       // Visitors (badge tier, operator side): time-bound passes for guests.
-      // `new` before `:id` so the mint path is never matched as a cardholder id.
-      { path: 'visitors', name: 'Visitors', component: () => import('@/views/visitors/VisitorListView.vue'), meta: { title: 'Visitors' } },
+      //
+      // A visitor IS a cardholder (`kind = "visitor"`), so the list and detail pages merged
+      // into the cardholder ones — the list filters on `kind`, and the detail page grows the
+      // pass section. What survives here is the MINT, which cannot merge into the cardholder
+      // form: POST /api/badge/visitors creates the person and a time-bound credential in one
+      // transaction, with the credential value from the server's CSPRNG.
+      //
+      // The other two stay as redirects rather than being deleted: invite emails, bookmarks,
+      // and the console's own older links point at them, and a 404 here is a support call
+      // from someone trying to look up a guest. `new` before `:id` so the mint path is never
+      // matched as a cardholder id.
+      { path: 'visitors', redirect: '/cardholders' },
       { path: 'visitors/new', name: 'VisitorNew', component: () => import('@/views/visitors/VisitorMintView.vue'), meta: { title: 'New Visitor Pass', capability: ENROLL } },
-      { path: 'visitors/:id', name: 'Visitor', component: () => import('@/views/visitors/VisitorDetailView.vue'), meta: { title: 'Visitor' } },
+      { path: 'visitors/:id', redirect: (to) => `/cardholders/${to.params.id}` },
 
       // Credentials (a credential belongs to one cardholder)
       { path: 'credentials', name: 'Credentials', component: () => import('@/views/credentials/CredentialListView.vue'), meta: { title: 'Credentials' } },

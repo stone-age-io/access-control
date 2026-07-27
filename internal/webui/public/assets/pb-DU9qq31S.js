@@ -1,1 +1,0 @@
-import{t as e}from"./pocketbase.es-BGGtpHwX.js";var t=new e(`/`);t.autoCancellation(!1);export{t};

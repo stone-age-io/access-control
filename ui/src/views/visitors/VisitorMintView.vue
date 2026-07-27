@@ -169,7 +169,10 @@ onMounted(() => {
 
 <template>
   <form @submit.prevent="handleSubmit">
-    <FormLayout title="New Visitor Pass" :breadcrumbs="[{ label: 'Visitors', to: '/visitors' }, { label: 'New' }]">
+    <FormLayout
+      title="New Visitor Pass"
+      :breadcrumbs="[{ label: 'Cardholders', to: '/cardholders' }, { label: 'New Visitor Pass' }]"
+    >
       <!-- Success -->
       <BaseCard v-if="result" title="Pass issued">
         <div class="space-y-4">
@@ -231,11 +234,10 @@ onMounted(() => {
 
           <div class="flex flex-wrap gap-2">
             <button type="button" class="btn btn-primary btn-sm" @click="reset">Issue another</button>
-            <router-link :to="`/visitors/${result.cardholderId}`" class="btn btn-outline btn-sm">
+            <!-- One destination now: the visit and the person are one page, so the two
+                 links that used to sit here went to the same record by two routes. -->
+            <router-link :to="`/cardholders/${result.cardholderId}`" class="btn btn-outline btn-sm">
               View visitor
-            </router-link>
-            <router-link :to="`/cardholders/${result.cardholderId}`" class="btn btn-ghost btn-sm">
-              View cardholder
             </router-link>
           </div>
         </div>
@@ -313,7 +315,7 @@ onMounted(() => {
            branch is expressed inside it rather than around it. -->
       <template #actions>
         <template v-if="!result">
-          <router-link to="/visitors" class="btn btn-ghost">Cancel</router-link>
+          <router-link to="/cardholders" class="btn btn-ghost">Cancel</router-link>
           <button type="submit" class="btn btn-primary" :disabled="submitting || !roles.length">
             <span v-if="submitting" class="loading loading-spinner"></span>
             <span v-else>Issue pass</span>

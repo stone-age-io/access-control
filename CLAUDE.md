@@ -275,6 +275,17 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   visit stays on the record and a returning visitor is still recognised. Delete is the retention decision, and it
   now works — `credentials.user` cascades (`1750000036`), so removing a person removes their cards, through the
   ordinary delete path so the mirror prunes the `cred.{value}` keys.
+  On the **console side** only the mint is a separate page (`/visitors/new`): a visitor is a `cardholders` row, so
+  the visitor list and detail views were folded into the cardholder ones and the old routes redirect. The list
+  filters `kind` server-side (Permanent / Visitors / All, default Permanent, remembered in `localStorage`), the
+  detail page grows the pass state + Reissue/Revoke when `kind = "visitor"`, and `utils/visitorPass.ts` is the one
+  derivation both read so they cannot describe a visit two ways. Two things stay asymmetric on purpose: **search
+  always spans every kind** whatever the filter shows, reporting how many matches it is hiding (two pages meant a
+  roster search for a guest returned nothing, with no hint the other page existed — that bug is the reason for the
+  merge), and the **pass-state chips exist only under the Visitors filter**, because a state comes from the newest
+  of a person's credentials in another collection and so narrows the *loaded page*, not the query — honest over 50
+  `-created` visits, a lie on a name-sorted roster of thousands. The mint cannot merge into the cardholder form:
+  the credential value must come from the server's CSPRNG, and person + credential are one transaction.
   `GET /api/badge/me` reports a single `passState` (`valid`/`expired`/`not_yet_valid`/`none`/`suspended`) rather
   than an `expired` boolean, because that boolean was computed as "no in-window credential" and so told a cardholder
   who had never been issued one that their pass was "not currently valid"; a suspended cardholder gets no QR at all,

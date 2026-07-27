@@ -33,7 +33,8 @@ const form = ref({
   roles: [] as string[],
   // Badge-tier fields. They live in `form` with everything else because that is what
   // they are — columns on this row, not a related record. `kind` is read-only here
-  // (a visitor is minted on the Visitors page) but must round-trip, or saving a
+  // (a visitor is minted at /visitors/new, which creates the person and their
+  // time-bound credential in one transaction) but must round-trip, or saving a
   // visitor from this form would silently demote them to an ordinary cardholder.
   badge_login: false,
   kind: '' as BadgeKind | '',
@@ -413,8 +414,9 @@ onMounted(async () => {
             would reach them.
           </p>
           <p v-else-if="isVisitor" class="text-xs text-base-content/60">
-            This person is a <strong>visitor</strong>. Their pass is managed on the Visitors page;
-            turning this off here only removes their sign-in, it does not end the visit.
+            This person is a <strong>visitor</strong>. Their pass is reissued and revoked from their
+            cardholder page; turning this off here only removes their sign-in, it does not end the
+            visit.
           </p>
 
           <template v-if="form.badge_login && canHaveBadge">

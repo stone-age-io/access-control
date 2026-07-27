@@ -33,11 +33,12 @@ const sections: NavSectionCap[] = [
   {
     title: 'People & Access',
     items: [
-      // Three peers, not a parent with two children. Cardholders and Visitors are the
-      // same collection split by `kind`, and Credentials is what actually opens a door —
-      // indenting either under Cardholders suggested a containment that does not exist.
+      // Cardholders covers visitors too: they are one collection split by `kind`, and the
+      // list filters on it. A second entry made the same rows look like two populations,
+      // and hid a searched-for guest behind a page the operator had no reason to open.
+      // Credentials stays a peer — it is what actually opens a door, not a child of a
+      // person.
       { label: 'Cardholders', icon: '🪪', path: '/cardholders' },
-      { label: 'Visitors', icon: '👋', path: '/visitors' },
       { label: 'Credentials', icon: '🎫', path: '/credentials' },
       { label: 'Roles', icon: '🏷️', path: '/roles' },
       { label: 'Access Groups', icon: '🗝️', path: '/access-groups' },
