@@ -23,15 +23,39 @@ import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
  *
  * Areas are deliberately absent: only portals and aux I/O carry a position, because an
  * area is a set of points with no single place to put a pin. They live in the list.
+ *
+ * # A marker selects. It never acts.
+ *
+ * This used to be two taps on the marker itself — the first naming it, the second
+ * unlocking — and it misfired, for two reasons that compounded.
+ *
+ * The marker was `btn btn-circle btn-xs`, which is the trap `main.css` documents: the
+ * touch-target rule lifts `btn-xs` to a 2.75rem MIN-HEIGHT below 1023px and nothing else,
+ * so `btn-circle`'s width won one axis and the override won the other. The hit box came out
+ * 48×44 on a phone and 48×24 on a laptop — an ellipse, far larger than the dot being aimed
+ * at, centred on the pin. Neighbouring pins' boxes overlapped, so a tap on one door's dot
+ * could resolve to the next door's button.
+ *
+ * On top of that, what a tap DID depended on which pin happened to be selected: tap A, tap
+ * B, tap A again and the third tap only re-selected. So a tap sometimes appeared to do
+ * nothing — and worse, a double-tap aimed at one door could unlock the one whose box caught
+ * it.
+ *
+ * Both go away by giving the marker one job. Selecting is idempotent and harmless, so an
+ * overlapping hit box costs a wrong NAME on screen, which the holder can see and correct,
+ * rather than a wrong door. Acting moved to a full-width labelled button below the plan —
+ * the same control the Doors view uses, so there is one way to unlock a door and not two.
+ * The marker is now a plain 44px button wrapping a small dot, rather than a DaisyUI `btn`
+ * whose sizing classes fight each other.
  */
 const props = withDefaults(
   defineProps<{
     location: BadgeLiveLocation
     enabled: boolean
     /**
-     * Why a tap does nothing, when `enabled` is false. Supplied because there is more than
-     * one reason: the holder's own badge is disabled by an unusable pass, while the
-     * operator's read-only preview is disabled by having no session to act with — and
+     * Why the action is unavailable, when `enabled` is false. Supplied because there is
+     * more than one reason: the holder's own badge is disabled by an unusable pass, while
+     * the operator's read-only preview is disabled by having no session to act with — and
      * telling an operator their pass is invalid, while looking at a valid one, would send
      * them off diagnosing the wrong thing.
      */
@@ -41,10 +65,12 @@ const props = withDefaults(
 )
 
 const natural = ref<{ w: number; h: number } | null>(null)
-const busy = ref<Record<string, boolean>>({})
-const results = ref<Record<string, { ok: boolean; message: string }>>({})
-/** The last-tapped pin, so the outcome message has somewhere to appear. */
+/** The selected marker, whose name and action fill the bar under the plan. */
 const selected = ref<string>('')
+// One selection can act at a time, so these are scalars rather than the per-pin maps this
+// component used to carry. Both are about the current selection and are cleared with it.
+const busy = ref(false)
+const result = ref<{ ok: boolean; message: string } | null>(null)
 
 function onImageLoad(e: Event) {
   const img = e.target as HTMLImageElement
@@ -69,52 +95,34 @@ const pins = computed<Pin[]>(() => [
   ...props.location.outputs.map((o): Pin => ({ ...o, kind: 'output' })),
 ])
 
-const selectedResult = computed(() => (selected.value ? results.value[selected.value] : undefined))
-const selectedPin = computed(() => pins.value.find((p) => p.id === selected.value))
+const selectedPin = computed<Pin | undefined>(() => pins.value.find((p) => p.id === selected.value))
+const actionLabel = computed(() =>
+  selectedPin.value?.kind === 'portal' ? 'Unlock this door' : 'Activate this control',
+)
 
-function note(id: string, ok: boolean, message: string) {
-  results.value = { ...results.value, [id]: { ok, message } }
+function select(pin: Pin) {
+  if (selected.value === pin.id) return
+  selected.value = pin.id
+  // The outcome belonged to the previous selection; carrying it over would caption one door
+  // with another's result.
+  result.value = null
 }
 
-/**
- * Two taps to act, not one.
- *
- * The first tap on a marker only names it — which is the more common thing a holder wants
- * ("which door is this?") and, on a phone-sized plan, the only safe default: these
- * markers are a few millimetres across, and a single tap firing a real unlock would make
- * a mis-touch open a door. The second tap on an already-selected marker is the deliberate
- * one. The button list on the Access tab needs no such guard, because those targets are
- * full-width and labelled.
- */
-async function tap(pin: Pin) {
-  if (selected.value !== pin.id) {
-    selected.value = pin.id
-    delete results.value[pin.id]
-    // A marker the holder cannot drive remotely is still worth tapping — it says which
-    // door they are looking at. Better than a button that silently does nothing.
-    if (!pin.remote) note(pin.id, false, 'Use this one in person')
-    return
-  }
+async function act() {
+  const pin = selectedPin.value
+  if (!pin || !pin.remote || !props.enabled || busy.value) return
 
-  if (!pin.remote) return // already said so; a second tap changes nothing
-  if (!props.enabled) {
-    note(pin.id, false, props.disabledNote)
-    return
-  }
-
-  busy.value = { ...busy.value, [pin.id]: true }
-  delete results.value[pin.id]
+  busy.value = true
+  result.value = null
   const path =
     pin.kind === 'portal' ? `/api/badge/unlock/${pin.id}` : `/api/badge/outputs/${pin.id}/pulse`
   try {
     await badgePb.send(path, { method: 'POST' })
-    note(pin.id, true, pin.kind === 'portal' ? 'Unlocked' : 'Activated')
+    result.value = { ok: true, message: pin.kind === 'portal' ? 'Unlocked' : 'Activated' }
   } catch (err: any) {
-    note(pin.id, false, actionErrorText(err))
+    result.value = { ok: false, message: actionErrorText(err) }
   } finally {
-    const next = { ...busy.value }
-    delete next[pin.id]
-    busy.value = next
+    busy.value = false
   }
 }
 </script>
@@ -133,41 +141,63 @@ async function tap(pin: Pin) {
           class="block w-full h-auto select-none"
           @load="onImageLoad"
         />
+        <!-- A 44px square hit area wrapping a small visible dot: big enough to hit on a
+             phone, small enough not to cover the plan it annotates. The dot is
+             pointer-events-none so a tap always resolves to the button, never the span. -->
         <button
           v-for="pin in pins"
           :key="pin.id"
           type="button"
-          class="absolute -translate-x-1/2 -translate-y-1/2 btn btn-circle btn-xs shadow"
-          :class="[
-            pin.id === selected ? 'btn-primary' : pin.remote ? 'btn-neutral' : 'btn-ghost bg-base-100',
-            busy[pin.id] ? 'loading' : '',
-          ]"
+          class="absolute grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
           :style="pinStyle(pin)"
           :title="pin.name"
           :aria-label="pin.name"
-          @click="tap(pin)"
+          :aria-pressed="pin.id === selected"
+          @click="select(pin)"
         >
-          <span v-if="!busy[pin.id]">{{ pin.kind === 'portal' ? '🚪' : '⚡' }}</span>
+          <span
+            class="pointer-events-none flex h-7 w-7 items-center justify-center rounded-full border text-xs shadow transition-colors"
+            :class="
+              pin.id === selected
+                ? 'bg-primary text-primary-content border-primary scale-110'
+                : pin.remote
+                  ? 'bg-base-100 border-base-content/30'
+                  : 'bg-base-100 border-base-content/15 opacity-70'
+            "
+          >
+            {{ pin.kind === 'portal' ? '🚪' : '⚡' }}
+          </span>
         </button>
       </div>
 
-      <!-- One caption area for whichever pin was last tapped, rather than a label per pin:
-           on a phone-sized plan, per-pin text would cover the plan it annotates. -->
-      <div v-if="selectedPin" class="px-1 space-y-1">
+      <!-- One caption + action bar for whichever pin is selected, rather than a label per
+           pin: on a phone-sized plan, per-pin text would cover the plan it annotates. -->
+      <div v-if="selectedPin" class="px-1 space-y-2">
         <div class="text-sm font-medium">{{ selectedPin.name }}</div>
-        <p
-          v-if="selectedResult"
-          class="text-xs"
-          :class="selectedResult.ok ? 'text-success' : 'text-error'"
+
+        <button
+          v-if="selectedPin.remote"
+          type="button"
+          class="btn btn-primary w-full justify-between"
+          :disabled="busy || !enabled"
+          @click="act"
         >
-          {{ selectedResult.message }}
+          <span>{{ actionLabel }}</span>
+          <span v-if="busy" class="loading loading-spinner loading-sm"></span>
+        </button>
+        <p v-else class="text-xs text-base-content/60">
+          Use this one in person — it cannot be opened remotely.
         </p>
-        <p v-else-if="selectedPin.remote" class="text-xs text-base-content/60">
-          Tap again to {{ selectedPin.kind === 'portal' ? 'unlock' : 'activate' }}.
+
+        <p v-if="selectedPin.remote && !enabled" class="text-xs text-base-content/60">
+          {{ disabledNote }}
+        </p>
+        <p v-if="result" class="text-xs" :class="result.ok ? 'text-success' : 'text-error'">
+          {{ result.message }}
         </p>
       </div>
       <p v-else class="text-xs text-base-content/50 px-1">
-        Tap a marker to open it, or to see which one it is.
+        Tap a marker to see which door it is.
       </p>
     </div>
   </div>

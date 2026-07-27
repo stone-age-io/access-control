@@ -491,6 +491,14 @@ emits `.btn-sm{height:2rem}` *after* `.btn-square{height:3rem}`, making that com
 laptop and 48×44 on a phone. Badge chrome therefore uses unmodified `.btn .btn-square` (48px at every breakpoint),
 adds `min-h-11` to dropdown menu rows (DaisyUI's `menu-sm` pads them to ~28px, and one of them signs you out), and
 `h-11` to the badge tabs (`.tab` is 2rem — fine in a dense console, short for a phone's primary navigation).
+`BadgeFloorplan`'s pins are the case where this trap actually bit: as `btn btn-circle btn-xs` they came out 48×44 on
+a phone and 48×24 on a laptop — an *ellipse* far larger than the visible dot, centred on the pin, so neighbouring
+pins' boxes overlapped and a tap on one door could resolve to the next one's button. They are a plain 44px square
+button wrapping a `pointer-events-none` 28px dot now, not a DaisyUI `btn` whose size classes fight each other. The
+fix that mattered more was making a marker **select only**: acting moved to a full-width labelled button under the
+plan (the control the Doors view already uses), so an overlapping hit box costs a wrong *name* on screen — visible
+and correctable — instead of a wrong door. The old two-taps-on-the-marker protocol also made the tap count depend on
+which pin was last selected, so a tap could appear to do nothing.
 
 ## Conventions
 
