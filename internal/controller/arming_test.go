@@ -200,6 +200,53 @@ func TestIntrusionFireSuppressed(t *testing.T) {
 	}
 }
 
+// A `fire` aux point publishes the location-scoped fire subject on BOTH edges —
+// the clear matters as much as the assert, since suppression must end when the
+// evacuation does.
+func TestFirePointPublishesBothEdges(t *testing.T) {
+	rt, emit := armedRuntime(t, `{"code":"zone1","location":"hq","arm":"armed"}`, "fire")
+	at := ny(t, 2026, 1, 5, 2, 0)
+
+	rt.handleInput(drivers.InputEvent{Kind: drivers.InputAux, Portal: "motion-1", Active: true, At: at})
+	rt.handleInput(drivers.InputEvent{Kind: drivers.InputAux, Portal: "motion-1", Active: false, At: at.Add(time.Minute)})
+
+	fires := emit.bySubject("acc.hq.evt.fire")
+	if len(fires) != 2 {
+		t.Fatalf("fire publishes = %d, want 2 (assert + clear)", len(fires))
+	}
+	for i, want := range []bool{true, false} {
+		body, ok := fires[i].(map[string]any)
+		if !ok {
+			t.Fatalf("publish %d payload is %T, want map", i, fires[i])
+		}
+		if body["active"] != want {
+			t.Errorf("publish %d active = %v, want %v", i, body["active"], want)
+		}
+	}
+}
+
+// A fire point is not an intrusion point: asserting it must not raise an intrusion
+// alarm on the area it belongs to, even while that area is armed.
+func TestFirePointRaisesNoIntrusion(t *testing.T) {
+	rt, emit := armedRuntime(t, `{"code":"zone1","location":"hq","arm":"armed"}`, "fire")
+	rt.handleInput(drivers.InputEvent{Kind: drivers.InputAux, Portal: "motion-1", Active: true, At: ny(t, 2026, 1, 5, 2, 0)})
+
+	if emit.hasSubject(intrusionSubject) {
+		t.Errorf("fire point raised an intrusion alarm, want none")
+	}
+}
+
+// Intrusion alarms honor the same per-location suppression opt-out as door alarms.
+func TestIntrusionFireSuppressOptOut(t *testing.T) {
+	rt, emit := armedRuntime(t, `{"code":"zone1","location":"hq","arm":"armed"}`, "intrusion")
+	rt.store.apply("location.hq", []byte(`{"code":"hq","timezone":"America/New_York","faiSuppress":false}`))
+	rt.SetFire("hq", true, ny(t, 2026, 1, 5, 2, 0))
+	rt.handleInput(drivers.InputEvent{Kind: drivers.InputAux, Portal: "motion-1", Active: true, At: ny(t, 2026, 1, 5, 2, 0)})
+	if !emit.hasSubject(intrusionSubject) {
+		t.Errorf("intrusion alarm suppressed while location opted out of suppression")
+	}
+}
+
 // A continuously-asserted point alarms once (the no-change dedup), not per report.
 func TestIntrusionEdgeTriggeredOnce(t *testing.T) {
 	rt, emit := armedRuntime(t, `{"code":"zone1","location":"hq","arm":"armed"}`, "intrusion")

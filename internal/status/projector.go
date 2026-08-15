@@ -8,6 +8,29 @@
 // PolicyStore: WatchAll re-delivers every key on each (re)subscribe, so a
 // reconnect performs a full re-sync. Each sync sentinel prunes projection rows
 // whose KV key is gone (a key removed while accessd was down).
+//
+// # Arm transitions
+//
+// The projector is also where an area's arm/disarm becomes an EVENT. All four ways
+// an area changes arm-state — an operator's arm route, entry-disarm, the one-shot
+// release sweep, and a scheduled auto-arm evaluated at the edge — converge on
+// exactly one observable: the per-controller arm shadow this package already
+// watches. So one comparison here covers all four, including scheduled arming,
+// which otherwise leaves no trace anywhere in the system (it is computed locally on
+// each box and never writes a record).
+//
+// That does make accessd an event *emitter*, where the rest of the architecture has
+// the edge emit and accessd project. The judgment is that projecting edge-reported
+// state into a central record and emitting an event about it are the same act — this
+// is not accessd claiming ownership of arm-state, which remains a durable record the
+// mirror propagates. The rejected alternative (each controller emits on its own
+// resolved-state change) keeps the direction pure but puts emission logic on the
+// edge and yields N events for an N-controller area with nowhere central to dedupe.
+//
+// Events are emitted PER CONTROLLER, matching the shadow's own granularity: the key
+// is area.<controller>.<code>, so a 3-box area reports three transitions. Each event
+// names its controller, which is honest ("ctrl-hq-1 now considers zone1 armed") and
+// costs no extra queries. A single-box area — the common case — yields one event.
 package status
 
 import (
@@ -18,11 +41,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/statuskv"
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
 const collection = "point_status"
@@ -43,10 +68,17 @@ func nextBackoff(d time.Duration) time.Duration {
 
 // Projector watches ACC_STATUS and maintains the point_status collection.
 type Projector struct {
-	app core.App
-	kv  jetstream.KeyValue
-	log *logger.Logger
-	m   *metrics.Metrics
+	app  core.App
+	kv   jetstream.KeyValue
+	subj subjects.Subjects
+	log  *logger.Logger
+	m    *metrics.Metrics
+
+	// publish emits one arm-transition event. Defaults to the NATS connection's
+	// Publish; nil when no connection was supplied, in which case transitions are
+	// projected but not emitted. Injected so tests can observe them — the same shape
+	// as health.Monitor.publish and notify.SendFunc.
+	publish func(subject string, data []byte) error
 
 	wg         sync.WaitGroup
 	watcherMu  sync.Mutex
@@ -58,9 +90,21 @@ type Projector struct {
 }
 
 // New creates a projector. The caller ensures the bucket exists (accessd owns
-// creation via EnsureKVBucket).
-func New(app core.App, kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metrics) *Projector {
-	return &Projector{app: app, kv: kv, log: log.With("component", "status"), m: m}
+// creation via EnsureKVBucket). nc may be nil, in which case arm transitions are
+// projected into point_status but not emitted as events.
+func New(app core.App, kv jetstream.KeyValue, nc *nats.Conn, subj subjects.Subjects, log *logger.Logger, m *metrics.Metrics) *Projector {
+	var pub func(string, []byte) error
+	if nc != nil {
+		pub = nc.Publish
+	}
+	return &Projector{
+		app:     app,
+		kv:      kv,
+		subj:    subj,
+		publish: pub,
+		log:     log.With("component", "status"),
+		m:       m,
+	}
 }
 
 // Start launches the watcher (once). It returns immediately; the watcher runs in
@@ -308,6 +352,11 @@ func (p *Projector) apply(key string, value []byte) {
 		return
 	}
 
+	// Read the prior state off the already-loaded record, before the Sets overwrite
+	// it. Empty means this key has no row yet — a first report, not a transition, so
+	// a cold boot does not manufacture an event per area.
+	prev := rec.GetString("state")
+
 	rec.Set("key", r.key)
 	rec.Set("code", r.code)
 	rec.Set("kind", r.kind)
@@ -326,6 +375,56 @@ func (p *Projector) apply(key string, value []byte) {
 		return
 	}
 	p.m.IncKVApply("put")
+
+	if r.kind == statuskv.KindArea && prev != "" && prev != r.state {
+		p.emitArmTransition(r, prev)
+	}
+}
+
+// emitArmTransition publishes an area's arm/disarm to
+// {app}.{location}.area.{code}.evt.state. Fail-safe: the projection has already
+// committed, so a publish failure is logged and swallowed — point_status must never
+// depend on the event landing.
+//
+// The body names the controller whose shadow moved and the provenance of the new
+// state (standing/scheduled/override), so an operator can tell a scheduled auto-arm
+// from someone pressing a button. An area with no resolvable location cannot be
+// addressed on the wire and is skipped.
+func (p *Projector) emitArmTransition(r row, prev string) {
+	if p.publish == nil {
+		return // no NATS wired
+	}
+	if r.location == "" || r.code == "" {
+		p.log.Warn("status: area shadow missing location/code; arm event not emitted", "key", r.key)
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"arm":        r.state,
+		"previous":   prev,
+		"controller": r.controller,
+		"source":     str(r.payload["source"]),
+		"ts":         r.changed,
+	})
+	if err != nil {
+		p.log.Error("status: failed to encode arm event", "key", r.key, "error", err)
+		return
+	}
+	subject := p.subj.EventState(r.location, subjects.AreaType, r.code)
+	if err := p.publish(subject, body); err != nil {
+		p.log.Error("status: failed to publish arm event", "subject", subject, "error", err)
+		return
+	}
+	p.m.IncEventPublished("state")
+	p.log.Info("area arm transition", "area", r.code, "controller", r.controller,
+		"from", prev, "to", r.state)
+}
+
+// str reads a string out of the shadow payload, tolerating absence/wrong type.
+func str(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // removeKey deletes the projection row for a status key, if present.

@@ -1,6 +1,7 @@
 package health
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -35,6 +36,93 @@ func reload(t *testing.T, app core.App, code string) *core.Record {
 		t.Fatalf("reload %q: %v", code, err)
 	}
 	return rec
+}
+
+// capturedEvent is one liveness event recorded by the test publisher.
+type capturedEvent struct {
+	subject string
+	body    map[string]any
+}
+
+// capture swaps in a recording publisher (New leaves publish nil for a nil nc) and
+// returns the slice it appends to.
+func capture(mon *Monitor) *[]capturedEvent {
+	got := &[]capturedEvent{}
+	mon.publish = func(subject string, data []byte) error {
+		var body map[string]any
+		_ = json.Unmarshal(data, &body)
+		*got = append(*got, capturedEvent{subject: subject, body: body})
+		return nil
+	}
+	return got
+}
+
+// Going online emits exactly one liveness event, on the ctrl evt.state subject.
+// Subsequent heartbeats are not transitions and emit nothing — otherwise every
+// beat would land in the audit log, which is precisely what heartbeats stay off
+// the stream to avoid.
+func TestLivenessOnlineEmitsOncePerTransition(t *testing.T) {
+	mon, _ := newMonitor(t, time.Hour)
+	got := capture(mon)
+
+	for i := 0; i < 3; i++ {
+		if err := mon.markOnline(ctrl); err != nil {
+			t.Fatalf("markOnline: %v", err)
+		}
+	}
+
+	if len(*got) != 1 {
+		t.Fatalf("liveness events = %d, want 1 (only the transition)", len(*got))
+	}
+	ev := (*got)[0]
+	if want := "acc.hq.ctrl." + ctrl + ".evt.state"; ev.subject != want {
+		t.Errorf("subject = %q, want %q", ev.subject, want)
+	}
+	if ev.body["status"] != "online" {
+		t.Errorf("status = %v, want online", ev.body["status"])
+	}
+}
+
+// Going offline emits one event; a settled offline box never re-emits, because the
+// sweep only queries records currently "online".
+func TestLivenessOfflineEmitsOncePerTransition(t *testing.T) {
+	mon, app := newMonitor(t, time.Millisecond)
+	if err := mon.markOnline(ctrl); err != nil {
+		t.Fatalf("markOnline: %v", err)
+	}
+	got := capture(mon) // capture AFTER the online transition, so only the flip lands
+	time.Sleep(5 * time.Millisecond)
+
+	mon.sweep()
+	mon.sweep() // second sweep: already offline, nothing to transition
+
+	if len(*got) != 1 {
+		t.Fatalf("liveness events = %d, want 1 (only the transition)", len(*got))
+	}
+	if s := (*got)[0].body["status"]; s != "offline" {
+		t.Errorf("status = %v, want offline", s)
+	}
+	if got := reload(t, app, ctrl).GetString("status"); got != statusOffline {
+		t.Errorf("record status = %q, want offline", got)
+	}
+}
+
+// A controller whose location relation is unset can't be addressed on the wire.
+// The record write still stands; only the event is skipped.
+func TestLivenessSkippedWithoutLocation(t *testing.T) {
+	mon, app := newMonitor(t, time.Hour)
+	got := capture(mon)
+
+	rec := reload(t, app, ctrl)
+	rec.Set("location", "")
+	// Saving through the app would trip the required-relation validation, so clear
+	// it on the in-memory record and emit directly — this exercises emitLiveness's
+	// guard, which is the unit under test.
+	mon.emitLiveness(rec, statusOnline)
+
+	if len(*got) != 0 {
+		t.Errorf("liveness events = %d, want 0 (unresolvable location)", len(*got))
+	}
 }
 
 // A heartbeat stamps last_seen and flips the controller online.

@@ -28,6 +28,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,21 +59,69 @@ type Message struct {
 	Body    string
 }
 
-// Event is the parsed alarm/fire the sink hands to a SendFunc. It carries the
+// Event is the parsed pageable event the sink hands to a SendFunc. It carries the
 // routing discriminators (so the caller can resolve the source's opt-in and the
-// recipients) alongside the raw body (so the caller can Format it). For a portal
-// alarm: Type is the portal kind (door/turnstile/…), Thing the portal code,
-// AlarmType one of forced/held/held_clear. For an intrusion alarm: Type is the
-// literal "area", Thing the area code, AlarmType "intrusion". For fire: Kind is
-// "fire" and Type/Thing/AlarmType are empty (the source is the Location).
+// recipients) alongside the raw body (so the caller can Format it).
+//
+//   - portal alarm: Type is the portal kind (door/turnstile/…), Thing the portal
+//     code, AlarmType one of forced/held/held_clear/no_entry.
+//   - intrusion alarm: Type is the literal "area", Thing the area code, AlarmType
+//     "intrusion".
+//   - fire: Kind is "fire", Type/Thing/AlarmType empty (the source is the Location).
+//   - controller liveness: Kind is "state", Type the literal "ctrl", Thing the
+//     controller code, AlarmType the new status (online/offline).
 type Event struct {
 	Location  string
 	Type      string
 	Thing     string
-	Kind      string // "alarm" or "fire"
-	AlarmType string // forced/held/held_clear/intrusion; empty for fire
+	Kind      string // "alarm", "fire", or "state" (ctrl only)
+	AlarmType string // forced/held/held_clear/no_entry/intrusion; status for ctrl; empty for fire
 	Body      map[string]any
 	TS        string
+	// Seq is the event's JetStream stream sequence — the same value the audit
+	// consumer writes to events.stream_seq (unique-indexed), which is what lets a
+	// notification deep-link to the exact row rather than a filtered list.
+	Seq uint64
+	// Repage is which reminder this is (0 = the original page). Set by
+	// internal/repage when re-notifying about an alarm nobody acknowledged, so the
+	// rendered message says so rather than looking like a duplicate.
+	Repage int
+}
+
+// Notify type tokens: the vocabulary an operator selects from in users.notify_types,
+// derived from an Event by NotifyType. Stable strings — they are stored in that
+// field and rendered in the UI.
+const (
+	TypeForced            = "forced"
+	TypeHeld              = "held"
+	TypeNoEntry           = "no_entry"
+	TypeIntrusion         = "intrusion"
+	TypeFire              = "fire"
+	TypeControllerOffline = "controller_offline"
+)
+
+// NotifyType maps an Event onto the token an operator's notify_types selection uses.
+// Empty means "not a pageable type" — held_clear (a clear, not a raise) and a
+// controller coming back ONLINE both land here: neither is something to wake for,
+// and the sink drops them before resolving recipients.
+func (e Event) NotifyType() string {
+	switch {
+	case e.Kind == "fire":
+		return TypeFire
+	case e.Kind == "state" && e.Type == "ctrl":
+		if e.AlarmType == "offline" {
+			return TypeControllerOffline
+		}
+		return "" // a box coming back is good news, not a page
+	case e.Kind == "alarm":
+		switch e.AlarmType {
+		case TypeForced, TypeHeld, TypeNoEntry, TypeIntrusion:
+			return e.AlarmType
+		}
+		return "" // held_clear and anything unrecognized
+	default:
+		return ""
+	}
 }
 
 // SendFunc delivers one notification. accessd supplies one backed by PocketBase
@@ -114,7 +163,7 @@ func New(js jetstream.JetStream, stream string, subj subjects.Subjects, send Sen
 // filters to alarm/fire subjects only — taps/state never reach handle — and
 // delivers only NEW messages (see the package doc).
 func (n *Notifier) Start(ctx context.Context) error {
-	w := n.subj.AlarmWildcards()
+	w := n.subj.NotifyWildcards()
 	cons, err := n.js.CreateOrUpdateConsumer(ctx, n.stream, jetstream.ConsumerConfig{
 		Durable:        durableName,
 		AckPolicy:      jetstream.AckExplicitPolicy,
@@ -128,7 +177,15 @@ func (n *Notifier) Start(ctx context.Context) error {
 	}
 
 	cc, err := cons.Consume(func(msg jetstream.Msg) {
-		status, err := n.process(msg.Subject(), msg.Data())
+		// The stream sequence is what a notification deep-links on; it is not in the
+		// body, so it is read here and threaded into process (which stays free of
+		// jetstream.Msg so tests can drive it directly). An unavailable sequence
+		// degrades to no link, never to a dropped notification.
+		var seq uint64
+		if meta, merr := msg.Metadata(); merr == nil {
+			seq = meta.Sequence.Stream
+		}
+		status, err := n.process(msg.Subject(), msg.Data(), seq)
 		if err != nil {
 			n.log.Error("notify send failed; will redeliver", "subject", msg.Subject(), "error", err)
 			n.m.IncNotify("error")
@@ -157,13 +214,13 @@ func (n *Notifier) Stop() {
 // record and ack on ("ok" sent / "skip" not-an-alarm or nobody-opted-in / "dedup"
 // already-sent), or a non-nil error for a send failure that should be Nak'd
 // (redelivered). It takes no jetstream.Msg so tests can drive it directly.
-func (n *Notifier) process(subject string, data []byte) (string, error) {
+func (n *Notifier) process(subject string, data []byte, seq uint64) (string, error) {
 	location, ptype, thing, kind, ok := n.subj.ParseEvent(subject)
 	if !ok {
 		return "skip", nil // unrecognized subject: ack and skip
 	}
-	if kind != "alarm" && kind != "fire" {
-		return "skip", nil // taps/state are not alerted on
+	if kind != "alarm" && kind != "fire" && kind != "state" {
+		return "skip", nil // ordinary taps are not alerted on
 	}
 
 	var body map[string]any
@@ -172,11 +229,7 @@ func (n *Notifier) process(subject string, data []byte) (string, error) {
 	}
 	ts := str(body["ts"])
 
-	if n.alreadySent(subject, ts) {
-		return "dedup", nil // a redelivery we already emailed about
-	}
-
-	sent, err := n.send(Event{
+	ev := Event{
 		Location:  location,
 		Type:      ptype,
 		Thing:     thing,
@@ -184,7 +237,25 @@ func (n *Notifier) process(subject string, data []byte) (string, error) {
 		AlarmType: str(body["type"]),
 		Body:      body,
 		TS:        ts,
-	})
+		Seq:       seq,
+	}
+	// A controller liveness event carries its new state in "status", not "type".
+	if kind == "state" {
+		ev.AlarmType = str(body["status"])
+	}
+	// Drop non-pageable events (a held_clear, a box coming back online, a portal or
+	// area posture/arm change) before touching the database. The consumer filter is
+	// deliberately coarse — it pins subjects, not body discriminators — so this is
+	// where the fine-grained decision lives.
+	if ev.NotifyType() == "" {
+		return "skip", nil
+	}
+
+	if n.alreadySent(subject, ts) {
+		return "dedup", nil // a redelivery we already emailed about
+	}
+
+	sent, err := n.send(ev)
 	if err != nil {
 		return "", err
 	}
@@ -224,21 +295,64 @@ func (n *Notifier) markSent(subject, ts string) {
 // Format renders an event into an operator-readable notification. Plain text:
 // notifications go to phones/pagers, so keep it terse and greppable. The caller's
 // SendFunc uses this to produce the message body once it has decided to send.
-func Format(ev Event) Message {
-	if ev.Kind == "fire" {
-		return Message{
+//
+// consoleURL is the install's base URL (PocketBase's Settings().Meta.AppURL). When
+// set, and when the event has a stream sequence, the message ends with a link
+// straight to that row in the alarm console — the difference between "a forced alarm
+// happened somewhere" and one tap to acknowledge it. Empty consoleURL (or a missing
+// sequence) simply omits the link.
+func Format(ev Event, consoleURL string) Message {
+	var msg Message
+	switch {
+	case ev.Kind == "fire":
+		msg = Message{
 			Subject: fmt.Sprintf("[stone-access] FIRE input active at %s", ev.Location),
 			Body:    fmt.Sprintf("Fire-alarm input active at location %q.\nts: %s\n", ev.Location, ev.TS),
 		}
+	case ev.Kind == "state" && ev.Type == "ctrl":
+		msg = Message{
+			Subject: fmt.Sprintf("[stone-access] controller %s: %s (%s)", ev.AlarmType, ev.Thing, ev.Location),
+			Body: fmt.Sprintf("Controller %q at location %q is %s.\n"+
+				"Doors it drives now decide on cached policy, or default-deny if it has none.\n"+
+				"last seen: %s\nts: %s\n",
+				ev.Thing, ev.Location, ev.AlarmType, str(ev.Body["lastSeen"]), ev.TS),
+		}
+	default: // alarm
+		body := fmt.Sprintf("Alarm type: %s\nlocation: %s\ntype: %s\nthing: %s\n",
+			ev.AlarmType, ev.Location, ev.Type, ev.Thing)
+		if point := str(ev.Body["point"]); point != "" {
+			body += fmt.Sprintf("point: %s\n", point) // intrusion alarms name the tripped aux input
+		}
+		body += fmt.Sprintf("ts: %s\n", ev.TS)
+		msg = Message{
+			Subject: fmt.Sprintf("[stone-access] %s alarm: %s/%s/%s", ev.AlarmType, ev.Location, ev.Type, ev.Thing),
+			Body:    body,
+		}
 	}
-	// alarm
-	subj := fmt.Sprintf("[stone-access] %s alarm: %s/%s/%s", ev.AlarmType, ev.Location, ev.Type, ev.Thing)
-	body2 := fmt.Sprintf("Alarm type: %s\nlocation: %s\ntype: %s\nthing: %s\n", ev.AlarmType, ev.Location, ev.Type, ev.Thing)
-	if point := str(ev.Body["point"]); point != "" {
-		body2 += fmt.Sprintf("point: %s\n", point) // intrusion alarms name the tripped aux input
+	if link := DeepLink(consoleURL, ev.Seq); link != "" {
+		msg.Body += "\n" + link + "\n"
 	}
-	body2 += fmt.Sprintf("ts: %s\n", ev.TS)
-	return Message{Subject: subj, Body: body2}
+	// A reminder must be distinguishable from the original page in a crowded inbox,
+	// and must say why it arrived: nobody has acknowledged it.
+	if ev.Repage > 0 {
+		msg.Subject = fmt.Sprintf("[reminder %d] %s", ev.Repage, msg.Subject)
+		msg.Body = fmt.Sprintf("STILL UNACKNOWLEDGED (reminder %d).\n\n%s", ev.Repage, msg.Body)
+	}
+	return msg
+}
+
+// DeepLink builds the console URL for one event, keyed by its JetStream stream
+// sequence. The audit projection writes that sequence to events.stream_seq under a
+// unique index, so it identifies the row exactly — and it is known here, whereas the
+// row's PocketBase id is not (the audit consumer is an independent durable, and may
+// not even have projected the row yet when this email is sent).
+//
+// Empty when there is no console URL configured or no sequence available.
+func DeepLink(consoleURL string, seq uint64) string {
+	if consoleURL == "" || seq == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s/alarms?seq=%d", strings.TrimRight(consoleURL, "/"), seq)
 }
 
 func str(v any) string {

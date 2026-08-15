@@ -147,7 +147,16 @@ onBeforeUnmount(() => {
           <span v-else class="opacity-40">None</span>
         </DataField>
         <DataField label="Point type">
-          <SoftBadge :tone="record.point_type === 'intrusion' ? 'error' : record.point_type === 'tamper_24h' ? 'warning' : 'neutral'" dot>
+          <SoftBadge
+            :tone="
+              record.point_type === 'intrusion'
+                ? 'error'
+                : record.point_type === 'tamper_24h' || record.point_type === 'fire'
+                  ? 'warning'
+                  : 'neutral'
+            "
+            dot
+          >
             {{ record.point_type || 'monitor' }}
           </SoftBadge>
         </DataField>

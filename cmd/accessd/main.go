@@ -44,9 +44,11 @@ import (
 	"github.com/stone-age-io/access-control/internal/modelsapi"
 	"github.com/stone-age-io/access-control/internal/natsx"
 	"github.com/stone-age-io/access-control/internal/notify"
+	"github.com/stone-age-io/access-control/internal/repage"
 	"github.com/stone-age-io/access-control/internal/simulateapi"
 	"github.com/stone-age-io/access-control/internal/status"
 	"github.com/stone-age-io/access-control/internal/subjects"
+	"github.com/stone-age-io/access-control/internal/webhook"
 	"github.com/stone-age-io/access-control/internal/webui"
 
 	// Side-effect import: registers the schema + fixture migrations.
@@ -108,16 +110,18 @@ func main() {
 
 	// Resources brought up only when actually serving (not for migrate/superuser).
 	var (
-		nc         *natsx.Conn
-		metricsSrv *http.Server
-		collector  *metrics.Collector
-		auditC     *audit.Consumer
-		notifier   *notify.Notifier
-		disarmer   *disarm.Disarmer
-		healthMon  *health.Monitor
-		statusProj *status.Projector
-		releaser   *armrelease.Releaser
-		badgeSweep *badgesweep.Sweeper
+		nc          *natsx.Conn
+		metricsSrv  *http.Server
+		collector   *metrics.Collector
+		auditC      *audit.Consumer
+		notifier    *notify.Notifier
+		repager     *repage.Sweeper
+		webhookSink *webhook.Sink
+		disarmer    *disarm.Disarmer
+		healthMon   *health.Monitor
+		statusProj  *status.Projector
+		releaser    *armrelease.Releaser
+		badgeSweep  *badgesweep.Sweeper
 	)
 
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -248,8 +252,32 @@ func main() {
 		// locations.notify_fire) AND an operator opts in (users.notify). The SendFunc
 		// owns every PocketBase concern; SMTP transport is PocketBase's own mail
 		// settings.
-		notifier = notify.New(nc.JS, cfg.Events.Stream, subj, newNotifySend(e.App, log), log, m)
+		notifySend := newNotifySend(e.App, log)
+		notifier = notify.New(nc.JS, cfg.Events.Stream, subj, notifySend, log, m)
 		if err := notifier.Start(ctx); err != nil {
+			return err
+		}
+
+		// Unacknowledged-alarm reminder: re-notifies about an urgent alarm nobody has
+		// acknowledged. It reuses the SAME SendFunc, so the two-sided opt-in applies
+		// identically — a reminder can never reach someone the original page could not.
+		// A projection reader rather than a fifth durable: "still unacknowledged N
+		// minutes later" is a question about accumulated state, not a message arriving.
+		repager = repage.New(e.App, notifySend, log)
+		repager.Start()
+
+		// Webhook sink: a fourth durable on ACC_EVENTS that POSTs each pageable event
+		// as JSON to a configured endpoint, so an install can feed its own
+		// PagerDuty/Slack/ntfy/ITSM. Inert unless accessd.webhookURL is set. It is
+		// the answer to "let us customise the notifications" — ship the structured
+		// event and let the receiver render, rather than growing a template engine.
+		// The console URL is read per-delivery so it tracks a settings change.
+		webhookSink = webhook.New(nc.JS, cfg.Events.Stream, subj,
+			func() (string, string, bool) {
+				return cfg.Accessd.WebhookURL, e.App.Settings().Meta.AppURL, cfg.Accessd.WebhookURL != ""
+			},
+			nil, log, m)
+		if err := webhookSink.Start(ctx); err != nil {
 			return err
 		}
 
@@ -309,7 +337,12 @@ func main() {
 		// Status projector: ACC_STATUS device shadow → point_status projection (UI
 		// live state). Watches on a background context so it outlives this setup
 		// (the 2-minute ctx above is cancelled on return); stopped in OnTerminate.
-		statusProj = status.New(e.App, statusKV, log, m)
+		// It also emits an area's arm/disarm as an event: all four arm paths
+		// (operator route, entry-disarm, one-shot release, scheduled auto-arm)
+		// converge on the arm shadow it already watches, so one comparison there
+		// covers every one of them — scheduled arming included, which otherwise
+		// leaves no trace anywhere. Hence the NATS handle.
+		statusProj = status.New(e.App, statusKV, nc.NC, subj, log, m)
 		if err := statusProj.Start(context.Background()); err != nil {
 			return err
 		}
@@ -336,6 +369,12 @@ func main() {
 		}
 		if healthMon != nil {
 			healthMon.Stop()
+		}
+		if webhookSink != nil {
+			webhookSink.Stop()
+		}
+		if repager != nil {
+			repager.Stop()
 		}
 		if notifier != nil {
 			notifier.Stop()
@@ -375,15 +414,17 @@ func main() {
 // error → Nak → redelivery (bounded by the sink's MaxDeliver).
 func newNotifySend(app core.App, log *logger.Logger) notify.SendFunc {
 	return func(ev notify.Event) (bool, error) {
-		// The auto-clear of a held-open door is operational noise, not an alarm to
-		// page on — only the raise (forced/held/intrusion) and fire are emailed.
-		if ev.Kind == "alarm" && ev.AlarmType == "held_clear" {
+		// Non-pageable events (a held_clear, a controller coming back online) are
+		// already dropped by the sink via Event.NotifyType; this is the token the
+		// recipient filter matches on.
+		notifyType := ev.NotifyType()
+		if notifyType == "" {
 			return false, nil
 		}
 		if !sourceWantsNotify(app, ev) {
 			return false, nil // the source has not opted into email
 		}
-		recipients, err := notifyRecipients(app, ev.Location)
+		recipients, err := notifyRecipients(app, ev.Location, notifyType)
 		if err != nil {
 			return false, err // a genuine read failure: redeliver
 		}
@@ -391,7 +432,7 @@ func newNotifySend(app core.App, log *logger.Logger) notify.SendFunc {
 			return false, nil // no operator opted in
 		}
 
-		msg := notify.Format(ev)
+		msg := notify.Format(ev, app.Settings().Meta.AppURL)
 		to := make([]mail.Address, 0, len(recipients))
 		for _, r := range recipients {
 			to = append(to, mail.Address{Address: r})
@@ -422,6 +463,9 @@ func sourceWantsNotify(app core.App, ev notify.Event) bool {
 	case ev.Kind == "fire":
 		loc, err := app.FindFirstRecordByFilter("locations", "code = {:code}", dbx.Params{"code": ev.Location})
 		return err == nil && loc.GetBool("notify_fire")
+	case ev.Type == "ctrl":
+		ctrl, err := app.FindFirstRecordByFilter("controllers", "code = {:code}", dbx.Params{"code": ev.Thing})
+		return err == nil && ctrl.GetBool("notify_offline")
 	case ev.Type == "area":
 		area, err := app.FindFirstRecordByFilter("areas", "code = {:code}", dbx.Params{"code": ev.Thing})
 		return err == nil && area.GetBool("notify_on_alarm")
@@ -442,7 +486,10 @@ func sourceWantsNotify(app core.App, ev notify.Event) bool {
 // record ids while the wire carries the stable code, so the alarm's locationCode
 // is resolved to its id once. A missing/dangling location resolves to "" (no scoped
 // operator can match it), so it falls through to the unscoped recipients only.
-func notifyRecipients(app core.App, locationCode string) ([]string, error) {
+//
+// Severity (users.notify_types): an empty selection means the DEFAULT set, not
+// literally everything — see defaultNotifyTypes.
+func notifyRecipients(app core.App, locationCode, notifyType string) ([]string, error) {
 	recs, err := app.FindAllRecords("users")
 	if err != nil {
 		return nil, err
@@ -459,11 +506,38 @@ func notifyRecipients(app core.App, locationCode string) ([]string, error) {
 		if scope := r.GetStringSlice("notify_locations"); len(scope) > 0 && !slices.Contains(scope, locID) {
 			continue // operator is scoped to other locations
 		}
+		if !wantsNotifyType(r.GetStringSlice("notify_types"), notifyType) {
+			continue // operator does not want this severity
+		}
 		if email := r.GetString("email"); email != "" {
 			out = append(out, email)
 		}
 	}
 	return out, nil
+}
+
+// defaultNotifyTypes is what an operator with no explicit users.notify_types
+// selection receives. It is every pageable type EXCEPT no_entry, which reports a
+// grant nobody walked through — a real diagnostic (a stuck strike, a badge test, a
+// tailgate) but not something to wake for, and high enough volume at a busy door to
+// drive people to switch notifications off. An operator who wants it selects it.
+//
+// Deliberately a default rather than "all": a future urgent type then reaches
+// everyone who never narrowed, which is the right failure direction for alarms.
+var defaultNotifyTypes = []string{
+	notify.TypeForced,
+	notify.TypeHeld,
+	notify.TypeIntrusion,
+	notify.TypeFire,
+	notify.TypeControllerOffline,
+}
+
+// wantsNotifyType reports whether an operator's selection covers this event type.
+func wantsNotifyType(selected []string, notifyType string) bool {
+	if len(selected) == 0 {
+		return slices.Contains(defaultNotifyTypes, notifyType)
+	}
+	return slices.Contains(selected, notifyType)
 }
 
 // newDisarmFunc builds the disarm sink's PocketBase-backed action: a valid grant

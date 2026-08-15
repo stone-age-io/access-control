@@ -136,6 +136,113 @@ func TestDoorFireSuppressesForced(t *testing.T) {
 	}
 }
 
+// A grant nobody walks through reports no_entry once the grace window expires —
+// the "access granted, no entry" case that separates a real entry from a badge
+// test or a stuck strike.
+func TestNoEntryAfterUnusedGrant(t *testing.T) {
+	rt, _, _, emit := runtimeFor(t)
+	at := ny(t, 2026, 1, 5, 9, 0)
+	rt.handleTap(drivers.Tap{Portal: lobby, Credential: "CARD-001", At: at}) // grant, no open
+
+	// Inside the grace window there is nothing to report yet.
+	rt.reconcileHolds(at.Add(time.Second))
+	if got := countAlarm(emit, AlarmNoEntry); got != 0 {
+		t.Errorf("no_entry alarms inside the grace window = %d, want 0", got)
+	}
+
+	rt.reconcileHolds(at.Add(accessGrace + time.Second))
+	if got := countAlarm(emit, AlarmNoEntry); got != 1 {
+		t.Errorf("no_entry alarms = %d, want 1 (alarms=%v)", got, alarmTypes(emit))
+	}
+
+	// One alarm per grant, not one per tick.
+	rt.reconcileHolds(at.Add(accessGrace + time.Minute))
+	if got := countAlarm(emit, AlarmNoEntry); got != 1 {
+		t.Errorf("no_entry alarms after further ticks = %d, want 1", got)
+	}
+}
+
+// A grant that IS walked through reports nothing.
+func TestNoEntrySilentWhenDoorOpens(t *testing.T) {
+	rt, _, _, emit := runtimeFor(t)
+	at := ny(t, 2026, 1, 5, 9, 0)
+	rt.handleTap(drivers.Tap{Portal: lobby, Credential: "CARD-001", At: at})
+	rt.handleDPS(lobby, false, at.Add(time.Second)) // authorized open
+
+	rt.reconcileHolds(at.Add(accessGrace + time.Second))
+
+	if got := countAlarm(emit, AlarmNoEntry); got != 0 {
+		t.Errorf("no_entry alarms = %d, want 0 (the grant was used)", got)
+	}
+}
+
+// A denied tap opens no grant window, so it can never produce a no_entry.
+func TestNoEntrySilentAfterDeny(t *testing.T) {
+	rt, _, _, emit := runtimeFor(t)
+	at := ny(t, 2026, 1, 5, 9, 0)
+	rt.handleTap(drivers.Tap{Portal: lobby, Credential: "NOPE-999", At: at})
+
+	rt.reconcileHolds(at.Add(accessGrace + time.Second))
+
+	if got := countAlarm(emit, AlarmNoEntry); got != 0 {
+		t.Errorf("no_entry alarms = %d, want 0 (the tap was denied)", got)
+	}
+}
+
+// A portal with no door contact can never observe an open, so it must stay silent
+// rather than report no_entry on every single grant.
+func TestNoEntrySilentWithoutDPS(t *testing.T) {
+	rt, _, _, emit := runtimeFor(t)
+	// Re-bind lobby-main with no dpsInput.
+	rt.store.apply("portal."+lobby, []byte(`{"code":"`+lobby+`","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","lockRelay":1}`))
+	at := ny(t, 2026, 1, 5, 9, 0)
+	rt.handleTap(drivers.Tap{Portal: lobby, Credential: "CARD-001", At: at})
+
+	rt.reconcileHolds(at.Add(accessGrace + time.Second))
+
+	if got := countAlarm(emit, AlarmNoEntry); got != 0 {
+		t.Errorf("no_entry alarms = %d, want 0 (no DPS wired)", got)
+	}
+}
+
+// A location that opts OUT of suppression (fai_suppress off) keeps alarming while
+// its fire input is active. Before this the flag was mirrored to KV but never read,
+// so the toggle in the UI did nothing.
+func TestDoorFireSuppressOptOut(t *testing.T) {
+	rt, _, _, emit := runtimeFor(t)
+	rt.store.apply("location.hq", []byte(`{"code":"hq","timezone":"America/New_York","faiSuppress":false}`))
+	at := ny(t, 2026, 1, 5, 9, 0)
+	rt.SetFire("hq", true, at)
+	rt.handleDPS(lobby, false, at) // unauthorized open during fire
+
+	if got := countAlarm(emit, AlarmForced); got != 1 {
+		t.Errorf("forced alarms = %d, want 1 (location opted out of suppression)", got)
+	}
+}
+
+// A clearing event escapes fire suppression. Without the exemption, a door that
+// was held-open-alarming when the fire input asserted strands an unresolved alarm
+// on the console: point_status recovers on the close, but no later event emits the
+// clear.
+func TestDoorHeldClearEscapesFireSuppression(t *testing.T) {
+	old := heldOpenUnit
+	heldOpenUnit = time.Millisecond // 30 held_open_seconds -> 30ms
+	defer func() { heldOpenUnit = old }()
+
+	rt, _, _, emit := runtimeFor(t)
+	at := ny(t, 2026, 1, 5, 9, 0)
+	rt.handleTap(drivers.Tap{Portal: lobby, Credential: "CARD-001", At: at}) // grant
+	rt.handleDPS(lobby, false, at)                                          // authorized open; arms DOTL
+	eventually(t, 2*time.Second, func() bool { return countAlarm(emit, AlarmHeld) == 1 })
+
+	rt.SetFire("hq", true, at)                     // evacuation begins mid-alarm
+	rt.handleDPS(lobby, true, at.Add(time.Minute)) // door closes
+
+	if got := countAlarm(emit, AlarmHeldClear); got != 1 {
+		t.Errorf("held_clear alarms = %d, want 1 while fire active (alarms=%v)", got, alarmTypes(emit))
+	}
+}
+
 // A repeated open (no intervening close) is a no-op: one forced alarm, not two.
 func TestDoorDuplicateOpenIgnored(t *testing.T) {
 	rt, _, _, emit := runtimeFor(t)

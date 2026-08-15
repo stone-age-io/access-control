@@ -34,8 +34,12 @@ export type PortalType = 'door' | 'turnstile' | 'elevator' | 'gate' | 'logical'
 export type EventKind = 'tap' | 'state' | 'alarm' | 'fire' | 'command'
 /** Arm-state of an area (intrusion-lite). Empty standing ⇒ disarmed. */
 export type AreaArm = 'armed' | 'disarmed'
-/** How an aux input behaves: observe-only, intrusion (armed-gated), or always-on tamper. */
-export type PointType = 'monitor' | 'intrusion' | 'tamper_24h'
+/**
+ * How an aux input behaves: observe-only, intrusion (armed-gated), always-on
+ * tamper, or a fire-alarm interface (publishes the location-scoped fire signal on
+ * both edges, which suppresses alarms for that location).
+ */
+export type PointType = 'monitor' | 'intrusion' | 'tamper_24h' | 'fire'
 export type EventSource = 'nats' | 'osdp'
 export type ControllerModel = 'kincony-server-mini' | 'kincony-pi5r8'
 export type ControllerStatus = 'online' | 'offline'
@@ -106,6 +110,8 @@ export interface Controller extends BaseRecord {
   /** Liveness, written by accessd from heartbeats (M4); not mirrored to KV. */
   last_seen: string
   status: ControllerStatus | ''
+  /** Email opted-in operators (users.notify) when this controller goes offline. */
+  notify_offline: boolean
   expand?: { location?: Location }
 }
 
@@ -169,7 +175,11 @@ export interface AuxInput extends BaseRecord {
   contact: 'nc' | 'no' | ''
   /** Arming membership: the area this input belongs to ('' = none). */
   area: string
-  /** Point type: '' / 'monitor' (default, observe-only) / 'intrusion' (alarms while its area is armed) / 'tamper_24h' (alarms always). */
+  /**
+   * Point type: '' / 'monitor' (default, observe-only) / 'intrusion' (alarms while
+   * its area is armed) / 'tamper_24h' (alarms always) / 'fire' (a fire-alarm
+   * interface — publishes the location-scoped fire signal on both edges).
+   */
   point_type: PointType | ''
   /** {x, y} pixel position on the location's floorplan (UI only; null/absent = not placed). */
   floorplan_position?: { x: number; y: number } | null
@@ -376,7 +386,22 @@ export interface User extends BaseRecord {
   notify: boolean
   /** Location ids this operator is paged for; empty = all locations. Scopes users.notify. */
   notify_locations: string[]
+  /**
+   * Which kinds of event page this operator. EMPTY = the default set (forced, held,
+   * intrusion, fire, controller offline) — not literally all: `no_entry` is
+   * diagnostic and must be selected explicitly. Scopes users.notify.
+   */
+  notify_types: NotifyType[]
 }
+
+/** The event kinds an operator can be paged for (users.notify_types). */
+export type NotifyType =
+  | 'forced'
+  | 'held'
+  | 'no_entry'
+  | 'intrusion'
+  | 'fire'
+  | 'controller_offline'
 
 export type AuditEventType = 'create' | 'update' | 'delete' | 'auth'
 

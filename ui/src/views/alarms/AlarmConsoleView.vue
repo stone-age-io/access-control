@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { usePagination } from '@/composables/usePagination'
 import { useAuthStore } from '@/stores/auth'
@@ -184,14 +185,55 @@ async function ackAll() {
   scheduleReconcile()
 }
 
+// --- deep link from an alarm notification (/alarms?seq=<stream sequence>) ---
+
+// The link is keyed by JetStream stream sequence, not by record id: the notify sink
+// that sends the email knows the sequence but not the row's id — it is a separate
+// durable from the audit projection and may well run BEFORE the row is written.
+// events.stream_seq is unique-indexed, so the lookup is exact once it lands.
+const deepLinkState = ref<'' | 'loading' | 'missing'>('')
+let deepLinkTimer: ReturnType<typeof setTimeout> | null = null
+
+// That race is the reason for polling rather than reporting "not found": an operator
+// tapping the link from their phone seconds after the alarm can genuinely beat the
+// projection. Bounded, so a link to a pruned or never-projected event settles into an
+// honest message instead of spinning forever.
+const DEEP_LINK_TRIES = 6
+const DEEP_LINK_DELAY = 1000
+
+async function openDeepLink(seq: string, attempt = 1) {
+  deepLinkState.value = 'loading'
+  try {
+    selected.value = await pb
+      .collection('events')
+      .getFirstListItem<AccessEvent>(`stream_seq = ${Number(seq)}`)
+    deepLinkState.value = ''
+    return
+  } catch {
+    // Not projected yet (or gone).
+  }
+  if (attempt >= DEEP_LINK_TRIES) {
+    deepLinkState.value = 'missing'
+    return
+  }
+  deepLinkTimer = setTimeout(() => openDeepLink(seq, attempt + 1), DEEP_LINK_DELAY)
+}
+
+const route = useRoute()
+
 onMounted(() => {
   reload()
   loadLocations()
   subscribe()
+
+  const seq = route.query.seq
+  // Guard the cast: the sequence goes straight into a filter expression.
+  if (typeof seq === 'string' && /^\d+$/.test(seq)) openDeepLink(seq)
 })
 onBeforeUnmount(() => {
   if (unsub) unsub()
   if (reconcileTimer) clearTimeout(reconcileTimer)
+  if (deepLinkTimer) clearTimeout(deepLinkTimer)
 })
 </script>
 
@@ -225,6 +267,23 @@ onBeforeUnmount(() => {
     </template>
 
     <template #toolbar>
+      <!--
+        Deep link from an alarm notification. The email can arrive before the audit
+        projection writes the row (independent JetStream durables), so a brief
+        "locating" state is the honest thing to show rather than "not found".
+      -->
+      <div v-if="deepLinkState === 'loading'" class="alert alert-info w-full">
+        <span class="loading loading-spinner loading-sm"></span>
+        <span>Locating the alarm from your notification…</span>
+      </div>
+      <div v-else-if="deepLinkState === 'missing'" class="alert alert-warning w-full">
+        <span>
+          That alarm isn't in the timeline — it may have been pruned by the retention
+          window. The unacknowledged list below is current.
+        </span>
+        <button class="btn btn-sm btn-ghost" @click="deepLinkState = ''">Dismiss</button>
+      </div>
+
       <select v-model="typeFilter" class="select select-bordered sm:w-48" @change="reload">
         <option value="">All types</option>
         <option v-for="t in ALARM_TYPES" :key="t" :value="t">{{ typeLabel(t) }}</option>

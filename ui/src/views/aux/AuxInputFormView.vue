@@ -28,7 +28,7 @@ const form = ref({
   input_index: 0,
   contact: 'no' as 'no' | 'nc',
   area: (route.query.area as string) || '',
-  point_type: '' as '' | 'monitor' | 'intrusion' | 'tamper_24h',
+  point_type: '' as '' | 'monitor' | 'intrusion' | 'tamper_24h' | 'fire',
 })
 
 const locations = ref<Location[]>([])
@@ -195,11 +195,15 @@ onMounted(async () => {
                 <option v-for="a in areas" :key="a.id" :value="a.id">{{ a.code }} — {{ a.name || a.code }}</option>
               </select>
             </FormField>
-            <FormField label="Point type" hint="Monitor = observe-only. Intrusion = alarms while its area is armed. Tamper (24h) = alarms regardless of arm-state.">
+            <FormField
+              label="Point type"
+              hint="Monitor = observe-only. Intrusion = alarms while its area is armed. Tamper (24h) = alarms regardless of arm-state. Fire = a fire-alarm interface: while asserted it suppresses alarms across the whole location (hardware still owns egress — this never unlocks a door)."
+            >
               <select v-model="form.point_type" class="select select-bordered">
                 <option value="">Monitor (observe-only)</option>
                 <option value="intrusion">Intrusion</option>
                 <option value="tamper_24h">Tamper (24h)</option>
+                <option value="fire">Fire alarm interface</option>
               </select>
             </FormField>
           </div>

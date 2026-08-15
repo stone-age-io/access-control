@@ -197,6 +197,17 @@ type AccessdConfig struct {
 	// value to trim the projection. JetStream stays the system of record, so a
 	// prune only shrinks the read model.
 	EventRetentionDays int `json:"eventRetentionDays" yaml:"eventRetentionDays" mapstructure:"eventRetentionDays"`
+	// WebhookURL, when set, enables the outbound webhook sink (internal/webhook): a
+	// fourth durable on ACC_EVENTS that POSTs every pageable event as JSON here, so
+	// an install can feed its own PagerDuty/Slack/ntfy/ITSM instead of relying on
+	// email. Empty (the default) leaves the sink inert.
+	//
+	// Deliberately CONFIG rather than an operator-editable record. accessd POSTs
+	// wherever this points, from inside the deployment's network, so it is a modest
+	// SSRF surface; keeping it deploy-time means there is no API to abuse at all,
+	// and it matches how the other outbound transport (PocketBase's SMTP settings)
+	// is administered. The sink additionally never follows redirects.
+	WebhookURL string `json:"webhookURL" yaml:"webhookURL" mapstructure:"webhookURL"`
 }
 
 // BrandingConfig points accessd at an optional operator branding overlay: a host

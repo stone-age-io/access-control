@@ -55,13 +55,41 @@ collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
 | `acc.{location}.{type}.{thing}.cmd.posture` | → ctrl | core NATS | `{"posture":"…","actor":"…","reason":"…","until":"…"}` |
 | `acc.{location}.{type}.{thing}.cmd.grant` | → ctrl | core NATS | `{"seconds":N,"actor":"…","reason":"…"}` |
 | `acc.{location}.auxout.{thing}.cmd.output` | → ctrl | core NATS | `{"action":"on"\|"off"\|"pulse","seconds":N,"actor":"…","reason":"…"}` |
-| `acc.{location}.evt.fire` | → ctrl | core NATS | `{"active":bool}` |
+| `acc.{location}.evt.fire` | ↔ | core NATS → JetStream | `{"active":bool,"ts"}` |
 | `acc.{location}.{type}.{thing}.evt.tap` | ctrl → | core NATS → JetStream | `{"cred","user","allow","reason","ts","source"}` |
 | `acc.{location}.{type}.{thing}.evt.state` | ctrl → | core NATS → JetStream | `{"posture","actor?","reason?","ts"}` |
 | `acc.{location}.{type}.{thing}.evt.alarm` | ctrl → | core NATS → JetStream | `{"type","ts"}` |
+| `acc.{location}.area.{code}.evt.state` | accessd → | core NATS → JetStream | `{"arm","previous","controller","source","ts"}` |
+| `acc.{location}.ctrl.{code}.evt.state` | accessd → | core NATS → JetStream | `{"status","lastSeen","ts"}` |
 | `acc.{location}.ctrl.{code}.heartbeat` | ctrl → accessd | core NATS (**not** JetStream) | `{"code","location","ts"}` |
 
-\* → ctrl = controller subscribes; ctrl → = controller publishes.
+\* → ctrl = controller subscribes; ctrl → = controller publishes; accessd → =
+accessd publishes; ↔ = both (see fire, below).
+
+Two event subjects are published by **accessd**, not the edge, and both are
+`evt.state` distinguished by their `{type}` token:
+
+- **`area` — an arm/disarm transition.** All four ways an area changes arm-state
+  (an operator's arm route, entry-disarm, the one-shot release sweep, and a
+  scheduled auto-arm evaluated on each box) converge on the per-controller arm
+  shadow in `ACC_STATUS`, so accessd's status projector emits from there. It is
+  emitted **per participating controller** — a 3-box area reports three
+  transitions, each naming its own controller — matching the shadow's granularity.
+  Scheduled auto-arm has no other trace anywhere in the system.
+- **`ctrl` — a liveness transition.** Heartbeats stay off the stream (they are a
+  flood); an online↔offline flip is one event per outage and is audited. `ctrl` is
+  the reserved controller token, the same one the heartbeat uses — the heartbeat
+  sits outside `.evt` at 5 tokens so the stream cannot capture it, while this sits
+  inside at 6 so it can.
+
+Both fit the existing `acc.*.*.*.evt.>` stream subject; **no stream subject
+changed** for either.
+
+`acc.{location}.evt.fire` is bidirectional. A controller whose `aux_input` has
+`pointType: "fire"` publishes it on **both edges** (assert and clear), and every
+controller at that location — including the publisher, harmlessly and
+idempotently — subscribes and applies it. That is why it is location-scoped while
+the contact is bound to one box.
 
 Controllers subscribe per location with wildcards: taps via
 `acc.{location}.*.*.tap` and commands via `acc.{location}.*.*.cmd.posture`,
@@ -131,14 +159,34 @@ a **door-position switch** (DPS, `dpsInput`) and an optional **request-to-exit**
 | `forced` | door opened with no recent grant or REX — a break-in |
 | `held` | an authorized-open door stayed open past `heldOpenSeconds` (DOTL) |
 | `held_clear` | a previously-held door closed |
+| `no_entry` | a grant whose grace window expired with no door-open — "access granted, no entry" |
 | `intrusion` | an armed area's `intrusion` aux point — or any `tamper_24h` point — went active, **or** a member portal was forced while its area is armed |
 
 A grant (an `allow` tap or a `grant` command) and a REX press each open a short
 window during which a door-open reads as *authorized* (no `forced`), arming the
-held-open timer instead. While
-a location's **fire** input is active, all alarm emission is suppressed
-(forced/held/intrusion during evacuation would be false alarms). The DOTL timer and the
-held-open threshold are hardware-local timing, not policy.
+held-open timer instead.
+
+`no_entry` is the inverse of `forced`: the grant window closed and nobody came
+through, which separates a real entry from a badge test, a stuck strike, or someone
+who badged and walked away. It is **exception-only** (a used grant emits nothing, so
+the happy path adds no volume) and is evaluated on the existing hold-eval tick rather
+than a per-grant timer, so it lands 10–20s after the grant. A portal with **no
+`dpsInput`** can never observe an open and never emits it. It is diagnostic rather
+than urgent, so notification treats it as opt-in (see below).
+
+While a location's **fire** input is active, alarm emission is suppressed
+(forced/held/intrusion during evacuation would be false alarms) — but only if the
+location opts in via `faiSuppress`, and **`held_clear` is always emitted**: a clear
+can never be a false alarm, and dropping it would strand an active held-open on the
+console with no later event to resolve it. The DOTL timer and the held-open threshold
+are hardware-local timing, not policy.
+
+A location's fire input is an `aux_input` whose `pointType` is **`fire`**. It is
+electrically an ordinary dry contact, so it needs no dedicated driver interface: the
+controller that owns it publishes `acc.{location}.evt.fire` on both edges, and every
+controller at the location applies it. Software's role stays narrow — suppress alarm
+noise, record, notify. **Hardware owns egress**: the fire panel's relay drops maglock
+power directly, and nothing here unlocks a door.
 
 ### Areas & intrusion-lite arming
 
@@ -539,10 +587,32 @@ already landed is acked and skipped. Each event subject maps to a row:
 |---|---|
 | `location`, `type`, `portal`, `kind` | parsed from the subject (`kind` ∈ `tap`/`state`/`alarm`/`fire`) |
 | `credential`, `user`, `allow`, `reason`, `ts` | corresponding body fields |
-| `source` | tap body field (`nats`/`osdp`) — which reader produced a tap; empty for non-tap and legacy rows |
+| `source` | tap body field — **what produced the tap**: `nats`/`osdp` (a reader) or `command`/`badge` (a remote act that never reached a reader). Empty on non-tap and legacy rows |
 | `acknowledged`, `ack_by`, `ack_at` | operator acknowledgement (set via `POST /api/events/{id}/ack`, the `command` capability) |
 | `stream_seq` | the message's JetStream stream sequence (idempotency key; 0 on rows projected before it existed) |
+| `repage_count` | reminders sent for an unacknowledged alarm ([`internal/repage`](../internal/repage)); on the row so the cap survives a restart |
 | `payload` | the full event body (JSON) |
+
+The `(type, kind)` pair is what distinguishes the newer event shapes; **no new
+`kind` value was added** for any of them:
+
+| `type` | `kind` | Meaning |
+|---|---|---|
+| portal kind | `tap` | a decision (a card read, an operator grant, or a badge remote unlock — see `source`) |
+| portal kind | `state` | a posture change |
+| portal kind | `alarm` | `forced` / `held` / `held_clear` / `no_entry` |
+| `area` | `alarm` | an intrusion trip |
+| `area` | `state` | an arm/disarm transition |
+| `ctrl` | `state` | a controller liveness transition |
+| *(empty)* | `fire` | a location's fire input (4-token subject) |
+
+A **denied badge remote unlock** is emitted by accessd as an ordinary `evt.tap`
+with `allow: false` and `source: badge`. Without it, the same person denied at the
+same door would produce an events row when they tap a card and nothing at all when
+they press the button. `cred` is deliberately empty: the badge tier is
+identity-based, `user` carries `badge:<cardholderId>`, and it keeps credential
+values out of one more place. The `audit_logs` row the badge routes also write stays
+— that records an API call, which is a different question.
 
 For `acc.{location}.evt.fire`, `portal` and `type` are empty and `kind` is `fire`.
 For an area intrusion alarm, `type` is `area`, `portal` is the area code, `kind` is
@@ -569,5 +639,46 @@ alarm at location *L* mails only the notify operators whose scope is empty (= al
 locations, the default) or contains *L* — routing site-local alarms to site-local
 people without a per-source→per-operator rules engine. The sink itself stays
 PocketBase-free — it parses the event and hands it to accessd, which resolves the
-source opt-in and the location-scoped recipients; `held_clear` (a held-open
-auto-clear) is never emailed.
+source opt-in and the location-scoped recipients.
+
+Recipients are also **scoped by severity**: `users.notify_types` selects which kinds
+of event page an operator. An **empty selection means the DEFAULT set** — `forced`,
+`held`, `intrusion`, `fire`, `controller_offline` — not literally everything, so an
+operator who never narrows keeps receiving future urgent types, while `no_entry`
+stays off until explicitly chosen. `held_clear` is never emailed at all (a clear, not
+a raise), and a controller coming back *online* is not paged (good news is not a
+page). A controller's source opt-in is `controllers.notify_offline`.
+
+Each message carries a **deep link** to the exact event —
+`{AppURL}/alarms?seq={stream_seq}` — keyed by the JetStream stream sequence rather
+than the row id, because the notify sink knows the sequence but is an independent
+durable from the audit projection and may run *before* the row exists. The console
+polls briefly for that race rather than reporting "not found". No console URL
+configured (PocketBase's `Settings().Meta.AppURL`) simply omits the link.
+
+**Unacknowledged-alarm reminders.** [`internal/repage`](../internal/repage) re-sends
+a notification for an alarm still unacknowledged after 15 minutes, at most twice, and
+only for the urgent types (never `held`/`no_entry`). It reuses the *same* SendFunc, so
+a reminder can never reach anyone the original page could not. It is a projection
+reader, not a durable — "still unacknowledged N minutes later" is a question about
+accumulated state, not a message arriving.
+
+**Webhook sink.** A *fourth* durable (`acc-webhook`,
+[`internal/webhook`](../internal/webhook)) POSTs each pageable event as JSON to
+`accessd.webhookURL`, so an install can feed its own PagerDuty/Slack/ntfy/ITSM rather
+than relying on email. It shares the sink's classification (so email and webhook never
+disagree about what is worth forwarding) but deliberately **ignores the per-source and
+per-operator email opt-ins** — those decide who gets *mail*; a webhook has one
+configured destination whose purpose is to receive the feed. Configuring the URL is
+the opt-in. Payload:
+
+```json
+{"type":"forced","kind":"alarm","location":"hq","thing":"lobby-main",
+ "thingType":"door","ts":"…","seq":42,"link":"https://…/alarms?seq=42","body":{…}}
+```
+
+`seq` is stable and unique, so a receiver can deduplicate redeliveries. Delivery
+retries are JetStream's (`Nak`, bounded by `MaxDeliver`) rather than a bespoke queue.
+**Redirects are never followed** and the timeout is hard: accessd POSTs from inside
+the deployment's network, so the destination is deploy-time config, not an
+operator-editable record.

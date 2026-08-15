@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { pb } from '@/utils/pb'
 import { useToast } from '@/composables/useToast'
 import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
-import type { User, Capability, Location } from '@/types/pocketbase'
+import type { User, Capability, Location, NotifyType } from '@/types/pocketbase'
 import { CAPABILITIES, PRESETS, presetLabel } from '@/utils/capabilities'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
@@ -26,9 +26,24 @@ const form = ref({
   verified: true,
   notify: false,
   notify_locations: [] as string[],
+  notify_types: [] as NotifyType[],
   password: '',
   passwordConfirm: '',
 })
+
+// The event kinds an operator can be paged for. Empty selection = the DEFAULT set
+// (everything except no_entry), which is why the picker shows no_entry unchecked
+// but the others as "on by default" rather than pre-selecting all six — selecting
+// all six would look identical yet freeze the set, so a future urgent type would
+// silently not reach them.
+const NOTIFY_TYPES: { value: NotifyType; label: string; hint: string }[] = [
+  { value: 'forced', label: 'Forced door', hint: 'Opened with no grant or REX' },
+  { value: 'held', label: 'Held open', hint: 'Open past its threshold — the noisiest one' },
+  { value: 'intrusion', label: 'Intrusion', hint: 'Armed area tripped' },
+  { value: 'fire', label: 'Fire input', hint: "A location's fire alarm input asserted" },
+  { value: 'controller_offline', label: 'Controller offline', hint: 'A box stopped reporting' },
+  { value: 'no_entry', label: 'No entry after grant', hint: 'Diagnostic — off unless selected' },
+]
 
 const locations = ref<Location[]>([])
 const loading = ref(false)
@@ -54,6 +69,7 @@ async function loadRecord() {
       verified: !!u.verified,
       notify: !!u.notify,
       notify_locations: [...(u.notify_locations || [])],
+      notify_types: [...(u.notify_types || [])],
       password: '',
       passwordConfirm: '',
     }
@@ -93,6 +109,8 @@ async function handleSubmit() {
       // Empty = all locations. Only meaningful while notify is on, but it is
       // harmless to persist regardless, so the scope survives toggling notify off/on.
       notify_locations: form.value.notify_locations,
+      // Empty = the default set (everything except no_entry) — see NOTIFY_TYPES.
+      notify_types: form.value.notify_types,
     }
     // Password is set on create, and on edit only when a new one was entered.
     if (form.value.password) {
@@ -177,6 +195,35 @@ onMounted(async () => {
               :secondary="(l) => l.name"
               empty="No locations exist yet — create one under Locations."
             />
+          </FormField>
+
+          <FormField
+            v-if="form.notify"
+            label="Notify types"
+            hint="Which events page this operator. Leave all unselected for the default set — every urgent type, now and in future. Selecting types freezes the choice to exactly those."
+          >
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label
+                v-for="t in NOTIFY_TYPES"
+                :key="t.value"
+                class="label cursor-pointer justify-start gap-3 rounded-lg border border-base-300 px-3 py-2"
+              >
+                <input
+                  v-model="form.notify_types"
+                  type="checkbox"
+                  class="checkbox checkbox-primary checkbox-sm"
+                  :value="t.value"
+                />
+                <span class="flex flex-col">
+                  <span class="label-text">{{ t.label }}</span>
+                  <span class="label-text text-xs opacity-60">{{ t.hint }}</span>
+                </span>
+              </label>
+            </div>
+            <p v-if="form.notify_types.length === 0" class="text-xs opacity-60 mt-2">
+              Using the default set: forced, held, intrusion, fire, and controller offline.
+              No-entry is diagnostic and stays off until selected.
+            </p>
           </FormField>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

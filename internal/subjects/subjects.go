@@ -29,7 +29,8 @@
 //	{app}.{location}.{type}.{thing}.evt.tap      decision outcome
 //	{app}.{location}.{type}.{thing}.evt.state    effective-posture change
 //	{app}.{location}.{type}.{thing}.evt.alarm    forced / held-open alarm
-//	{app}.{location}.ctrl.{code}.heartbeat       controller liveness (NOT audited)
+//	{app}.{location}.ctrl.{code}.evt.state       controller liveness TRANSITION (audited)
+//	{app}.{location}.ctrl.{code}.heartbeat       controller liveness beat (NOT audited)
 //
 // The {app}.*.…evt subtree is the audit surface; EventsWildcards() captures it
 // via two patterns of different fixed arity (location-scoped fire at 4 tokens;
@@ -50,6 +51,22 @@ import (
 
 // DefaultApp is the app-discriminator segment used unless a deployment overrides it.
 const DefaultApp = "acc"
+
+// Event `source` values: what produced a tap event. Stable strings that flow
+// verbatim into the events projection and the UI, like decision reason codes.
+//
+// This is the one canonical list, kept here because both sides of the wire stamp
+// it: the two READER transports are set at the edge (internal/drivers re-exports
+// them as drivers.Source* for the reader implementations), while the two REMOTE
+// sources are set centrally by accessd for acts that never touched a reader. That
+// distinction is the whole point of the field — a physical read must stay
+// forensically distinguishable from a button someone pressed.
+const (
+	SourceNATS    = "nats"    // simulated tap published on the .tap subject (dev)
+	SourceOSDP    = "osdp"    // a real card read on the RS485 bus
+	SourceCommand = "command" // an operator's cmd.grant door-pop
+	SourceBadge   = "badge"   // a cardholder's own remote unlock (badge tier)
+)
 
 // Subjects builds and parses subjects for one app namespace. The zero value is
 // usable and behaves as the default app ("acc").
@@ -118,6 +135,17 @@ const AuxOutType = "auxout"
 // the existing 6-token portal-event wildcard with no new stream subject.
 const AreaType = "area"
 
+// CtrlType is the reserved {type} subject segment for controllers. It predates the
+// events below as the heartbeat's namespace ({app}.{location}.ctrl.{code}.heartbeat,
+// 5 tokens, deliberately outside .evt so the stream never captures it).
+//
+// A controller's LIVENESS TRANSITION is a different thing from its heartbeat and
+// is addressed as a Thing of this type — {app}.{location}.ctrl.{code}.evt.state —
+// so it reuses the generic EventState constructor and is captured by the existing
+// 6-token wildcard with no new stream subject. Heartbeats are a flood and stay off
+// the stream; a transition is one event per outage and belongs in the timeline.
+const CtrlType = "ctrl"
+
 // Output is the subject an operator publishes an auxiliary-output command to
 // (on/off/pulse). Aux outputs ride the same {app}.{location}.{type}.{thing}
 // hierarchy as portals, with the fixed AuxOutType token.
@@ -163,13 +191,13 @@ func (s Subjects) EventAlarm(location, ptype, thing string) string {
 // never captures it; accessd subscribes over core NATS and updates the
 // controllers record's last_seen/status directly.
 func (s Subjects) Heartbeat(location, code string) string {
-	return fmt.Sprintf("%s.%s.ctrl.%s.heartbeat", s.App(), location, code)
+	return fmt.Sprintf("%s.%s.%s.%s.heartbeat", s.App(), location, CtrlType, code)
 }
 
 // HeartbeatWildcard is accessd's subscription for every controller's heartbeat,
 // across all locations and codes.
 func (s Subjects) HeartbeatWildcard() string {
-	return fmt.Sprintf("%s.*.ctrl.*.heartbeat", s.App())
+	return fmt.Sprintf("%s.*.%s.*.heartbeat", s.App(), CtrlType)
 }
 
 // EventsWildcards is the ACC_EVENTS stream's subject set and the audit consumer's
@@ -195,17 +223,25 @@ func (s Subjects) EventsWildcards() []string {
 
 // --- parsing ---
 
-// AlarmWildcards is the notification sink's consumer filter: the alarm/fire subset
-// of the events surface, so the sink is never delivered taps/state just to drop
-// them. Both patterns are covered by the ACC_EVENTS stream subjects and do not
-// overlap each other (6-token alarm vs 4-token fire):
+// NotifyWildcards is the notification sinks' consumer filter: the pageable subset
+// of the events surface, so a sink is never delivered ordinary taps just to drop
+// them. All three patterns are covered by the ACC_EVENTS stream subjects and are
+// pairwise non-overlapping, which JetStream requires of a consumer's filters:
 //
-//	{app}.*.*.*.evt.alarm   portal/area forced/held/intrusion alarms
-//	{app}.*.evt.fire        location-scoped fire input
-func (s Subjects) AlarmWildcards() []string {
+//	{app}.*.*.*.evt.alarm    portal/area forced/held/intrusion alarms
+//	{app}.*.evt.fire         location-scoped fire input (4 tokens, disjoint by arity)
+//	{app}.*.ctrl.*.evt.state controller liveness transitions
+//
+// The last two are disjoint from the first by their final token, and the fire
+// pattern is disjoint from both by arity. The ctrl pattern pins its third token to
+// the literal `ctrl`, so it captures liveness transitions WITHOUT capturing portal
+// or area evt.state (posture changes and arm/disarm), which are timeline events
+// nobody should be emailed about.
+func (s Subjects) NotifyWildcards() []string {
 	return []string{
 		fmt.Sprintf("%s.*.*.*.evt.alarm", s.App()),
 		fmt.Sprintf("%s.*.evt.fire", s.App()),
+		fmt.Sprintf("%s.*.%s.*.evt.state", s.App(), CtrlType),
 	}
 }
 
@@ -245,7 +281,7 @@ func (s Subjects) ParseEvent(subject string) (location, ptype, thing, kind strin
 // is not a well-formed heartbeat subject (wrong app, wrong shape, not ctrl-scoped).
 func (s Subjects) ParseHeartbeat(subject string) (location, code string, ok bool) {
 	parts := strings.Split(subject, ".")
-	if len(parts) != 5 || parts[0] != s.App() || parts[2] != "ctrl" || parts[4] != "heartbeat" {
+	if len(parts) != 5 || parts[0] != s.App() || parts[2] != CtrlType || parts[4] != "heartbeat" {
 		return "", "", false
 	}
 	return parts[1], parts[3], true

@@ -157,10 +157,29 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   for nothing) instead of blocking or crashing when policy is slow/unreachable, and converges as policy arrives.
   It binds the policy KV **read-only** (`natsx.KVBucket`); accessd owns bucket creation.
 - **Door monitoring** (`internal/controller/runtime.go`) — a per-door state machine over DPS/REX inputs emits
-  `evt.alarm` events (`type`: `forced`/`held`/`held_clear`). A grant or REX opens a short authorized-open window
-  (no `forced`) and arms the held-open (DOTL) timer; a location's fire input suppresses all alarm emission. The
-  hardware binding (logical relay/input indices, held-open threshold) rides policy on the portal record, never
-  the pure `policy.Decide`; the box maps logical indices to physical lines via its `model` profile.
+  `evt.alarm` events (`type`: `forced`/`held`/`held_clear`/`no_entry`). A grant or REX opens a short
+  authorized-open window (no `forced`) and arms the held-open (DOTL) timer. `no_entry` is the inverse of
+  `forced` — the grant window closed with no door-open, i.e. "access granted, nobody came through", which
+  separates a real entry from a badge test, a stuck strike, or someone who changed their mind. It is
+  **exception-only** (a used grant emits nothing, so the happy path adds no volume) and rides the **existing
+  hold-eval tick** rather than a per-grant timer: the controller keeps exactly three timers by design, and since
+  the grace window and the tick are both 10s it lands 10–20s late — the same sampling trade scheduled-posture
+  holds already accept. A portal with no `dpsInput` can never observe an open, so it is gated out entirely or it
+  would fire on every grant. The hardware binding (logical relay/input indices, held-open threshold) rides policy
+  on the portal record, never the pure `policy.Decide`; the box maps logical indices to physical lines via its
+  `model` profile.
+- **Fire is an aux input, not a driver interface.** A location's fire-alarm interface is an `aux_input` whose
+  `point_type` is `fire`; the controller that owns the contact publishes `acc.{loc}.evt.fire` on **both edges**,
+  and every controller at that location (including the publisher, idempotently) applies it. It used to be
+  `drivers.FAIInput` with zero implementations in any backend — an FAI is electrically just another dry contact,
+  so everything it needed already existed as an aux input (controller binding, logical index, contact sense,
+  floor-plan position, a UI, and a driver path that already delivers `InputAux` on both GPIO and I2C). Making it
+  data **deleted an interface instead of adding an implementation**. Two traps: the `fire` case hangs off
+  `setAuxInput` *above* the rising-edge guard (the clear matters as much as the assert), and suppression is now
+  gated on `locations.fai_suppress` — that field was mirrored to KV and read by nobody, so the UI toggle did
+  nothing. `held_clear` is exempt from suppression: a clear can't be a false alarm, and dropping it stranded an
+  active held-open on the console with no later event to resolve it. **Hardware owns egress** — the fire panel's
+  relay drops maglock power directly; software never unlocks for fire.
 - **AreaManager** (`internal/controller/areamanager.go`) — the arming sibling of AuxManager. The desired set is
   every area with a member `aux_input` **or portal** on this box (`PolicyStore.AreasForController`/`AreaControllers`
   union both kinds); for each it resolves the
@@ -168,7 +187,18 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   disarmed) and writes a **per-controller arm shadow** to ACC_STATUS (`area.{controller}.{areacode}`), stamping
   the full participant set (`peers`) so the console can tell "all armed" from "a box never reported." It reconciles
   on policy change *and* on the runtime's hold-eval tick (so scheduled-arm boundaries refresh — **no new timer**),
-  and drops a shadow when an area leaves the box. The arm decision is **not** in `policy.Decide` (it's
+  and drops a shadow when an area leaves the box. That shadow is also where an arm/disarm becomes an **event**:
+  all four paths that change arm-state (the operator route, entry-disarm, the one-shot release, and a scheduled
+  auto-arm evaluated at the edge) converge on it, so accessd's status projector emits
+  `acc.{loc}.area.{code}.evt.state` by comparing old-vs-new on the record it has *already loaded* — one
+  comparison covering four features, with no new query, no new timer, and no migration. Scheduled auto-arm
+  otherwise leaves no trace anywhere in the system. The tension is real and was taken deliberately: this makes
+  **accessd an event emitter**, where the architecture otherwise has the edge emit and accessd project. The
+  judgment is that projecting edge-reported state into a central record and emitting an event about it are the
+  same act, not a claim of ownership. The rejected alternative — each controller emits on its own resolved-state
+  change — keeps the direction pure but puts emission logic on the edge and yields N events for an N-controller
+  area with nowhere central to dedupe. Events are emitted **per controller**, matching the shadow's own
+  granularity, each naming its own box. The arm decision itself is **not** in `policy.Decide` (it's
   time/schedule-dependent operational state, like posture). Two trip paths share the fire-suppression gate and the
   edge-triggered/no-latch shape of `forced`: an **aux input** trip (`runtime.setAuxInput` → `maybeIntrusionAlarm`,
   by `point_type`), and a **portal** trip (`runtime.maybeForcedIntrusion` at the `forced` site — a member portal's
@@ -186,9 +216,49 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   Because the projection is rebuildable, an optional daily 03:00 prune (`RegisterPrune`, gated on
   `accessd.eventRetentionDays`, **off by default = keep forever**) trims `events` older than the retention
   window — draining in bounded batches (it's high-volume, unlike the changelog's single-batch audit-log prune).
+  **No new `kind` value has ever been added**: `kind` is a SelectField (a migration + UI filter change) while
+  `type` is plain text, so the *pair* `(type, kind)` carries every newer shape — `(area, state)` is an arm
+  transition, `(ctrl, state)` a liveness flip, `(door, alarm)` with `type: no_entry` a grant nobody used.
+- **Notification opt-in has two axes, not one.** Beyond the source×recipient AND, `users.notify_types` selects
+  *which kinds* page an operator, because opting in used to mean forced + held + intrusion together — and `held`
+  (a propped door in July) is the highest-volume and least urgent of the three, which is how a notification
+  system ends up switched off. **Empty means the DEFAULT set, not literally all**: every urgent type, now and in
+  future, but not `no_entry`. That direction is deliberate — a new urgent type should reach everyone who never
+  narrowed. `held_clear` is never emailed (a clear, not a raise) and a box coming back *online* is not paged.
+- **Repage** (`internal/repage`, accessd-side) — re-sends an urgent alarm still unacknowledged after 15 minutes,
+  at most twice. It joins two things that already existed and did not talk: the `acknowledged`/`ack_at` fields
+  (migration `1750000020`) and the notify sink, which emailed exactly once. It reuses the **same `SendFunc`**, so
+  a reminder can never reach anyone the original page could not, and the count lives on the row
+  (`events.repage_count`) so the cap survives a restart — an in-memory counter would reset and page forever. A
+  projection reader, not a fifth durable: "still unacknowledged N minutes later" is a question about accumulated
+  state, not a message arriving.
+- **Webhook** (`internal/webhook`, accessd-side) — a **fourth** durable that POSTs each pageable event as
+  structured JSON to `accessd.webhookURL`. This is the answer to "let admins edit the email templates": the real
+  request is almost never wording, it is getting the event into something that already routes, escalates, and
+  acknowledges. A template engine would buy a template language, a preview UI, an escaping story, and a
+  "my template broke and nobody got paged" failure mode, and still render worse than PagerDuty. It shares
+  `notify`'s classification (so the two never disagree about what is worth forwarding) but deliberately ignores
+  the email opt-ins — those decide who gets *mail*; a webhook has one destination whose purpose is the feed.
+  JetStream's `Nak` is the retry, which is the whole argument for a durable over a hook. The URL is **config, not
+  a record**: accessd POSTs from inside the deployment's network, so deploy-time means there is no API to abuse;
+  redirects are never followed and the timeout is hard.
 - **Controller health** (`internal/health`, accessd-side) — a core-NATS subscriber to the heartbeat subject
   updates `controllers.last_seen`/`status` with a **direct record update, not an events row**, plus a staleness
-  sweep that marks a silent box offline. Heartbeats are deliberately kept out of the audit stream.
+  sweep that marks a silent box offline. Heartbeats are deliberately kept out of the audit stream — but a
+  **liveness transition is not a heartbeat**: an online↔offline flip is one event per outage, and it is the most
+  operationally urgent thing the system notices (that site is now on cached policy, or default-deny), so each
+  transition emits `acc.{loc}.ctrl.{code}.evt.state`. Six tokens, so the existing `acc.*.*.*.evt.>` stream
+  subject captures it with **no stream change**; the heartbeat stays outside `.evt` at five. Zero new timers —
+  the sweep loop already ticks and `sweep()` already *is* the transition branch (it queries only `status =
+  'online'`); the online direction needed one comparison, since `markOnline` sets status unconditionally.
+- **Three record planes.** The system records in three places and the split is load-bearing: the **event stream**
+  (what happened at the building), **`audit_logs`** (who changed the config, via `*Request` hooks), and the
+  **status shadow** (what is true right now, last-value). Control-plane edits stay in `audit_logs` — the planes
+  are not merged. What was fixed was building-history filed in the wrong plane: arm/disarm and controller
+  liveness lived only in the shadow (or, for scheduled auto-arm, nowhere at all), and a badge *denial* wrote only
+  an `audit_logs` row while a physical denial wrote an events row — so "who has been probing doors" needed a
+  union across two collections. Each now emits an event; the `audit_logs` rows stay, because "an API call
+  happened" is a different question from "a door was denied".
 - **Badge tier** (`internal/badgeapi`, accessd-side) — the routes a *cardholder or visitor* calls, authenticated
   against the **`cardholders`** collection itself, never `users`. That collection is an **auth collection**: one
   person is one record whether or not they ever sign in, and a person who may sign in is one with `badge_login` set
@@ -409,7 +479,14 @@ fixture granting the demo area + a new `lobby-gate` output through `lobby-group`
 human, so an operator can view their OWN badge — on *cardholders* because `users` is self-writable, so the
 mirror-image field would let any operator repoint it and inherit someone else's badge), and `1750000041`
 (`locations.badge_floorplan`, default false — a badge may show a site's floor plan with the holder's own doors
-pinned on it; the pins are scoped to one badge but the plan is the whole building).
+pinned on it; the pins are scoped to one badge but the plan is the whole building). Then the **notification and
+event-plane** pass: `1750000042` (`users.notify_types` — which kinds page an operator, where EMPTY means the
+*default set* rather than literally all, so a future urgent type reaches everyone who never narrowed while
+`no_entry` stays opt-in; plus `controllers.notify_offline`, the per-source opt-in completing the two-sided AND
+for the liveness transitions accessd now emits; plus `events.repage_count`, which lives on the row so the
+reminder cap survives a restart — an in-memory counter would reset and page forever), and `1750000043`
+(`aux_input.point_type` gains `fire`, which is what finally gives the fire input a *source*: it had a consumer
+and a transport but nothing produced the signal, since `drivers.FAIInput` had zero implementations).
 
 **The base `1750000000` is NOT frozen any more, and there are gaps at 30/34/35.** The badge tier used to be a second
 auth collection (`badge_users`, migrations `1750000030`/`1750000034`/`1750000035`); it was collapsed into

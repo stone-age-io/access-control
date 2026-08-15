@@ -236,6 +236,25 @@ func (s *PolicyStore) ResolveArmState(areaCode string, atUTC time.Time) (armed b
 	return standing, statuskv.PostureSourceStanding, true
 }
 
+// FAISuppress reports whether a location suppresses alarm emission while its fire
+// input is active (locations.fai_suppress). Suppression is the norm — forced/held
+// alarms during an evacuation are false alarms — but it is opt-out per site: an
+// install whose FACP asserts spuriously, or one that wants intrusion reporting to
+// continue through an evacuation, turns it off.
+//
+// An unknown (not-yet-synced) location reads as true, matching the field's intended
+// default and the unconditional behaviour this replaced: while fire is asserted,
+// stay quiet unless a site has explicitly said otherwise.
+func (s *PolicyStore) FAISuppress(location string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	le, ok := s.locations[location]
+	if !ok {
+		return true
+	}
+	return le.location.FAISuppress
+}
+
 // Area returns a copy of the area and whether it is known (for its location).
 func (s *PolicyStore) Area(code string) (policykv.Area, bool) {
 	s.mu.RLock()

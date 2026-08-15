@@ -6,14 +6,22 @@
 // behind ReaderDriver later without touching the loop or the decision core.
 package drivers
 
-import "time"
+import (
+	"time"
+
+	"github.com/stone-age-io/access-control/internal/subjects"
+)
 
 // Reader source markers for Tap.Source: which transport produced the tap. They
 // flow verbatim onto the tap event so an operator can tell a physical OSDP read
 // from a NATS-published tap forensically.
+//
+// Re-exported from internal/subjects, which holds the canonical list — accessd
+// stamps two further sources (command / badge) for acts that never reached a
+// reader, and one drifting set of these strings would make the audit trail lie.
 const (
-	SourceNATS = "nats"
-	SourceOSDP = "osdp"
+	SourceNATS = subjects.SourceNATS
+	SourceOSDP = subjects.SourceOSDP
 )
 
 // Tap is a single credential presentation at a reader: which portal, what
@@ -94,16 +102,16 @@ type DoorInput interface {
 	Inputs() <-chan InputEvent
 }
 
-// FAIInput reports a location's fire-alarm-input state. Active is true while the
-// FAI asserts free egress. The controller only observes this to suppress false
-// alarms — hardware owns egress, software never unlocks for fire.
-type FAIInput interface {
-	Fire() <-chan FireState
-}
-
-// FireState is a location-scoped fire signal.
-type FireState struct {
-	Location string
-	Active   bool
-	At       time.Time
-}
+// A fire-alarm interface is NOT a driver interface. It was one (FAIInput, with a
+// FireState channel) and had zero implementations in any backend, because an FAI is
+// electrically just another dry contact — everything it needed already existed as an
+// aux input: a controller binding, a logical index, a contact sense, and a driver
+// path that already delivers InputAux transitions on both GPIO and I2C.
+//
+// So a fire point is an aux_input whose point_type is `fire`. The runtime turns its
+// transitions into {app}.{location}.evt.fire, which every controller at that location
+// applies. That makes the FAI configuration data rather than code, and deleted an
+// interface instead of adding an implementation.
+//
+// Hardware still owns egress: the fire panel's relay drops maglock power directly,
+// and nothing in software unlocks a door for fire.

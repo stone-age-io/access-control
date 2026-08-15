@@ -28,10 +28,16 @@ const { items: portals, page, totalPages, totalItems, loading, error, load, next
 const searchQuery = ref('')
 const deleting = ref(false)
 
-// Only operators with the `command` capability get selection + the command bar;
-// the API enforces it too, so there is no point letting others select.
+// Selection drives two different bulk actions with two different capabilities, so
+// it is offered to either and each action is gated on its own. The API enforces
+// both, so there is no point letting an operator select with neither.
 const canCommand = computed(() => auth.can('command'))
+// Editing notify_on_alarm is a portal edit, not a command, so it rides `topology`.
+// Selection is offered to either capability; each bulk action is gated on its own.
+const canTopology = computed(() => auth.can('topology'))
+const canSelect = computed(() => canCommand.value || canTopology.value)
 const { commanding, setPostureBulk } = usePortalCommands()
+const notifying = ref(false)
 
 // Live "device shadow" per portal (effective posture / door state / override),
 // keyed by code — same projection the floor plan watches. Loaded once and kept
@@ -145,6 +151,47 @@ async function bulkClear() {
   selectedIds.value = []
 }
 
+// Bulk alarm-email opt-in. notify_on_alarm is per-portal and defaults to OFF, so a
+// site with hundreds of doors would otherwise be hundreds of individual edits — and
+// the failure mode of missing one is silence, which nobody notices. This is the
+// cheap fix: no inheritance, no tri-state, just "apply it to what I selected".
+async function bulkNotify(on: boolean) {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const n = ids.length
+  const confirmed = await confirm({
+    title: on ? 'Enable alarm email' : 'Disable alarm email',
+    message: `${on ? 'Enable' : 'Disable'} alarm email on ${n} portal${n > 1 ? 's' : ''}?`,
+    details: on
+      ? 'Forced and held-open alarms from these portals will email operators who have opted in. Operators still control which alarm types reach them.'
+      : 'These portals will stop emailing anyone. Their alarms still appear in the console and the event timeline.',
+    confirmText: `${on ? 'Enable' : 'Disable'} on ${n} portal${n > 1 ? 's' : ''}`,
+    variant: 'info',
+  })
+  if (!confirmed) return
+
+  notifying.value = true
+  let failed = 0
+  // Sequential rather than parallel: this is a rare admin action over a modest
+  // selection, and a partial failure is easier to report honestly this way.
+  for (const id of ids) {
+    try {
+      await pb.collection('portals').update(id, { notify_on_alarm: on })
+    } catch {
+      failed++
+    }
+  }
+  notifying.value = false
+
+  if (failed) {
+    toast.error(`${n - failed} of ${n} updated — ${failed} failed`)
+  } else {
+    toast.success(`Alarm email ${on ? 'enabled' : 'disabled'} on ${n} portal${n > 1 ? 's' : ''}`)
+  }
+  selectedIds.value = []
+  load(queryOpts())
+}
+
 async function handleDelete(p: Portal) {
   const confirmed = await confirm({
     title: 'Delete Portal',
@@ -207,25 +254,48 @@ onBeforeUnmount(() => {
       <router-link to="/portals/new" class="btn btn-primary">Create Portal</router-link>
     </template>
 
-    <!-- Bulk command bar — appears when portals are selected (command capability only). -->
+    <!--
+      Bulk action bar. Each group is gated on its own capability: posture is a
+      command, alarm email is a portal edit (topology). An operator with only one
+      of the two sees only that group.
+    -->
     <div
-      v-if="canCommand && selectedIds.length"
+      v-if="canSelect && selectedIds.length"
       class="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-base-100/95 p-3 shadow-md backdrop-blur"
     >
       <span class="text-sm font-bold mr-1">{{ selectedIds.length }} selected</span>
-      <span class="text-[10px] uppercase font-bold opacity-50 tracking-wide">Set posture:</span>
-      <button
-        v-for="p in POSTURES"
-        :key="p.value"
-        class="btn btn-xs"
-        :class="p.danger ? 'btn-outline btn-warning' : 'btn-outline'"
-        :disabled="commanding"
-        @click="bulkPosture(p)"
-      >
-        {{ p.label }}
+
+      <template v-if="canCommand">
+        <span class="text-[10px] uppercase font-bold opacity-50 tracking-wide">Set posture:</span>
+        <button
+          v-for="p in POSTURES"
+          :key="p.value"
+          class="btn btn-xs"
+          :class="p.danger ? 'btn-outline btn-warning' : 'btn-outline'"
+          :disabled="commanding || notifying"
+          @click="bulkPosture(p)"
+        >
+          {{ p.label }}
+        </button>
+        <button class="btn btn-xs btn-ghost" :disabled="commanding || notifying" @click="bulkClear">
+          Clear override
+        </button>
+      </template>
+
+      <template v-if="canTopology">
+        <span class="text-[10px] uppercase font-bold opacity-50 tracking-wide">Alarm email:</span>
+        <button class="btn btn-xs btn-outline" :disabled="commanding || notifying" @click="bulkNotify(true)">
+          <span v-if="notifying" class="loading loading-spinner loading-xs"></span>
+          Enable
+        </button>
+        <button class="btn btn-xs btn-ghost" :disabled="commanding || notifying" @click="bulkNotify(false)">
+          Disable
+        </button>
+      </template>
+
+      <button class="btn btn-xs btn-ghost ml-auto" :disabled="commanding || notifying" @click="selectedIds = []">
+        Cancel
       </button>
-      <button class="btn btn-xs btn-ghost" :disabled="commanding" @click="bulkClear">Clear override</button>
-      <button class="btn btn-xs btn-ghost ml-auto" :disabled="commanding" @click="selectedIds = []">Cancel</button>
     </div>
 
     <BaseCard :no-padding="true">
@@ -233,7 +303,7 @@ onBeforeUnmount(() => {
         :items="portals"
         :columns="columns"
         :loading="loading"
-        :selectable="canCommand"
+        :selectable="canSelect"
         v-model:selected="selectedIds"
         @row-click="(p) => router.push(`/portals/${p.id}`)"
       >

@@ -136,6 +136,7 @@ See [`protocol.md`](protocol.md) for what each carries.
 | `accessd.controllerOfflineAfter` | `45s` | `SA_ACCESSD_CONTROLLEROFFLINEAFTER` | silence before a controller shows offline. Keep it a few controller `heartbeatInterval`s so one dropped heartbeat does not flap a box offline. |
 | `accessd.auditRetentionDays` | `365` | `SA_ACCESSD_AUDITRETENTIONDAYS` | how long control-plane audit rows (`audit_logs`, written by `internal/changelog`) are kept before a daily 03:00 prune deletes them. `0` normalizes to 365; a **negative** value disables pruning (keep forever). See [`operators.md`](operators.md#control-plane-audit-log-audit_logs). |
 | `accessd.eventRetentionDays` | `0` | `SA_ACCESSD_EVENTRETENTIONDAYS` | how long door-activity rows (`events`, the rebuildable projection of the `ACC_EVENTS` JetStream stream) are kept before a daily 03:00 prune deletes them. **`0` (the default) keeps them forever** — pruning is opt-in, so an upgrade never silently deletes event history. A positive day count trims the projection; JetStream stays the system of record, so a prune only shrinks the read model. |
+| `accessd.webhookURL` | `""` | `SA_ACCESSD_WEBHOOKURL` | when set, enables the outbound webhook sink ([`internal/webhook`](../internal/webhook)): a fourth durable on `ACC_EVENTS` that POSTs every pageable event as JSON here, so an install can feed its own PagerDuty/Slack/ntfy/ITSM instead of relying on email. Empty leaves it inert. See [Notifications](#notifications-accessd-only). |
 
 ### Notifications (accessd-only)
 
@@ -149,23 +150,60 @@ It is inert until **two opt-ins** line up:
 |---|---|---|
 | `users.notify` | Operators → Notify | the operator is a recipient of alarm email |
 | `users.notify_locations` | Operators → Notify locations | scope the operator to specific locations (empty = all locations) |
-| `portals.notify_on_alarm` | Portal → Posture & timing | email the recipients on this door's forced/held-open alarms |
+| `users.notify_types` | Operators → Notify types | scope the operator to specific event kinds (empty = the default set) |
+| `portals.notify_on_alarm` | Portal → Posture & timing (or bulk-select on the Portals list) | email the recipients on this door's forced/held-open alarms |
 | `areas.notify_on_alarm` | Area → Email on intrusion | email the recipients on this area's intrusion alarms |
 | `locations.notify_fire` | Location → Email on fire | email the recipients on this location's fire-input alarms |
+| `controllers.notify_offline` | Controller → Notify on offline | email the recipients when this box stops reporting |
 
 A source flag without any `users.notify` operator (or vice-versa) sends nothing.
 **Recipients are scoped by location:** an alarm at a location emails only the
 notify operators whose `notify_locations` is empty (= all locations) or contains
 that location — so a multi-site deployment can page site-local operators without a
-per-source routing matrix. The auto-clear of a held-open door (`held_clear`) is
-never emailed — only the raise. There is no `notify.*` config block and no
-`SA_NOTIFY_*` env var.
+per-source routing matrix.
+
+**Recipients are also scoped by severity** (`users.notify_types`). An empty
+selection means the **default set** — `forced`, `held`, `intrusion`, `fire`,
+`controller_offline` — not literally everything: `no_entry` (a grant nobody walked
+through) is diagnostic and must be selected explicitly. Leaving the selection empty
+is therefore the right choice for most operators, because a future urgent type will
+reach them automatically; selecting types freezes the set to exactly those. The
+auto-clear of a held-open door (`held_clear`) is never emailed at all, and a
+controller coming back *online* is not paged. There is no `notify.*` config block
+and no `SA_NOTIFY_*` env var.
+
+**Deep links.** Each message links to the exact event
+(`{AppURL}/alarms?seq=…`). The base comes from PocketBase's **Application URL**
+(`/_` → Settings → Application), which is the same value its own password-reset mail
+uses — so there is no separate key here. Unset means messages simply carry no link.
+
+**Reminders.** An urgent alarm still unacknowledged after 15 minutes is re-sent, at
+most twice ([`internal/repage`](../internal/repage)). It reuses the same opt-ins, so
+a reminder never reaches anyone the original could not, and never covers
+`held`/`no_entry`. No config.
 
 > **SMTP lives in PocketBase, not here.** The mail transport (host/port/
 > credentials/sender) is configured in the PocketBase admin UI at `/_` ("Mail
 > settings"); the sink's `From` is PocketBase's configured sender. The sink uses
 > `DeliverNew` (it starts from "now", never replaying historical alarms) with
 > bounded redelivery, so a dead SMTP server can't loop forever.
+
+**Webhook sink** (`accessd.webhookURL`, the one notification key that *is* config).
+A fourth durable POSTs each pageable event as structured JSON to that URL. It shares
+the classification above — so email and webhook never disagree about what is worth
+forwarding — but deliberately **ignores the per-source and per-operator email
+opt-ins**: those decide who gets *mail*, while a webhook has one destination whose
+whole purpose is to receive the feed. Configuring the URL is the opt-in.
+
+> This is the answer to "let us customise the notification templates". Shipping the
+> structured event to a tool that already knows how to route, escalate, and
+> acknowledge beats any template engine we could ship, and the email body stays
+> fixed and terse — which is what it should be for something read on a phone at 3am.
+
+> **Why config and not a UI field.** accessd POSTs wherever this points, from inside
+> the deployment's network — a modest SSRF surface. Deploy-time config means there is
+> no API to abuse at all, and it matches how the other outbound transport (SMTP) is
+> administered. The sink additionally never follows redirects and has a hard timeout.
 
 > **Entry-disarm has no config either.** The disarm sink ([`internal/disarm`](../internal/disarm)),
 > which disarms an area on a valid grant at a `disarm_on_grant` portal, is **always

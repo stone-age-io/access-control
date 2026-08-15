@@ -24,6 +24,7 @@ const form = ref({
   name: '',
   location: '',
   model: 'kincony-server-mini' as ControllerModel,
+  notify_offline: false,
 })
 
 const locations = ref<Location[]>([])
@@ -52,6 +53,7 @@ async function loadRecord() {
       name: c.name || '',
       location: c.location || '',
       model: (c.model || 'kincony-server-mini') as ControllerModel,
+      notify_offline: !!c.notify_offline,
     }
     markClean()
   } catch (err: any) {
@@ -82,6 +84,7 @@ async function handleSubmit() {
       name: form.value.name.trim(),
       location: form.value.location,
       model: form.value.model,
+      notify_offline: form.value.notify_offline,
     }
     if (isEdit.value) {
       await pb.collection('controllers').update(recordId!, data)
@@ -144,6 +147,18 @@ onMounted(async () => {
               </select>
             </FormField>
           </div>
+
+          <FormField
+            label="Notify on offline"
+            hint="Email opted-in operators when this controller stops reporting. While it is offline the doors it drives decide on cached policy, or default-deny if it has none."
+          >
+            <label class="label cursor-pointer justify-start gap-3">
+              <input v-model="form.notify_offline" type="checkbox" class="toggle toggle-primary" />
+              <span class="label-text">
+                {{ form.notify_offline ? 'Emails opted-in operators' : 'No offline email' }}
+              </span>
+            </label>
+          </FormField>
         </div>
       </BaseCard>
 

@@ -112,12 +112,18 @@ func (h *CommandHandler) onGrant(msg *nats.Msg) {
 		Seconds int    `json:"seconds"`
 		Actor   string `json:"actor"`
 		Reason  string `json:"reason"`
+		// Source marks WHICH remote surface issued this grant, so the emitted event
+		// stays forensically honest: an operator's door-pop and a cardholder's own
+		// remote unlock both arrive here as cmd.grant, and the resulting tap event
+		// must not claim they are the same act. Empty means an operator command (the
+		// pre-existing sender, and every older publisher).
+		Source string `json:"source"`
 	}
 	if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 		h.log.Error("bad grant command", "subject", msg.Subject, "error", err)
 		return
 	}
-	h.rt.Grant(portal, cmd.Seconds, cmd.Actor, cmd.Reason)
+	h.rt.Grant(portal, cmd.Seconds, cmd.Actor, cmd.Reason, cmd.Source)
 }
 
 func (h *CommandHandler) onOutput(msg *nats.Msg) {

@@ -449,6 +449,7 @@ func (h *handler) unlock(e *core.RequestEvent) error {
 	// tells the caller nothing about their access.
 	if !portal.GetBool("allow_remote_unlock") {
 		h.audit(e, cardholder.Id, portalCode, false, "remote_unlock_not_allowed")
+		h.denyEvent(nil, portal, portalCode, cardholder.Id, "remote_unlock_not_allowed")
 		return e.ForbiddenError("this door cannot be unlocked remotely", nil)
 	}
 
@@ -465,6 +466,7 @@ func (h *handler) unlock(e *core.RequestEvent) error {
 	}
 	if len(creds) == 0 {
 		h.audit(e, cardholder.Id, portalCode, false, "no_credential")
+		h.denyEvent(snap, portal, portalCode, cardholder.Id, "no_credential")
 		return e.ForbiddenError("no credential is issued to this badge", nil)
 	}
 
@@ -489,6 +491,7 @@ func (h *handler) unlock(e *core.RequestEvent) error {
 	}
 
 	h.audit(e, cardholder.Id, portalCode, false, reason)
+	h.denyEvent(snap, portal, portalCode, cardholder.Id, reason)
 	h.log.Info("badge remote unlock denied",
 		"portal", portalCode, "cardholder", cardholder.Id, "reason", reason)
 	return e.JSON(http.StatusForbidden, unlockResponse{OK: false, Reason: reason})
@@ -498,28 +501,92 @@ func (h *handler) unlock(e *core.RequestEvent) error {
 // location/type come from the policy snapshot when known (it is the graph the
 // decision just used) and fall back to PocketBase otherwise.
 func (h *handler) publishGrant(snap *policysnapshot.Snapshot, portal *core.Record, portalCode, cardholderID string) error {
-	locCode, ok := snap.PortalLocation(portalCode)
-	if !ok || locCode == "" {
-		loc, err := h.app.FindRecordById("locations", portal.GetString("location"))
-		if err != nil {
-			return errors.New("portal location unresolved: " + portalCode)
-		}
-		locCode = loc.GetString("code")
-	}
-	ptype, ok := snap.PortalType(portalCode)
-	if !ok || ptype == "" {
-		ptype = portal.GetString("type")
+	locCode, ptype, err := h.portalAddr(snap, portal, portalCode)
+	if err != nil {
+		return err
 	}
 
 	payload, err := json.Marshal(map[string]any{
 		"seconds": 0, // fall back to the portal's configured pulse
 		"actor":   "badge:" + cardholderID,
 		"reason":  "remote_unlock",
+		// So the tap event the controller emits says this was the holder's own
+		// remote unlock, not an operator door-pop. Both arrive as cmd.grant.
+		"source": subjects.SourceBadge,
 	})
 	if err != nil {
 		return err
 	}
 	return h.nc.Publish(h.subj.Grant(locCode, ptype, portalCode), payload)
+}
+
+// publishDeny emits a denied remote unlock as an ordinary evt.tap with allow=false.
+//
+// An ALLOWED unlock reaches the controller (cmd.grant), which emits the tap event
+// itself. A denial never leaves accessd, so without this the same person denied at
+// the same door produces an events row when they tap a card and nothing at all when
+// they press the button — and "who has been probing doors" needs a union across two
+// collections to answer. The audit_logs row this package also writes stays: it is
+// the record of an API call, which is a different question.
+//
+// `cred` is deliberately EMPTY. The badge tier is identity-based — the decision ran
+// over whichever of the person's credentials might grant, and `user` carries who
+// they are, which is the forensically useful fact. It also keeps credential values
+// out of one more place. This mirrors the controller's command-grant event, which
+// likewise names an actor and no credential.
+//
+// Downstream is safe by construction: the disarm sink requires allow && cred != "",
+// and the notify sink only handles alarm/fire.
+func (h *handler) publishDeny(snap *policysnapshot.Snapshot, portal *core.Record, portalCode, cardholderID, reason string) error {
+	locCode, ptype, err := h.portalAddr(snap, portal, portalCode)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{
+		"user":   "badge:" + cardholderID,
+		"allow":  false,
+		"reason": reason,
+		"ts":     time.Now().UTC().Format(time.RFC3339),
+		"source": subjects.SourceBadge,
+	})
+	if err != nil {
+		return err
+	}
+	return h.nc.Publish(h.subj.EventTap(locCode, ptype, portalCode), payload)
+}
+
+// portalAddr resolves a portal's location and type for subject construction. Both
+// come from the policy snapshot when known (it is the graph the decision just used)
+// and fall back to PocketBase otherwise.
+// A nil snap is allowed: the per-door opt-in is checked before the policy graph is
+// ever consulted, so that denial has no snapshot to resolve from and falls back to
+// PocketBase for both values.
+func (h *handler) portalAddr(snap *policysnapshot.Snapshot, portal *core.Record, portalCode string) (locCode, ptype string, err error) {
+	if snap != nil {
+		locCode, _ = snap.PortalLocation(portalCode)
+		ptype, _ = snap.PortalType(portalCode)
+	}
+	if locCode == "" {
+		loc, lerr := h.app.FindRecordById("locations", portal.GetString("location"))
+		if lerr != nil {
+			return "", "", errors.New("portal location unresolved: " + portalCode)
+		}
+		locCode = loc.GetString("code")
+	}
+	if ptype == "" {
+		ptype = portal.GetString("type")
+	}
+	return locCode, ptype, nil
+}
+
+// denyEvent emits a denial event, best-effort. A publish failure is logged and
+// swallowed: the denial itself already stands and audit_logs already recorded it,
+// so the response must not depend on the event landing.
+func (h *handler) denyEvent(snap *policysnapshot.Snapshot, portal *core.Record, portalCode, cardholderID, reason string) {
+	if err := h.publishDeny(snap, portal, portalCode, cardholderID, reason); err != nil {
+		h.log.Error("badge unlock: deny event not emitted",
+			"portal", portalCode, "cardholder", cardholderID, "error", err)
+	}
 }
 
 // --- helpers ---

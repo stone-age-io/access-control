@@ -20,6 +20,11 @@ const (
 	AlarmHeld      = "held"       // door held open past its DOTL threshold
 	AlarmHeldClear = "held_clear" // a held-open door closed
 	AlarmIntrusion = "intrusion"  // an armed area's intrusion point (or a tamper_24h point) tripped
+	// AlarmNoEntry is a grant nobody walked through: the strike pulsed, the grace
+	// window expired, and the door never opened. Diagnostic rather than urgent — it
+	// separates a real entry from a badge test, a stuck strike, and someone who
+	// badged then changed their mind — so notification treats it as opt-in.
+	AlarmNoEntry = "no_entry"
 )
 
 // Door-monitoring timing. Vars (not consts) so tests can shorten them — same
@@ -50,6 +55,10 @@ type doorMonitor struct {
 	rexUntil   time.Time
 	timer      *time.Timer
 	held       bool // a held-open alarm is currently active (for the clear)
+	// grantPending marks a grant whose door-open has not been seen yet. Cleared by
+	// an authorized open; swept to a no_entry alarm once grantUntil passes. It is a
+	// flag rather than a timer on purpose — see sweepNoEntry.
+	grantPending bool
 }
 
 // portalShadow is the last status the runtime published for a portal. The runtime
@@ -266,6 +275,38 @@ func (r *Runtime) reconcileHolds(at time.Time) {
 	r.mu.RUnlock()
 	for _, portal := range portals {
 		r.applyHold(portal, at)
+		r.sweepNoEntry(portal, at)
+	}
+}
+
+// sweepNoEntry emits a no_entry alarm for a portal whose grant window has expired
+// with no door-open observed — "access granted, nobody came through".
+//
+// It rides the hold-eval loop rather than arming a per-grant timer. The controller
+// keeps exactly three timers by design (the DOTL AfterFunc, the heartbeat, and this
+// tick), and a second per-door timer would add a fourth kind for no benefit: the
+// grace window and the tick are both 10s, so a grant that goes unused is reported
+// 10–20s later. That sampling imprecision is irrelevant for "nobody walked through",
+// and it is the same trade scheduled-posture holds already accept.
+//
+// A portal with no DPS wired can never observe an open, so it would report no_entry
+// on EVERY grant — the binding's dpsInput gates it out entirely.
+func (r *Runtime) sweepNoEntry(portal string, at time.Time) {
+	b, ok := r.store.Binding(portal)
+	if !ok || b.DpsInput == 0 {
+		return // no door contact: an open is unobservable, so silence is correct
+	}
+
+	r.mu.Lock()
+	m := r.monitors[portal]
+	expired := m != nil && m.grantPending && !at.Before(m.grantUntil)
+	if expired {
+		m.grantPending = false // one alarm per grant, not one per tick
+	}
+	r.mu.Unlock()
+
+	if expired {
+		r.EmitAlarm(portal, AlarmNoEntry, at)
 	}
 }
 
@@ -394,6 +435,7 @@ func (r *Runtime) handleDPS(portal string, closed bool, at time.Time) {
 		m.open = newOpen
 		if newOpen {
 			if at.Before(m.grantUntil) || at.Before(m.rexUntil) {
+				m.grantPending = false    // the grant was used: somebody came through
 				r.scheduleDOTL(portal, m) // authorized: watch for held-open
 			} else {
 				emitForced = true
@@ -454,10 +496,13 @@ func (r *Runtime) onDOTL(portal string) {
 	r.writeStatus(portal, now)
 }
 
-// noteGrant opens the authorized-open window after a grant or commanded unlock.
+// noteGrant opens the authorized-open window after a grant or commanded unlock,
+// and marks the grant as awaiting its door-open (see sweepNoEntry).
 func (r *Runtime) noteGrant(portal string, at time.Time) {
 	r.mu.Lock()
-	r.monitorFor(portal).grantUntil = at.Add(accessGrace)
+	m := r.monitorFor(portal)
+	m.grantUntil = at.Add(accessGrace)
+	m.grantPending = true
 	r.mu.Unlock()
 }
 
@@ -577,7 +622,11 @@ func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
 // distinct from a standing posture change) and emits a tap-style audit event so
 // the operator-initiated open is attributable in the timeline. A non-positive
 // seconds falls back to the portal's configured pulse.
-func (r *Runtime) Grant(portal string, seconds int, actor, reason string) {
+//
+// source names the remote surface that issued the grant (a subjects.Source*
+// value); empty means an operator command, which is what every publisher before
+// the badge tier sent.
+func (r *Runtime) Grant(portal string, seconds int, actor, reason, source string) {
 	if !r.drives(portal) {
 		r.log.Debug("ignoring grant command for portal not driven here", "portal", portal)
 		return
@@ -598,12 +647,19 @@ func (r *Runtime) Grant(portal string, seconds int, actor, reason string) {
 	r.log.Info("command grant", "portal", portal, "seconds", seconds, "actor", actor, "reason", reason)
 
 	// Emit an audit event: operator-initiated grants belong in the access trail.
+	// Source marks it as a commanded open rather than a card read — without it the
+	// two are separable only by string-prefixing the actor, which is exactly the
+	// forensic question Source exists to answer.
+	if source == "" {
+		source = subjects.SourceCommand
+	}
 	if location, ptype := r.portalAddr(portal); ptype != "" {
 		if err := r.emit.Emit(r.subs.EventTap(location, ptype, portal), TapEvent{
 			User:   actor,
 			Allow:  true,
 			Reason: policy.ReasonAllowCommandGrant,
 			TS:     now.Format(time.RFC3339),
+			Source: source,
 		}); err != nil {
 			r.log.Error("failed to emit command-grant event", "portal", portal, "error", err)
 		} else {
@@ -728,9 +784,46 @@ func (r *Runtime) setAuxInput(code string, active bool, at time.Time) {
 	if r.statusWriter != nil {
 		r.statusWriter.SetAuxInput(code, loc, active, at)
 	}
+
+	// A `fire` point is handled on BOTH edges — the clear matters as much as the
+	// assert, since suppression must end when the evacuation does — so it is checked
+	// here rather than inside maybeIntrusionAlarm, which only ever sees rising edges.
+	// It is also not an intrusion point, so it returns rather than falling through.
+	if _, ptype, ok := r.store.AuxInputMeta(code); ok && ptype == "fire" {
+		r.publishFire(loc, active, at)
+		return
+	}
+
 	if active {
 		r.maybeIntrusionAlarm(code, at)
 	}
+}
+
+// publishFire announces a location's fire-alarm-input state on
+// {app}.{location}.evt.fire.
+//
+// It PUBLISHES rather than calling SetFire directly, and the publisher hears its own
+// message back through the ordinary command subscription. That is deliberate: fire is
+// location-scoped while the contact is wired to exactly one box, so every controller
+// at the location has to learn about it, and the subject is how. Applying it locally
+// as well would just be a second path to the same state — SetFire is idempotent, so
+// the round trip costs nothing and keeps one code path.
+//
+// Fail-safe: a publish failure is logged, not retried. The next edge re-announces,
+// and hardware — not this signal — is what actually frees egress.
+func (r *Runtime) publishFire(location string, active bool, at time.Time) {
+	if location == "" {
+		location = r.location
+	}
+	if err := r.emit.Emit(r.subs.Fire(location), map[string]any{
+		"active": active,
+		"ts":     at.UTC().Format(time.RFC3339),
+	}); err != nil {
+		r.log.Error("failed to publish fire state", "location", location, "active", active, "error", err)
+		return
+	}
+	r.m.IncEventPublished("fire")
+	r.log.Info("fire input reported", "location", location, "active", active)
 }
 
 // maybeIntrusionAlarm raises an intrusion alarm for an aux input that just went
@@ -790,6 +883,17 @@ func (r *Runtime) maybeForcedIntrusion(portal string, at time.Time) {
 	}
 }
 
+// alarmSuppressed reports whether alarm emission for a location is currently
+// gated off: its fire input is active AND the location opts into suppression
+// (locations.fai_suppress). Both halves are required — the fire signal alone used
+// to suppress unconditionally, which made the per-location flag inert.
+func (r *Runtime) alarmSuppressed(location string) bool {
+	r.mu.RLock()
+	fire := r.fire[location]
+	r.mu.RUnlock()
+	return fire && r.store.FAISuppress(location)
+}
+
 // emitIntrusionAlarm emits an area intrusion alarm on
 // {app}.{location}.area.{area}.evt.alarm, unless the area's location fire input is
 // active (the same suppression gate as door alarms — egress/evacuation owns the
@@ -800,10 +904,7 @@ func (r *Runtime) emitIntrusionAlarm(area, point string, at time.Time) {
 		location = a.Location
 	}
 
-	r.mu.RLock()
-	suppressed := r.fire[location]
-	r.mu.RUnlock()
-	if suppressed {
+	if r.alarmSuppressed(location) {
 		r.log.Info("intrusion alarm suppressed (fire active)", "location", location, "area", area, "point", point)
 		return
 	}
@@ -836,9 +937,12 @@ func (r *Runtime) SetFire(location string, active bool, at time.Time) {
 	r.log.Info("fire state changed", "location", location, "active", active, "ts", at.UTC().Format(time.RFC3339))
 }
 
-// EmitAlarm emits a portal alarm unless the location's fire input is active, in
-// which case it is suppressed. (v1 has no alarm source yet; this is the gate real
-// forced/held-open detection will flow through.)
+// EmitAlarm emits a portal alarm unless the location's fire input is active and
+// the location opts into suppression.
+//
+// AlarmHeldClear is exempt: a clearing event can never be a false alarm, and
+// dropping it strands an active held-open on the console with no later event to
+// resolve it (point_status recovers on the close; the events row never does).
 func (r *Runtime) EmitAlarm(portal, alarmType string, at time.Time) {
 	location, ptype := r.portalAddr(portal)
 	if ptype == "" {
@@ -846,10 +950,7 @@ func (r *Runtime) EmitAlarm(portal, alarmType string, at time.Time) {
 		return
 	}
 
-	r.mu.RLock()
-	suppressed := r.fire[location]
-	r.mu.RUnlock()
-	if suppressed {
+	if alarmType != AlarmHeldClear && r.alarmSuppressed(location) {
 		r.log.Info("alarm suppressed (fire active)", "location", location, "portal", portal, "type", alarmType)
 		return
 	}

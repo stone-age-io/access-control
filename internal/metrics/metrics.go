@@ -34,6 +34,10 @@ type Metrics struct {
 	// alarm/fire. status = ok/error/skip/dedup.
 	notifySendsTotal *prometheus.CounterVec // labels: status
 
+	// Webhook sink (accessd): the ACC_EVENTS consumer that POSTs pageable events to
+	// an operator-configured endpoint. status = ok/error/skip.
+	webhookPostsTotal *prometheus.CounterVec // labels: status
+
 	// Disarm sink (accessd): the ACC_EVENTS tap consumer that durably disarms an
 	// area on a valid grant at an entry portal. status = disarmed/skip/error.
 	disarmsTotal *prometheus.CounterVec // labels: status
@@ -103,6 +107,13 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 			},
 			[]string{"status"},
 		),
+		webhookPostsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "webhook_posts_total",
+				Help: "Total webhook-sink outcomes by status (ok/error/skip)",
+			},
+			[]string{"status"},
+		),
 		disarmsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "disarm_sink_total",
@@ -157,6 +168,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.eventsPublishedTotal,
 		m.auditWritesTotal,
 		m.notifySendsTotal,
+		m.webhookPostsTotal,
 		m.disarmsTotal,
 		m.heartbeatsSentTotal,
 		m.heartbeatsReceivedTotal,
@@ -244,6 +256,14 @@ func (m *Metrics) IncNotify(status string) {
 		return
 	}
 	m.notifySendsTotal.WithLabelValues(status).Inc()
+}
+
+// IncWebhook records one webhook-sink outcome (status = "ok"/"error"/"skip").
+func (m *Metrics) IncWebhook(status string) {
+	if m == nil {
+		return
+	}
+	m.webhookPostsTotal.WithLabelValues(status).Inc()
 }
 
 // IncDisarm records one disarm-sink outcome (status =

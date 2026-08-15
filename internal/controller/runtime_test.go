@@ -44,6 +44,19 @@ func (e *fakeEmitter) hasSubject(s string) bool {
 	return e.countSubject(s) > 0
 }
 
+// bySubject returns the payloads emitted on a subject, in order.
+func (e *fakeEmitter) bySubject(s string) []any {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []any
+	for _, ev := range e.events {
+		if ev.subject == s {
+			out = append(out, ev.payload)
+		}
+	}
+	return out
+}
+
 func (e *fakeEmitter) countSubject(s string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -168,6 +181,34 @@ func TestRuntimeDynamicLockArming(t *testing.T) {
 	}
 }
 
+// A commanded grant stamps the surface that issued it. An empty source on the wire
+// means an operator door-pop (what every publisher before the badge tier sent); a
+// cardholder's own remote unlock arrives as the same cmd.grant and must not be
+// recorded as the same act.
+func TestGrantStampsSource(t *testing.T) {
+	for _, tc := range []struct{ sent, want string }{
+		{"", subjects.SourceCommand},
+		{subjects.SourceBadge, subjects.SourceBadge},
+	} {
+		rt, _, _, emit := runtimeFor(t)
+		rt.Grant(lobby, 5, "guard", "buzz in", tc.sent)
+
+		if len(emit.events) != 1 {
+			t.Fatalf("sent=%q: emitted %d events, want 1", tc.sent, len(emit.events))
+		}
+		ev, ok := emit.events[0].payload.(TapEvent)
+		if !ok {
+			t.Fatalf("sent=%q: payload is %T, want TapEvent", tc.sent, emit.events[0].payload)
+		}
+		if ev.Source != tc.want {
+			t.Errorf("sent=%q: source = %q, want %q", tc.sent, ev.Source, tc.want)
+		}
+		if !ev.Allow || ev.Reason != policy.ReasonAllowCommandGrant {
+			t.Errorf("sent=%q: allow/reason = %v/%q", tc.sent, ev.Allow, ev.Reason)
+		}
+	}
+}
+
 // A controller hears location-wildcarded commands for portals other controllers
 // drive; it must ignore them — no override stored, no state event emitted (which
 // would duplicate the owning controller's audit row).
@@ -177,7 +218,7 @@ func TestRuntimeIgnoresCommandsForUndrivenPortal(t *testing.T) {
 
 	rt.SetPosture("side-gate", policy.PostureLockdown, "guard", "incident", at)
 	rt.ClearPosture("side-gate", "guard", "all clear", at)
-	rt.Grant("side-gate", 5, "guard", "buzz in")
+	rt.Grant("side-gate", 5, "guard", "buzz in", "")
 
 	if len(emit.events) != 0 {
 		t.Errorf("emitted %d events for an undriven portal, want 0: %+v", len(emit.events), emit.events)
