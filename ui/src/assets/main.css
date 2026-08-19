@@ -126,7 +126,8 @@ select {
   }
 }
 
-/* Metadata grid for detail-view cards (DataField label/value pairs).
+/* Metadata grid for any card of DataField label/value pairs — every detail view, and
+   the visitor-mint result panel, which is the same shape inside a form.
    Container-driven on purpose: `auto-fill` derives the column count from the
    card's own width, where the old `sm:grid-cols-2 xl:grid-cols-3` ladder derived
    it from the VIEWPORT. That mismatch was invisible only while DetailLayout

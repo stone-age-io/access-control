@@ -8,6 +8,7 @@ import type { MintVisitorRequest, MintVisitorResponse } from '@/types/badge'
 import FormLayout from '@/components/ui/FormLayout.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import FormField from '@/components/ui/FormField.vue'
+import DataField from '@/components/ui/DataField.vue'
 import QrCode from '@/components/ui/QrCode.vue'
 
 /**
@@ -179,15 +180,13 @@ onMounted(() => {
           <p v-if="result.reused" class="alert alert-info py-2 text-sm">
             This person already had a visitor pass — it was refreshed and their previous code revoked.
           </p>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-            <div>
-              <div class="text-base-content/60 text-xs uppercase">Visitor</div>
-              <div class="font-medium">{{ result.email }}</div>
-            </div>
-            <div>
-              <div class="text-base-content/60 text-xs uppercase">Valid until</div>
-              <div class="font-medium">{{ new Date(result.validUntil).toLocaleString() }}</div>
-            </div>
+          <!-- DataField + field-grid, not hand-rolled markup: these are the same
+               label-over-value pairs the detail views render, and spelling them out here
+               gave this one panel a 12px non-bold label where every other label in the app
+               is 10px bold with tracking. -->
+          <div class="field-grid">
+            <DataField label="Visitor">{{ result.email }}</DataField>
+            <DataField label="Valid until">{{ new Date(result.validUntil).toLocaleString() }}</DataField>
           </div>
 
           <div v-if="result.inviteSent" class="alert alert-success py-2 text-sm">

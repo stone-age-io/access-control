@@ -342,8 +342,14 @@ onMounted(async () => {
           </div>
 
           <!-- Wiring sense: how each line is wired/interpreted, independent of the board's
-               electrical polarity (that lives in the controller model profile). -->
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+               electrical polarity (that lives in the controller model profile).
+               Two columns, not three like the index row above, and the asymmetry is deliberate:
+               every cell here carries a long hint (117/126/92 chars). In the 768px form column
+               three tracks are 223px = 37 chars/line, so each hint ran ~4 ragged lines of
+               text-xs and grid row-stretch gave all three cells the tallest one's height. Two
+               tracks are 343px = 61 chars/line, inside the readable 45-75 band. The index row
+               stays at three because IndexPicker is a w-32 input with no hint to wrap. -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label="Lock type" hint="Fail-secure strike energizes to unlock; a fail-safe maglock energizes to lock (idles locked, releases on power loss).">
               <select v-model="form.lock_type" class="select select-bordered">
                 <option value="strike">Fail-secure strike</option>
