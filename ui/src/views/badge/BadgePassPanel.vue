@@ -180,25 +180,33 @@ watch(() => [props.me.photoRecord, props.me.photoFile], loadPhoto, { immediate: 
 <template>
   <div class="card bg-base-100 shadow-sm">
     <div class="card-body items-center text-center gap-3 p-4">
-      <div class="flex items-center gap-3 w-full text-left">
-        <img
-          v-if="photoUrl"
-          :src="photoUrl"
-          :alt="me.name"
-          class="w-16 h-16 rounded-full object-cover bg-base-300 shrink-0"
-        />
-        <div
-          v-else
-          class="w-16 h-16 rounded-full bg-base-300 flex items-center justify-center text-xl font-semibold shrink-0"
-        >
-          {{ (me.name || '?').slice(0, 1).toUpperCase() }}
-        </div>
+      <!-- Photo centred above the name rather than beside it, and half again as large.
+           A badge is a thing someone holds up to be compared against their face, so the photo
+           is the largest element after the code itself; the old 64px thumbnail in a left-hand
+           row was sized like a list avatar. Centring it also stops the name and email being
+           squeezed into a narrow column beside it — they get the full card width and a size
+           that can be read at arm's length. -->
+      <img
+        v-if="photoUrl"
+        :src="photoUrl"
+        :alt="me.name"
+        class="rounded-full object-cover bg-base-300 shrink-0"
+        :class="compact ? 'h-20 w-20' : 'h-28 w-28'"
+      />
+      <div
+        v-else
+        class="rounded-full bg-base-300 flex items-center justify-center font-semibold shrink-0"
+        :class="compact ? 'h-20 w-20 text-2xl' : 'h-28 w-28 text-4xl'"
+      >
+        {{ (me.name || '?').slice(0, 1).toUpperCase() }}
+      </div>
 
-        <div class="min-w-0 flex-1">
-          <div class="font-bold truncate">{{ me.name || 'Cardholder' }}</div>
-          <div class="text-sm text-base-content/60 truncate">{{ me.email }}</div>
-          <div v-if="me.kind === 'visitor'" class="badge badge-outline badge-sm mt-1">Visitor</div>
+      <div class="w-full min-w-0">
+        <div class="truncate font-bold" :class="compact ? 'text-base' : 'text-lg'">
+          {{ me.name || 'Cardholder' }}
         </div>
+        <div class="text-sm text-base-content/60 truncate">{{ me.email }}</div>
+        <div v-if="me.kind === 'visitor'" class="badge badge-outline badge-sm mt-1">Visitor</div>
       </div>
 
       <!-- Why this badge does not work, when it does not. Says nothing at all
@@ -217,7 +225,7 @@ watch(() => [props.me.photoRecord, props.me.photoFile], loadPhoto, { immediate: 
            credential is pending — it identifies the person, which is true
            regardless, and it says so below. -->
       <template v-if="me.qr">
-        <QrCode :value="me.qr" :size="compact ? 148 : 180" />
+        <QrCode :value="me.qr" :size="compact ? 148 : 208" />
         <p v-if="!compact" class="text-xs text-base-content/60">
           {{
             me.qrSecret

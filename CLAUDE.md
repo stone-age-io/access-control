@@ -315,35 +315,75 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   no single place to pin), and there is no live state or realtime — the badge polls `/me` for the one piece of state a
   holder can act on (and that state is policy *intent* from `armStateFor`, not a hardware report; nothing in the badge
   tier reads `point_status`).
-  The Access tab is an **adaptive** switcher over plan / doors / areas / controls / on-site (`BadgeAccessPanel`), not
-  the operator Monitor's fixed segments: a segment renders only if the holder has something in it, and with one
-  segment there is no switcher at all. A site has hundreds of points and an operator is hunting; a holder typically
-  has a handful of doors and no areas or controls, so fixed segments would be mostly-empty chrome over a three-item
-  list — the common badge collapses to plan-vs-list, which is the only choice most holders have. "On site" sits beside
-  the three kinds because the split a holder cares about is press-a-button vs walk-to, and past a few doors that list
-  wants grouping by building (`BadgeOnSiteList`) which the action lists do not. Showing one view at a time is also why
-  the action lists no longer bound their own height: the nested scroll existed because four cards were stacked.
+  The badge's screens are an **adaptive** set — badge face / plan / portals / areas / controls / on-site — reached from
+  **one flat bottom navigation bar** (`BadgeView`), over one derivation (`badgeNav.ts`): a screen exists only if the
+  holder has something in it, so the common badge is Badge + Plan, or Badge + Portals. A site has hundreds of points
+  and an operator is hunting; a holder typically has a handful of doors and no areas or controls, so fixed segments
+  would be mostly-empty chrome over a three-item list. "On site" sits beside the three kinds because the split a holder
+  cares about is press-a-button vs walk-to, and past a few doors that list wants grouping by building
+  (`BadgeOnSiteList`) which the action lists do not. Showing one view at a time is also why the action lists no longer
+  bound their own height: the nested scroll existed because four cards were stacked.
+  The bar is **one level where there used to be two**, and that is the fix rather than a restyle. It was Badge/Access
+  tabs pinned under the header *plus* a row of segment pills inside the Access tab — three rows of chrome above the
+  content on a phone, and the pills **wrapped to a second line** at four segments, so the badge with the most on it
+  got the least room to show it. Equal `flex-1` columns cannot wrap by construction: six items at 375px are ~62px
+  each, which is what a native tab bar does with five, and no label needs a second line (`min-h-14` + an 11px label
+  is the smallest that holds that while clearing the 44px touch floor). It also moves navigation into the thumb zone
+  and hands the ~90px the two rows cost back to the content, which is what the floor plan wanted. The flattening is
+  honest about the hierarchy too: from the holder's side these were never two levels — "my photo and QR" and "my
+  doors" are peers, different screens of one badge. A count rides the **icon**, not the label, because "Portals 3"
+  wraps at 62px.
+  The derivation moving to `badgeNav.ts` is what turned `BadgeAccessPanel` into a **pure renderer** told which view to
+  draw. Two hosts render the same views over the same payload with different chrome — the holder's bottom bar and the
+  operator preview's dialog tabs (`BadgePreviewModal`) — and they must never disagree about *content*, since a segment
+  the holder sees and the operator does not is exactly the discrepancy the preview exists to rule out. Same reason
+  `remoteGrants`/`onSiteGrants` live there: a segment's count and the rows under it come from one filter.
+  Selection is remembered two ways because they answer different questions — the `?tab=` query param so a screen can
+  be bookmarked and linked, `localStorage` so opening the badge lands where the holder left it. `?tab=access` from the
+  two-level version still resolves (to the first access segment); a stored key that no longer exists resolves to the
+  face, so a vanished segment needs no migration.
   The **plan segment shows one site**, picked from a `<select>` when `/api/badge/live` returns several (that route
   always returned every opted-in site; the panel used to stack them, which is not wrong so much as invisible — each
   plan is a full-width image, so on a phone the second card's header starts below the fold with nothing to suggest
   it exists, and the tab said "Plan" whether there was one or four). The same adaptive rule applies: no picker at
-  one site, and the tab carries a count of **sites** only past one. A native select rather than a pill row, which
-  competed with the segment row directly above it and cost the picture a line of chrome per site. It mirrors the
+  one site, and the Plan item carries a count of **sites** only past one. A native select rather than a row of pills,
+  which read as a second switcher and cost the picture a line of chrome per site. It mirrors the
   operator console's `/monitor` overview → `/monitor/:locationId` drill-in, and keying `BadgeFloorplan` by site id
   settles the stacked version's other bug for free — each instance owns its selection, so two plans on screen could
   each caption a selected door, and the one scrolled off the top kept stale result text.
-  **The plan fills the frame instead of being sized by its image**, which is why the shell hands the Access tab a
-  *definite* height (`BadgeView`'s one scroll region → `h-full` wrapper → panel as a flex item) and the plan card is
-  a flex column whose image caps itself with `max-h-full`/`max-w-full`. A list longer than the frame still overflows
-  into that same scroll region; the change is only that a view can now know how much room it has. That switch is
-  what moved the pins from percentages to **measurement**: a percentage of the wrapper was right only while the
-  wrapper was sized BY the image, and a capped image is centred in a box bigger than itself on one axis, so those
-  percentages land pins in the letterboxing. `BadgeFloorplan` measures the rendered image box (`offsetLeft`/`Top`/
-  `offsetWidth`/`Height`, relative to the `relative` plan area) and places pins in px against it. `object-contain`
-  is the wrong tool here — it makes CSS do the fitting but hides the result, since the element box stays the
-  container's. The `ResizeObserver` watches the **plan area, not the image**: selecting a pin adds the action bar,
-  which shortens the area, and on a width-limited plan the image's own size does not change at all — only where it
-  is centred, which observing the image would miss while leaving every pin shifted.
+  **The plan fills the frame instead of being sized by its image**, which is why the shell hands the Access panel a
+  *definite* height (`BadgeView`'s one scroll region → `h-full` wrapper → panel as a flex item) and the plan card is a
+  flex column whose plan area takes what is left. A list longer than the frame still overflows into that same scroll
+  region; the change is only that a view can know how much room it has.
+  Two things had to be true for that to actually happen, and only one of them was at first. `max-h-full`/`max-w-full`
+  on the image is **half a fit**: a cap shrinks an oversized plan and does nothing at all for one *smaller* than the
+  space, which then sits at natural size with the screen empty around it — and a plan exported at 800px on a tall phone
+  is the ordinary case, not a corner one. So the image is `h-full w-full object-contain`, which scales both ways. (An
+  earlier note here said `object-contain` was the wrong tool because it hides the fitted result; that was reasoning
+  about *measurement*, and it is wrong about *fitting* — the fit is the part CSS must do, and the result is arithmetic,
+  see below.)
+  The other was a **DaisyUI rule with real teeth**: `.card-body :where(p){flex-grow:1}`, which makes a bare `<p>` that
+  is a direct child of a card-body flex column a *growing* flex item. The plan's "tap a marker" caption was one, so it
+  split the card's free space evenly with the plan area — the plan filled about half the card and a blank band sat
+  under the caption, which read as "flex-1 isn't working" and is why this took a measured harness to find rather than a
+  reading. `shrink-0` does not help (the item was growing, not shrinking) and a `grow-0` utility only wins on source
+  order, so the caption is wrapped in a `<div>`: the paragraph is out of the flex line, no specificity argument, and a
+  sentence stays a `<p>`. **Any direct-child `<p>` of a `card-body` that is a flex column has this bug.**
+  Pins are placed against the **drawn rectangle, computed** — not the element box, and not percentages. Under
+  `object-contain` the element fills the area and the picture is letterboxed inside it, so `BadgeFloorplan` repeats the
+  browser's own fit (`scale = min(boxW/naturalW, boxH/naturalH)`, centred) from `offsetLeft`/`Top`/`offsetWidth`/
+  `Height` relative to the `relative` plan area. Two earlier versions were wrong in opposite directions — percentages
+  of the wrapper (right only while the wrapper was sized BY the image) and then measuring the element box (right only
+  while the element WAS the image) — and both landed pins in the letterboxing. The `ResizeObserver` watches the **plan
+  area, not the image**: selecting a pin adds the action bar, which shortens the area, and on a width-limited plan the
+  drawn width does not change at all — only where it is centred, which observing the image would miss while leaving
+  every pin shifted.
+  The **badge face** (`BadgePassPanel`) is a centred column, not a list row: the photo sits above the name at 112px
+  (a badge is held up to be compared against a face, so it is the largest thing after the code itself — the old 64px
+  thumbnail beside the name was sized like a list avatar), the name below it at `text-lg`, and the QR at 208px. The
+  card is centred in the leftover height with `my-auto` rather than `justify-center` on the column, because auto
+  margins collapse to nothing when the content is taller than the frame — a short phone then scrolls, where flex
+  centring would have clipped the top of the photo unreachably.
   The portal segment is labelled **Portals**, not "Doors" — what the rest of the system calls them, and a portal is
   not always a door (a holder whose badge opens the vehicle gate should not read it as one). It has a filter past
   six entries, on the same terms as `BadgeOnSiteList`'s, sharing one `BadgeFilterInput` so two search boxes a
@@ -611,7 +651,8 @@ browser, so a holder's installed app lands on the badge form and an operator's o
 emits `.btn-sm{height:2rem}` *after* `.btn-square{height:3rem}`, making that combination 48 wide by 32 tall on a
 laptop and 48×44 on a phone. Badge chrome therefore uses unmodified `.btn .btn-square` (48px at every breakpoint),
 adds `min-h-11` to dropdown menu rows (DaisyUI's `menu-sm` pads them to ~28px, and one of them signs you out), and
-`h-11` to the badge tabs (`.tab` is 2rem — fine in a dense console, short for a phone's primary navigation).
+`min-h-14` to the bottom navigation bar's columns (DaisyUI's `.tab` is 2rem, fine in a dense console and short for a
+phone's primary navigation — which is one reason that bar is plain buttons in a flex row rather than `tabs`).
 `BadgeFloorplan`'s pins are the case where this trap actually bit: as `btn btn-circle btn-xs` they came out 48×44 on
 a phone and 48×24 on a laptop — an *ellipse* far larger than the visible dot, centred on the pin, so neighbouring
 pins' boxes overlapped and a tap on one door could resolve to the next one's button. They are a plain 44px square

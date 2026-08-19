@@ -4,6 +4,13 @@ import { pb } from '@/utils/pb'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 import BadgePassPanel from '@/views/badge/BadgePassPanel.vue'
 import BadgeAccessPanel from '@/views/badge/BadgeAccessPanel.vue'
+import {
+  BADGE_FACE,
+  badgeViews,
+  type BadgeNavItem,
+  type BadgeTabKey,
+  type BadgeViewKey,
+} from '@/views/badge/badgeNav'
 import type { BadgePreview } from '@/types/badge'
 
 /**
@@ -44,12 +51,24 @@ const emit = defineEmits<{ 'update:open': [boolean] }>()
 const preview = ref<BadgePreview | null>(null)
 const loading = ref(false)
 const loadError = ref('')
-const tab = ref<'badge' | 'access'>('badge')
+const tab = ref<BadgeTabKey>('badge')
 
-const actionCount = computed(() => {
-  const m = preview.value?.me
-  return m ? m.portals.length + m.areas.length + m.outputs.length : 0
+/**
+ * The same views the holder's own bottom navigation bar shows, from the same derivation
+ * (`badgeNav.ts`) — as a row of dialog tabs, because this is a desktop modal and not a phone.
+ *
+ * Sharing the derivation is what makes the preview trustworthy: an operator hunting for why a
+ * badge "doesn't work" must not be looking at a different set of segments from the holder. Here
+ * the chrome differs and the content cannot.
+ */
+const navItems = computed<BadgeNavItem[]>(() => {
+  const p = preview.value
+  if (!p) return [BADGE_FACE]
+  return [BADGE_FACE, ...badgeViews(p.me, p.live.locations)]
 })
+
+/** Null on the face, which is the one screen the Access panel does not draw. */
+const accessView = computed<BadgeViewKey | null>(() => (tab.value === 'badge' ? null : tab.value))
 
 /**
  * The operator-only diagnosis: the reasons a badge can be healthy and still unusable, or
@@ -144,35 +163,31 @@ function close() {
             </SoftBadge>
           </div>
 
-          <div role="tablist" class="tabs tabs-boxed tabs-sm">
+          <div role="tablist" class="tabs tabs-boxed tabs-sm flex-wrap">
             <button
+              v-for="item in navItems"
+              :key="item.key"
               role="tab"
-              class="tab flex-1"
-              :class="tab === 'badge' ? 'tab-active' : ''"
-              @click="tab = 'badge'"
+              class="tab gap-1"
+              :class="tab === item.key ? 'tab-active' : ''"
+              @click="tab = item.key"
             >
-              Badge
-            </button>
-            <button
-              role="tab"
-              class="tab flex-1 gap-1"
-              :class="tab === 'access' ? 'tab-active' : ''"
-              @click="tab = 'access'"
-            >
-              Access
-              <span v-if="actionCount" class="badge badge-sm">{{ actionCount }}</span>
+              <span aria-hidden="true">{{ item.icon }}</span>
+              <span>{{ item.label }}</span>
+              <span v-if="item.count" class="badge badge-sm">{{ item.count }}</span>
             </button>
           </div>
 
           <!-- The badge's own components, on the badge's own payload. The operator client is
                passed so the PROTECTED photo resolves against this session's file token. -->
-          <BadgePassPanel v-if="tab === 'badge'" :me="preview.me" :client="pb" compact />
           <BadgeAccessPanel
-            v-else
+            v-if="accessView"
             :me="preview.me"
             :plans="preview.live.locations"
+            :view="accessView"
             readonly
           />
+          <BadgePassPanel v-else :me="preview.me" :client="pb" compact />
         </div>
       </div>
 

@@ -9,70 +9,118 @@ import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import BadgePassPanel from './BadgePassPanel.vue'
 import BadgeAccessPanel from './BadgeAccessPanel.vue'
 import BadgePasswordModal from './BadgePasswordModal.vue'
-import type { BadgeMe } from '@/types/badge'
+import {
+  BADGE_FACE,
+  badgeViews,
+  type BadgeNavItem,
+  type BadgeTabKey,
+  type BadgeViewKey,
+} from './badgeNav'
+import type { BadgeLive, BadgeMe } from '@/types/badge'
 
 /**
- * The badge shell: one fetch of GET /api/badge/me, two tabs over it.
- *
- *   Badge   the face — photo, QR, validity (BadgePassPanel)
- *   Access  what it can do — doors, areas, controls (BadgeAccessPanel)
- *
- * Split because the two halves answer different questions and are reached at different
- * moments: the face is what you hold up at a desk, the Access tab is what you use with
- * your hands full outside a door. Keeping the QR on its own tab also means the thing
- * most worth photographing is not on screen while someone is pressing buttons.
- *
- * The tab is a query param so a holder can bookmark the half they actually use, and so
- * "open my doors" can be linked to directly.
+ * The badge shell: one fetch of GET /api/badge/me, one navigation bar over it.
  *
  * # Why this is a fixed-height shell and not a document
  *
  * `h-dvh` + `overflow-hidden` on the frame, with ONE scroll region inside it. A badge is
  * used one-handed, often outdoors, often in a hurry — the header (who you are, sign out)
- * and the tabs must not scroll away from under a thumb, and "swipe up to find the unlock
- * button" is the wrong interaction for a door.
+ * and the navigation must not scroll away from under a thumb, and "swipe up to find the
+ * unlock button" is the wrong interaction for a door.
  *
  * `dvh` rather than `vh` on purpose: mobile Safari's `vh` is the tallest viewport, so a
  * `h-screen` frame is taller than the visible area whenever the URL bar is showing, which
  * puts the bottom of the content under it. `dvh` tracks the viewport as it actually is.
  *
- * Everything else follows from that frame: the password form became a modal (rare,
- * deliberate act — no reason for it to occupy the badge permanently), and the Access tab is
- * handed a DEFINITE height rather than growing to its content, which is what lets its floor
- * plan fill the screen exactly instead of being sized by the image it happens to load. A
- * list longer than the frame still overflows into the scroll region above; the difference is
- * only that a view can now know how much room it has.
+ * # Why the navigation is ONE flat bar at the bottom
+ *
+ * It used to be two levels: Badge/Access tabs pinned under the header, and inside the Access
+ * tab a second row of segment pills for plan / portals / areas / controls / on-site. That is
+ * three rows of chrome above the content on a phone, and the pills WRAPPED to a second line
+ * as soon as a holder had four segments — so the badge with the most on it got the least room
+ * to show it.
+ *
+ * Flattening the two levels solves the wrap by construction rather than by squeezing: equal
+ * `flex-1` columns cannot wrap, so six items at 375px are ~62px each, which is what a native
+ * tab bar does with five and no label needs a second line. It also moves navigation into the
+ * thumb zone at the bottom of the screen, and hands back the ~90px the two rows cost at the
+ * top — which is exactly the space the floor plan wanted.
+ *
+ * The flattening is honest about the hierarchy too: from the holder's side these were never
+ * two levels. "My photo and QR" and "my doors" are peers — different screens of one badge.
+ *
+ * # What the shell owns, and why
+ *
+ * The bar has to know which access views exist, so the /api/badge/live fetch and the view
+ * derivation (`badgeNav.ts`) live up here and BadgeAccessPanel became a pure renderer, told
+ * which view to draw. The operator's preview modal renders that same panel behind its own row
+ * of tabs over the same derivation, so the two differ in chrome and never in content.
+ *
+ * The Access panel is also handed a DEFINITE height rather than growing to its content, which
+ * is what lets its floor plan fill the screen exactly instead of being sized by the image it
+ * happens to load. A view taller than the frame still overflows into the scroll region; the
+ * difference is only that a view CAN know how much room it has.
  */
 const route = useRoute()
 const router = useRouter()
 const badgeAuth = useBadgeAuthStore()
 const branding = useBrandingStore()
 
-type Tab = 'badge' | 'access'
-function isTab(v: unknown): v is Tab {
-  return v === 'badge' || v === 'access'
-}
-
 const me = ref<BadgeMe | null>(null)
+const plans = ref<BadgeLive['locations']>([])
 const loading = ref(true)
 const loadError = ref('')
-const tab = ref<Tab>(isTab(route.query.tab) ? route.query.tab : 'badge')
 const showPasswordModal = ref(false)
 const passwordSaved = ref(false)
 /** Set while a manual refresh is in flight, so the whole badge is not torn down for one. */
 const refreshing = ref(false)
 
-function setTab(t: Tab) {
-  tab.value = t
-  router.replace({ path: route.path, query: { ...route.query, tab: t } }).catch(() => {})
-}
+// --- which screen is showing -------------------------------------------------
+//
+// One selection over the flattened list, remembered two ways because they answer different
+// questions: the query param so a holder can bookmark (and we can link to) the screen they
+// actually use, and localStorage so simply opening the badge lands where they left it.
+const STORAGE_KEY = 'sa.badge.view'
 
-/** Shown on the Access tab so a holder can see at a glance whether there is anything there. */
-const actionCount = computed(() => {
-  const m = me.value
-  if (!m) return 0
-  return m.portals.length + m.areas.length + m.outputs.length
+/** The face first, then whatever this badge has to show. Always at least two items. */
+const navItems = computed<BadgeNavItem[]>(() => [
+  BADGE_FACE,
+  ...(me.value ? badgeViews(me.value, plans.value) : []),
+])
+
+function initialTab(): string {
+  const q = route.query.tab
+  if (typeof q === 'string' && q) return q
+  return localStorage.getItem(STORAGE_KEY) || ''
+}
+const chosen = ref<string>(initialTab())
+
+/**
+ * The screen actually rendered. Resolved against the live list rather than stored, so the two
+ * ways a choice can go stale need no cleanup: a segment that disappears — a location that
+ * opted out of plans, a pass whose grants changed — stops matching and the face takes over.
+ * It is also what makes the Plan segment take focus the moment /api/badge/live lands, having
+ * started on whatever was available a tick earlier.
+ *
+ * `?tab=access` is honoured as the first access segment: the two-level version's URL is
+ * documented as bookmarkable, and one flattening should not break a link someone saved.
+ */
+const activeTab = computed<BadgeTabKey>(() => {
+  const items = navItems.value
+  const want = chosen.value === 'access' ? items[1]?.key : chosen.value
+  return items.find((i) => i.key === want)?.key ?? items[0].key
 })
+
+/** Null on the face, which is the one screen the Access panel does not draw. */
+const accessView = computed<BadgeViewKey | null>(() =>
+  activeTab.value === 'badge' ? null : activeTab.value,
+)
+
+function setTab(key: BadgeTabKey) {
+  chosen.value = key
+  localStorage.setItem(STORAGE_KEY, key)
+  router.replace({ path: route.path, query: { ...route.query, tab: key } }).catch(() => {})
+}
 
 async function load() {
   loading.value = true
@@ -92,6 +140,21 @@ async function load() {
 }
 
 /**
+ * Floor plans are a best-effort request: the lists are the complete surface, and a plan is an
+ * upgrade a location opts into (`locations.badge_floorplan`). Most installs return an empty
+ * list, so a failure here is silent — there is nothing to tell the holder about a picture
+ * they were never promised.
+ */
+async function loadPlans() {
+  try {
+    const res = await badgePb.send<BadgeLive>('/api/badge/live', { method: 'GET' })
+    plans.value = res.locations || []
+  } catch {
+    plans.value = []
+  }
+}
+
+/**
  * Re-fetch after an action that changes server-held state (arming), and on the explicit
  * Refresh in the menu. Deliberately a full reload of the badge rather than a local patch:
  * an area's arm-state is resolved server-side from the policy graph, so asking again is the
@@ -106,6 +169,7 @@ async function refresh() {
   refreshing.value = true
   try {
     me.value = await badgePb.send<BadgeMe>('/api/badge/me', { method: 'GET' })
+    await loadPlans()
   } catch {
     // Leave the previous view in place: the action itself already reported its outcome,
     // and replacing that with a load error would be misleading.
@@ -138,7 +202,10 @@ function manualRefresh() {
   refresh()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadPlans()
+})
 </script>
 
 <template>
@@ -158,7 +225,7 @@ onMounted(load)
         <ThemeToggle />
 
         <!-- Account menu. Sign out used to be a bare button in the header, which put the
-             one irreversible action on this screen a thumb-width from the tabs.
+             one irreversible action on this screen a thumb-width from the navigation.
              `btn-square` with no size modifier: 48px, see ThemeToggle for why `btn-sm`
              is the wrong tool here. -->
         <div class="dropdown dropdown-end">
@@ -203,48 +270,75 @@ onMounted(load)
     </div>
 
     <template v-else-if="me">
-      <!-- Tabs stay pinned: they are how you get to the other half of the badge.
-           `h-11` because DaisyUI's `.tab` is 2rem — fine in a dense desktop console, too
-           short for the primary navigation of a one-handed phone screen. -->
-      <div class="shrink-0 px-3">
-        <div role="tablist" class="tabs tabs-boxed mx-auto max-w-sm">
-          <button
-            role="tab"
-            class="tab h-11 flex-1"
-            :class="tab === 'badge' ? 'tab-active' : ''"
-            @click="setTab('badge')"
-          >
-            Badge
-          </button>
-          <button
-            role="tab"
-            class="tab h-11 flex-1 gap-1"
-            :class="tab === 'access' ? 'tab-active' : ''"
-            @click="setTab('access')"
-          >
-            Access
-            <span v-if="actionCount" class="badge badge-sm">{{ actionCount }}</span>
-          </button>
-        </div>
-      </div>
-
       <!-- The ONE scroll region. `min-h-0` is what lets it shrink inside the flex column
            instead of pushing the frame taller than the viewport. -->
       <main class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-3">
-        <!-- `h-full` + flex column so the Access tab's floor-plan view can fill the screen
+        <!-- `h-full` + flex column so the Access panel's floor-plan view can fill the screen
              rather than being sized by its image. This is the definite height the whole chain
-             below depends on — the panel takes it as a flex item, and the plan card's image
-             caps itself against it. A list taller than this still overflows and this region
-             still scrolls, exactly as before; what changed is only that a view CAN know how
-             much room it has. -->
+             below depends on. -->
         <div class="max-w-sm mx-auto flex h-full flex-col">
           <p v-if="passwordSaved" class="alert alert-success shrink-0 py-2 text-sm mb-3">
             Your password has been set.
           </p>
-          <BadgePassPanel v-if="tab === 'badge'" :me="me" />
-          <BadgeAccessPanel v-else :me="me" class="min-h-0 flex-1" @refresh="refresh" />
+          <BadgeAccessPanel
+            v-if="accessView"
+            :me="me"
+            :plans="plans"
+            :view="accessView"
+            class="min-h-0 flex-1"
+            @refresh="refresh"
+          />
+          <!-- `my-auto` centres the face in whatever height is left over, and collapses to
+               nothing when there is none — so a short screen scrolls rather than clipping the
+               top of the photo, which is what `justify-center` on the column would have done. -->
+          <BadgePassPanel v-else :me="me" class="my-auto" />
         </div>
       </main>
+
+      <!-- The navigation bar. Pinned to the bottom of the frame: it is how you reach every
+           other screen of the badge, and the bottom of a phone is where a thumb rests.
+
+           Equal `flex-1` columns rather than a wrapping pill row — a fixed number of equal
+           columns cannot wrap, which is the whole point. `min-h-14` with an 11px label is the
+           smallest that keeps six items on one line at 375px while clearing the 44px touch
+           floor; `pad-safe-bottom` keeps the row off the home indicator. -->
+      <nav
+        role="tablist"
+        aria-label="Badge sections"
+        class="shrink-0 border-t border-base-300 bg-base-100 pad-safe-bottom"
+      >
+        <div class="mx-auto flex max-w-sm">
+          <button
+            v-for="item in navItems"
+            :key="item.key"
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === item.key"
+            class="relative flex min-h-14 flex-1 flex-col items-center justify-center gap-1 px-0.5 py-1.5 transition-colors"
+            :class="activeTab === item.key ? 'text-primary' : 'text-base-content/60'"
+            @click="setTab(item.key)"
+          >
+            <!-- The count rides the icon rather than the label: at ~62px a column "Portals 3"
+                 would wrap, and a number beside a glyph is the shape every phone already uses
+                 for a count. Neutral, not primary — it is a quantity, not an alert. -->
+            <span class="relative inline-flex items-center justify-center">
+              <span class="text-lg leading-none" aria-hidden="true">{{ item.icon }}</span>
+              <span
+                v-if="item.count"
+                class="absolute -top-1 left-full -ml-1 rounded-full bg-base-300 px-1 text-[10px] font-semibold leading-4 text-base-content"
+              >
+                {{ item.count }}
+              </span>
+            </span>
+            <span
+              class="text-[11px] leading-none"
+              :class="activeTab === item.key ? 'font-semibold' : 'font-medium'"
+            >
+              {{ item.label }}
+            </span>
+          </button>
+        </div>
+      </nav>
     </template>
 
     <BadgePasswordModal v-model:open="showPasswordModal" @saved="passwordSaved = true" />

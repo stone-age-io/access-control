@@ -16,27 +16,33 @@ import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
  * so this is an image with absolutely-positioned buttons, and the phone downloads no map
  * library at all.
  *
- * # It fills the height it is given, and that is why it measures
+ * # It FITS the height it is given, and that is why it computes a box
  *
  * The plan used to be an `h-auto` image in a growing card, which on a phone left the bottom
  * third of the screen empty on a wide plan and pushed the action bar off it on a tall one.
- * Now the card is a flex column inside a panel of known height and the image is capped by
- * `max-h-full`/`max-w-full`, so it shrinks to fit whatever the switcher and picker leave —
- * one screen, no scrolling, the picture as big as the phone allows.
+ * The card is a flex column inside a panel of known height now, and the image fits itself to
+ * whatever the site picker leaves: one screen, no scrolling, the picture as big as the phone
+ * allows.
+ *
+ * `max-h-full`/`max-w-full` was the first attempt at that and it is only half of it — a cap
+ * SHRINKS an oversized plan and does nothing at all for one smaller than the space, which
+ * then sits at its natural size with the rest of the screen empty. That is not a corner case:
+ * a plan exported at 800px on a tall phone is the ordinary case. So the image is
+ * `h-full w-full object-contain`, which scales in both directions.
  *
  * Positions arrive as pixel coordinates in the image's own space (the same space the
- * operator's editor writes). They used to become percentages of the wrapper, which worked
- * only because the wrapper was sized BY the image. Once the image is capped in both axes it
- * is centred in a box bigger than itself on one axis, and a percentage of that box lands a
- * pin in the letterboxing — so the rendered image box is measured instead, and pins are
- * placed in px against it. `object-contain` would let CSS do the fitting but hides the
- * result: the element box stays the container's, so the same measurement problem comes back
- * with less to measure. Capping a plain image keeps element box == image box.
+ * operator's editor writes). Placing a pin therefore needs the rectangle the picture is
+ * actually DRAWN in, which under `object-contain` is not the element's box — the element
+ * fills the container and the content is letterboxed inside it. So the drawn rect is computed
+ * the same way the browser fits it: scale = min(boxW/naturalW, boxH/naturalH), centred. Two
+ * earlier versions of this got it wrong in opposite ways — percentages of the wrapper (right
+ * only while the wrapper was sized BY the image) and then measuring the element box (right
+ * only while the element WAS the image) — and both landed pins in the letterboxing.
  *
  * A ResizeObserver on the plan area is what keeps that honest. It watches the CONTAINER, not
  * the image: selecting a pin adds the action bar below, which shortens the plan area, and on
- * a width-limited plan the image's own size does not change at all — only where it is
- * centred. Observing the image would miss exactly that case and leave every pin shifted.
+ * a width-limited plan the drawn width does not change at all — only where it is centred.
+ * Observing the image would miss exactly that case and leave every pin shifted.
  *
  * Areas are deliberately absent: only portals and aux I/O carry a position, because an
  * area is a set of points with no single place to put a pin. They live in the list.
@@ -98,17 +104,30 @@ const busy = ref(false)
 const result = ref<{ ok: boolean; message: string } | null>(null)
 
 /**
- * Where the image actually ended up. `offsetLeft`/`offsetTop` are relative to the nearest
- * positioned ancestor, which is the plan area — so this is exactly the origin pins are
- * placed from, with no `getBoundingClientRect` and no scroll-position arithmetic.
+ * Where the picture actually ended up inside the element that holds it.
+ *
+ * `offsetLeft`/`offsetTop` are relative to the nearest positioned ancestor, which is the plan
+ * area — so they are exactly the origin pins are placed from, with no `getBoundingClientRect`
+ * and no scroll-position arithmetic. The contain fit is then applied on top, because under
+ * `object-contain` the element fills the area and the drawn image is letterboxed within it:
+ * the same `min(scaleX, scaleY)`, centred, that the browser used to paint it.
  */
 function measure() {
   const img = image.value
-  if (!img || !img.offsetWidth || !img.offsetHeight) {
+  const n = natural.value
+  if (!img || !n || !img.offsetWidth || !img.offsetHeight) {
     box.value = null
     return
   }
-  box.value = { left: img.offsetLeft, top: img.offsetTop, w: img.offsetWidth, h: img.offsetHeight }
+  const scale = Math.min(img.offsetWidth / n.w, img.offsetHeight / n.h)
+  const w = n.w * scale
+  const h = n.h * scale
+  box.value = {
+    left: img.offsetLeft + (img.offsetWidth - w) / 2,
+    top: img.offsetTop + (img.offsetHeight - h) / 2,
+    w,
+    h,
+  }
 }
 
 let observer: ResizeObserver | null = null
@@ -194,9 +213,11 @@ async function act() {
     <div class="card-body flex min-h-0 flex-col gap-3 p-3">
       <h2 class="card-title shrink-0 text-base px-1">{{ location.name }}</h2>
 
-      <!-- The plan. `relative` is the positioning context every pin is measured and placed
-           against; the flex centring is what letterboxes a plan whose shape does not match
-           the space, and the image caps itself rather than stretching to fill. -->
+      <!-- The plan. `relative` is the positioning context every pin is placed against, and
+           `flex-1 min-h-0` is what makes the area take the height the card has left rather
+           than the height the image happens to want. The image then fills that area and
+           `object-contain` fits the picture inside it, scaling UP as well as down — the pins
+           are placed against the drawn rect, not this box. See `measure`. -->
       <div
         ref="area"
         class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-base-200"
@@ -205,7 +226,7 @@ async function act() {
           ref="image"
           :src="location.floorplan"
           :alt="`Floor plan of ${location.name}`"
-          class="block h-auto max-h-full w-auto max-w-full select-none"
+          class="block h-full w-full select-none object-contain"
           @load="onImageLoad"
         />
         <!-- A 44px square hit area wrapping a small visible dot: big enough to hit on a
@@ -263,9 +284,16 @@ async function act() {
           {{ result.message }}
         </p>
       </div>
-      <p v-else class="shrink-0 text-xs text-base-content/50 px-1">
-        Tap a marker to see which door it is.
-      </p>
+      <!-- Wrapped, and that wrapper is load-bearing. DaisyUI ships
+           `.card-body :where(p){flex-grow:1}`, so a bare <p> as a direct child of a card-body
+           flex column is a GROWING item — it split the card's free space evenly with the plan
+           area, which is why the plan filled about half the screen and a blank band sat under
+           the caption. `shrink-0` does not help; the item was growing, not shrinking. A <div>
+           child keeps the paragraph out of the flex line, without either relying on a utility
+           winning a specificity tie or downgrading a sentence to a <div>. -->
+      <div v-else class="shrink-0 px-1">
+        <p class="text-xs text-base-content/50">Tap a marker to see which door it is.</p>
+      </div>
     </div>
   </div>
 </template>
