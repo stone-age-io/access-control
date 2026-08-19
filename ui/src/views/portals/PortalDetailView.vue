@@ -143,7 +143,7 @@ onBeforeUnmount(() => {
          and the reference/config cards follow. -->
     <BaseCard title="Live status &amp; controls">
       <div class="space-y-4">
-        <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-6 gap-y-4">
+        <div v-if="status" class="field-grid">
           <DataField label="State">
             <SoftBadge :tone="doorTone.tone" dot>{{ doorTone.text }}</SoftBadge>
           </DataField>
@@ -208,7 +208,7 @@ onBeforeUnmount(() => {
     </BaseCard>
 
     <BaseCard title="Identity">
-      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
+      <div class="field-grid">
         <DataField label="Code">
           <code class="text-sm">{{ record.code }}</code>
         </DataField>
@@ -227,7 +227,7 @@ onBeforeUnmount(() => {
 
     <BaseCard title="Posture &amp; timing">
       <div class="space-y-4">
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-4">
+        <div class="field-grid">
           <DataField label="Standing posture">
             <SoftBadge>{{ record.posture || 'secure' }}</SoftBadge>
           </DataField>
@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
           <p v-if="!record.auto_posture && !record.auto_schedule" class="text-sm opacity-50">
             None — the standing posture always applies.
           </p>
-          <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+          <div v-else class="field-grid">
             <DataField label="Posture">
               <SoftBadge>{{ record.auto_posture || '—' }}</SoftBadge>
             </DataField>
@@ -262,7 +262,7 @@ onBeforeUnmount(() => {
     </BaseCard>
 
     <BaseCard title="Controller &amp; hardware">
-      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
+      <div class="field-grid">
         <DataField label="Controller">
           <router-link v-if="record.expand?.controller" :to="`/controllers/${record.expand.controller.id}`" class="link link-primary">
             {{ record.expand.controller.code }}
@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
     </BaseCard>
 
     <BaseCard v-if="record.expand?.area" title="Area &amp; intrusion">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+      <div class="field-grid">
         <DataField label="Area">
           <router-link :to="`/areas/${record.expand.area.id}`" class="link link-primary">
             {{ record.expand.area.code }}

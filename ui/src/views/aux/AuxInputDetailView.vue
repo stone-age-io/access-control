@@ -107,7 +107,7 @@ onBeforeUnmount(() => {
     </template>
 
     <BaseCard title="Live status">
-      <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+      <div v-if="status" class="field-grid">
         <DataField label="Input">
           <SoftBadge :tone="status.state === 'active' ? 'warning' : 'neutral'" dot>
             {{ status.state === 'active' ? 'Active' : 'Inactive' }}
@@ -121,7 +121,7 @@ onBeforeUnmount(() => {
     </BaseCard>
 
     <BaseCard title="Identity">
-      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
+      <div class="field-grid">
         <DataField label="Code"><code class="text-sm">{{ record.code }}</code></DataField>
         <DataField label="Name">{{ record.name || '—' }}</DataField>
         <DataField label="Location">

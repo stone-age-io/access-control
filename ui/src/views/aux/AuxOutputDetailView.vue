@@ -123,7 +123,7 @@ onBeforeUnmount(() => {
     </template>
 
     <BaseCard title="Live status">
-      <div v-if="status" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+      <div v-if="status" class="field-grid">
         <DataField label="Relay">
           <SoftBadge :tone="status.state === 'energized' ? 'success' : 'neutral'" dot>
             {{ status.state === 'energized' ? 'Energized' : 'Off' }}
@@ -155,7 +155,7 @@ onBeforeUnmount(() => {
     </BaseCard>
 
     <BaseCard title="Identity">
-      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
+      <div class="field-grid">
         <DataField label="Code"><code class="text-sm">{{ record.code }}</code></DataField>
         <DataField label="Name">{{ record.name || '—' }}</DataField>
         <DataField label="Location">

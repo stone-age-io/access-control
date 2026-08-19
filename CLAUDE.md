@@ -700,6 +700,32 @@ plan (the control the Doors view already uses), so an overlapping hit box costs 
 and correctable — instead of a wrong door. The old two-taps-on-the-marker protocol also made the tap count depend on
 which pin was last selected, so a tap could appear to do nothing.
 
+**The operator console has two content widths, not three — wide for looking, narrow for entering.** `MainLayout`
+frames every page at `max-w-7xl`; `ListLayout` and `DetailLayout` both fill it, and `FormLayout` alone caps at
+`max-w-3xl`, a cap that is earned (a stretched text input is genuinely worse, and its sticky action bar must stay
+near the last field). Detail views used to carry `max-w-4xl`, which was never a measure decision but **the ghost of
+the retired rail**: the layout was once a full-frame `lg:grid-cols-3` with content in `lg:col-span-2`, and when the
+rail went (`b9607a9`) the column kept roughly its old width and got centred in the space the rail no longer used
+instead of expanding into it. So list → detail shifted ~140px per side, and because the cap was absolute while the
+list tracked the frame, **the gap widened as the monitor got bigger** — the opposite of what a real measure decision
+does. Nothing in a detail view is reading-measure-sensitive (`DataField` is a compact label over a `text-sm` value;
+there is no prose, no `col-span-full`, no `whitespace-pre`), while three things in one were squeezed: the field
+grids, `ControllerIOMap`, and a `FloorPlanMap` that rendered **narrower on its editable page than the read-only
+`/monitor` view of the same plan**.
+
+The trap underneath it generalises past this one layout: **a Tailwind `sm:`/`xl:` grid ladder is a VIEWPORT query, so
+a card inside a capped column asks the window how wide it is, not the column.** `xl:grid-cols-4` committed to four
+columns at a 1280px viewport inside an 896px container, and 11 of 14 detail views already asked for three — the
+container and its contents were decided in different files and never met. The fix was therefore to **delete the
+breakpoints, not re-tune them**: `.field-grid` (`main.css`) is `repeat(auto-fill,minmax(14rem,1fr))`, which derives
+the column count from the card. **`auto-fill`, not `auto-fit`, is load-bearing** — `auto-fit` collapses the empty
+tracks and lets `1fr` stretch the survivors, which *is* the sparse look this fixes (a 2-field card spreading two
+short values across 536px). Measured against the old ladder: byte-identical at every width below 1280 (1 column on
+phones, 2 on tablets), then 3–4 columns at 238–274px instead of 2 at 420–571px, and every card gets the same track
+width whether it holds 2 fields or 9, so columns line up across cards. Tailwind 3.4 has no container queries
+(`@tailwindcss/container-queries` is not installed) and grid `auto-fill` needs none. `RecordMeta` already
+`flex-wrap`s and `ControllerIOMap`'s two columns are semantic (Relays | Inputs), so neither is a field grid.
+
 ## Conventions
 
 - Module path `github.com/stone-age-io/access-control`, Go 1.26. Structured logging via `zap` wrapper

@@ -329,7 +329,7 @@ onMounted(load)
              question that brought the operator here. -->
         <SoftBadge v-if="isVisitor" class="ml-auto shrink-0" :tone="pass.tone" dot>{{ pass.label }}</SoftBadge>
       </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-4">
+      <div class="field-grid">
         <DataField label="Name">{{ record.name || '—' }}</DataField>
         <DataField label="Email">{{ record.email || '—' }}</DataField>
         <DataField label="Type">

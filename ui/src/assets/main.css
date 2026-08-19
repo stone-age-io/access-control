@@ -125,3 +125,23 @@ select {
     font-size: 0.875rem !important;
   }
 }
+
+/* Metadata grid for detail-view cards (DataField label/value pairs).
+   Container-driven on purpose: `auto-fill` derives the column count from the
+   card's own width, where the old `sm:grid-cols-2 xl:grid-cols-3` ladder derived
+   it from the VIEWPORT. That mismatch was invisible only while DetailLayout
+   capped its column at max-w-4xl — the ladder committed to 3-4 columns at a
+   1280px viewport inside an 896px container. With the cap gone the two would
+   disagree the other way, so the breakpoints are removed rather than re-tuned.
+   `auto-fill` (not `auto-fit`) is load-bearing: auto-fit collapses the empty
+   tracks and lets `1fr` stretch the survivors, which is exactly the sparse look
+   this fixes — a 2-field card spreading two short values across 536px. auto-fill
+   keeps the empty tracks, so few fields pack left at the same density as many.
+   Measured: identical to the old ladder at every width below 1280 (1 column on
+   phones, 2 on tablets), then 3-4 columns at 238-274px instead of 2 at 420-571px.
+   Gap matches the `gap-x-6 gap-y-4` it replaces. */
+.field-grid {
+  display: grid;
+  gap: 1rem 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+}

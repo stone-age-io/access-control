@@ -2,10 +2,23 @@
 /**
  * Single-column detail shell.
  *
- * Header (breadcrumbs + title + #actions + help) above a centered single column
- * (default slot). Relations live in the column as RelationList sections and the
- * record meta sits at the bottom as a RecordMeta strip — no rail. Matches the
- * single-column FormLayout so detail and form views read the same.
+ * Header (breadcrumbs + title + #actions + help) above a single column (default
+ * slot). Relations live in the column as RelationList sections and the record
+ * meta sits at the bottom as a RecordMeta strip — no rail.
+ *
+ * The column is deliberately UNCAPPED, so it fills MainLayout's max-w-7xl frame
+ * exactly as the list views do and list -> detail navigation does not shift. It
+ * used to carry max-w-4xl, which was not a measure decision but the ghost of the
+ * retired rail: this layout was once a full-frame lg:grid-cols-3 with content in
+ * lg:col-span-2, and when the rail went away the column kept roughly its old
+ * width and got centered in the space instead of expanding into it. Nothing in a
+ * detail view is reading-measure-sensitive (DataField is a compact label over a
+ * text-sm value; there is no prose here), while three things in one were being
+ * squeezed — the field grids, ControllerIOMap, and a FloorPlanMap that rendered
+ * NARROWER on this editable page than the read-only /monitor view of the same
+ * plan. FormLayout keeps its max-w-3xl: that cap is earned, because a stretched
+ * text input is genuinely worse and its action bar must stay near the last field.
+ * So the rule is two widths, not three — wide for looking, narrow for entering.
  */
 import HelpButton from './HelpButton.vue'
 
@@ -22,7 +35,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="mx-auto w-full max-w-4xl">
+  <div class="w-full">
     <!-- Header -->
     <div class="mb-6">
       <div v-if="breadcrumbs?.length" class="breadcrumbs text-sm">
