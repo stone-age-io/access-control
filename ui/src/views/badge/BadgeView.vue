@@ -9,6 +9,7 @@ import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import BadgePassPanel from './BadgePassPanel.vue'
 import BadgeAccessPanel from './BadgeAccessPanel.vue'
 import BadgePasswordModal from './BadgePasswordModal.vue'
+import BadgeNavBar from './BadgeNavBar.vue'
 import {
   BADGE_FACE,
   badgeViews,
@@ -40,11 +41,10 @@ import type { BadgeLive, BadgeMe } from '@/types/badge'
  * as soon as a holder had four segments — so the badge with the most on it got the least room
  * to show it.
  *
- * Flattening the two levels solves the wrap by construction rather than by squeezing: equal
- * `flex-1` columns cannot wrap, so six items at 375px are ~62px each, which is what a native
- * tab bar does with five and no label needs a second line. It also moves navigation into the
- * thumb zone at the bottom of the screen, and hands back the ~90px the two rows cost at the
- * top — which is exactly the space the floor plan wanted.
+ * Flattening them solves the wrap by construction rather than by squeezing (see BadgeNavBar for
+ * why equal columns can't), moves navigation into the thumb zone at the bottom of the screen,
+ * and hands back the ~90px the two rows cost at the top — which is exactly the space the floor
+ * plan wanted.
  *
  * The flattening is honest about the hierarchy too: from the holder's side these were never
  * two levels. "My photo and QR" and "my doors" are peers — different screens of one badge.
@@ -53,8 +53,9 @@ import type { BadgeLive, BadgeMe } from '@/types/badge'
  *
  * The bar has to know which access views exist, so the /api/badge/live fetch and the view
  * derivation (`badgeNav.ts`) live up here and BadgeAccessPanel became a pure renderer, told
- * which view to draw. The operator's preview modal renders that same panel behind its own row
- * of tabs over the same derivation, so the two differ in chrome and never in content.
+ * which view to draw. The operator's preview modal drives the same bar over the same derivation
+ * and the same panel, so what an operator troubleshoots with cannot disagree with what the
+ * holder sees; this shell's remaining job is the frame, the fetches and the selection.
  *
  * The Access panel is also handed a DEFINITE height rather than growing to its content, which
  * is what lets its floor plan fill the screen exactly instead of being sized by the image it
@@ -325,61 +326,17 @@ onMounted(() => {
         </div>
       </main>
 
-      <!-- The navigation bar. Pinned to the bottom of the frame: it is how you reach every
-           other screen of the badge, and the bottom of a phone is where a thumb rests.
-
-           Equal `flex-1` columns rather than a wrapping pill row — a fixed number of equal
-           columns cannot wrap, which is the whole point. `min-h-14` with an 11px label is the
-           smallest that keeps six items on one line at 375px while clearing the 44px touch
-           floor; `pad-safe-bottom` keeps the row off the home indicator. -->
-      <nav
-        role="tablist"
-        aria-label="Badge sections"
-        class="shrink-0 border-t border-base-300 bg-base-100 pad-safe-bottom"
-      >
-        <div class="mx-auto flex max-w-sm">
-          <button
-            v-for="item in navItems"
-            :key="item.key"
-            type="button"
-            role="tab"
-            :aria-selected="activeTab === item.key"
-            class="relative flex min-h-14 flex-1 flex-col items-center justify-center gap-1 px-0.5 py-1.5 transition-colors"
-            :class="activeTab === item.key ? 'text-primary' : 'text-base-content/60'"
-            @click="setTab(item.key)"
-          >
-            <!-- The active indicator, sitting ON the divider (`-top-px` covers the 1px border
-                 at this column). Colour and label weight already mark the active item; a bar
-                 is the third channel, and the one that reads at a glance without comparing two
-                 greys — which matters here because this is the only thing on the screen that
-                 says which of six screens you are looking at. Inset so neighbouring bars
-                 cannot touch and be read as one. -->
-            <span
-              v-if="activeTab === item.key"
-              aria-hidden="true"
-              class="absolute inset-x-2 -top-px h-0.5 rounded-full bg-primary"
-            ></span>
-            <!-- The count rides the icon rather than the label: at ~62px a column "Portals 3"
-                 would wrap, and a number beside a glyph is the shape every phone already uses
-                 for a count. Neutral, not primary — it is a quantity, not an alert. -->
-            <span class="relative inline-flex items-center justify-center">
-              <span class="text-lg leading-none" aria-hidden="true">{{ item.icon }}</span>
-              <span
-                v-if="item.count"
-                class="absolute -top-1 left-full -ml-1 rounded-full bg-base-300 px-1 text-[10px] font-semibold leading-4 text-base-content"
-              >
-                {{ item.count }}
-              </span>
-            </span>
-            <span
-              class="text-[11px] leading-none"
-              :class="activeTab === item.key ? 'font-semibold' : 'font-medium'"
-            >
-              {{ item.label }}
-            </span>
-          </button>
-        </div>
-      </nav>
+      <!-- Pinned to the bottom of the frame: it is how you reach every other screen of the
+           badge, and the bottom of a phone is where a thumb rests. `pad-safe-bottom` keeps the
+           row off the home indicator — that is this SHELL's concern, not the bar's, which is why
+           it is here and not in the component (the operator's preview renders the same bar
+           inside a dialog, where a safe-area inset would just be dead padding). -->
+      <BadgeNavBar
+        :items="navItems"
+        :active="activeTab"
+        class="shrink-0 pad-safe-bottom"
+        @select="setTab"
+      />
     </template>
 
     <BadgePasswordModal v-model:open="showPasswordModal" @saved="notePasswordSaved" />

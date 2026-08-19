@@ -334,10 +334,17 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   doors" are peers, different screens of one badge. A count rides the **icon**, not the label, because "Portals 3"
   wraps at 62px.
   The derivation moving to `badgeNav.ts` is what turned `BadgeAccessPanel` into a **pure renderer** told which view to
-  draw. Two hosts render the same views over the same payload with different chrome — the holder's bottom bar and the
-  operator preview's dialog tabs (`BadgePreviewModal`) — and they must never disagree about *content*, since a segment
-  the holder sees and the operator does not is exactly the discrepancy the preview exists to rule out. Same reason
-  `remoteGrants`/`onSiteGrants` live there: a segment's count and the rows under it come from one filter.
+  draw, and the bar itself is `BadgeNavBar` — **both tiers drive the same one**: the holder's shell pins it to the
+  viewport bottom, the operator preview (`BadgePreviewModal`) pins it above its footer. They must never disagree about
+  *content*, since a segment the holder sees and the operator does not is exactly the discrepancy the preview exists to
+  rule out — and after the preview shipped its own hand-rolled row, not about shape either. Same reason
+  `remoteGrants`/`onSiteGrants` live in `badgeNav`: a segment's count and the rows under it come from one filter.
+  That hand-rolled row is the **third DaisyUI trap in this feature**, and the sharpest: `.tabs` is a CSS **grid**, and
+  every `.tab` carries `grid-row-start: 1`, so a `tabs` row *cannot wrap* — `flex-wrap` on it is a no-op. Six items in
+  a 448px dialog were crushed below their content width, and since `.tab` is a fixed `height: 2rem` with `flex-wrap:
+  wrap` of its own, each tab's icon stacked over its label inside a 32px box and spilled out. Equal `flex-1` columns
+  have none of that: they divide the width, so they can neither wrap nor overflow (measured in the modal: 5 items ×
+  77px, 6 × 64px, no overflow, every label one line). **Do not reach for `tabs` for more than a few short labels.**
   Selection is remembered two ways because they answer different questions — the `?tab=` query param so a screen can
   be bookmarked and linked, `localStorage` so opening the badge lands where the holder left it. `?tab=access` from the
   two-level version still resolves (to the first access segment); a stored key that no longer exists resolves to the

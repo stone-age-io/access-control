@@ -4,6 +4,7 @@ import { pb } from '@/utils/pb'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 import BadgePassPanel from '@/views/badge/BadgePassPanel.vue'
 import BadgeAccessPanel from '@/views/badge/BadgeAccessPanel.vue'
+import BadgeNavBar from '@/views/badge/BadgeNavBar.vue'
 import {
   BADGE_FACE,
   badgeViews,
@@ -54,12 +55,12 @@ const loadError = ref('')
 const tab = ref<BadgeTabKey>('badge')
 
 /**
- * The same views the holder's own bottom navigation bar shows, from the same derivation
- * (`badgeNav.ts`) — as a row of dialog tabs, because this is a desktop modal and not a phone.
+ * The same views the holder's own badge shows, from the same derivation (`badgeNav.ts`) and
+ * driven by the same BadgeNavBar — so an operator hunting for why a badge "doesn't work" is not
+ * looking at a different set of segments, or a different-shaped switcher, from the holder.
  *
- * Sharing the derivation is what makes the preview trustworthy: an operator hunting for why a
- * badge "doesn't work" must not be looking at a different set of segments from the holder. Here
- * the chrome differs and the content cannot.
+ * The face alone when there is no payload yet — the bar itself is hidden while loading, since
+ * there is nothing to navigate between, so this is the defensive floor rather than a state.
  */
 const navItems = computed<BadgeNavItem[]>(() => {
   const p = preview.value
@@ -163,21 +164,6 @@ function close() {
             </SoftBadge>
           </div>
 
-          <div role="tablist" class="tabs tabs-boxed tabs-sm flex-wrap">
-            <button
-              v-for="item in navItems"
-              :key="item.key"
-              role="tab"
-              class="tab gap-1"
-              :class="tab === item.key ? 'tab-active' : ''"
-              @click="tab = item.key"
-            >
-              <span aria-hidden="true">{{ item.icon }}</span>
-              <span>{{ item.label }}</span>
-              <span v-if="item.count" class="badge badge-sm">{{ item.count }}</span>
-            </button>
-          </div>
-
           <!-- The badge's own components, on the badge's own payload. The operator client is
                passed so the PROTECTED photo resolves against this session's file token. -->
           <BadgeAccessPanel
@@ -190,6 +176,22 @@ function close() {
           <BadgePassPanel v-else :me="preview.me" :client="pb" compact />
         </div>
       </div>
+
+      <!-- The holder's own navigation bar, pinned above the footer the way it is pinned above
+           the home indicator on their phone. This used to be a hand-rolled row of DaisyUI
+           `tabs` here, and it was broken: `.tabs` is a CSS grid whose children all sit on
+           `grid-row-start: 1`, so six items could not wrap and were crushed below their content
+           width, stacking each icon over its label inside a fixed 2rem tab and spilling out of
+           it. Sharing the badge's bar fixes that and removes the second switcher — which is the
+           better reason, since a preview whose chrome differs from the holder's screen is one an
+           operator has to mentally translate. -->
+      <BadgeNavBar
+        v-if="preview"
+        :items="navItems"
+        :active="tab"
+        class="shrink-0"
+        @select="tab = $event"
+      />
 
       <div class="shrink-0 px-5 py-3 border-t border-base-200 flex justify-end">
         <button class="btn btn-sm" @click="close">Close</button>
