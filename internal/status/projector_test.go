@@ -75,8 +75,16 @@ func TestArmTransitionEmits(t *testing.T) {
 	if ev.body["arm"] != "armed" || ev.body["previous"] != "disarmed" {
 		t.Errorf("arm/previous = %v/%v, want armed/disarmed", ev.body["arm"], ev.body["previous"])
 	}
-	if ev.body["controller"] != "ctrl-hq-1" || ev.body["source"] != "scheduled" {
-		t.Errorf("controller/source = %v/%v, want ctrl-hq-1/scheduled", ev.body["controller"], ev.body["source"])
+	if ev.body["controller"] != "ctrl-hq-1" || ev.body["armSource"] != "scheduled" {
+		t.Errorf("controller/armSource = %v/%v, want ctrl-hq-1/scheduled", ev.body["controller"], ev.body["armSource"])
+	}
+	// `source` on an events row is a select over reader transports and actors
+	// (nats/osdp/command/badge), filled by the audit consumer from body["source"].
+	// Arm provenance is a different vocabulary, so it must not arrive under that key:
+	// PocketBase rejects the out-of-range value, and the consumer used to retry the
+	// rejection forever.
+	if _, clash := ev.body["source"]; clash {
+		t.Errorf("arm event carries a `source` key (%v); that column is transports/actors, use armSource", ev.body["source"])
 	}
 }
 

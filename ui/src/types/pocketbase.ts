@@ -40,7 +40,13 @@ export type AreaArm = 'armed' | 'disarmed'
  * both edges, which suppresses alarms for that location).
  */
 export type PointType = 'monitor' | 'intrusion' | 'tamper_24h' | 'fire'
-export type EventSource = 'nats' | 'osdp'
+/**
+ * How an event arrived: a reader transport (`nats` simulated tap, `osdp` physical read)
+ * or an actor who opened the door without presenting anything at it (`command` an
+ * operator door-pop, `badge` a holder's own remote unlock). Kept in step with the
+ * `events.source` select — migration 1750000044 — and with internal/subjects.
+ */
+export type EventSource = 'nats' | 'osdp' | 'command' | 'badge'
 export type ControllerModel = 'kincony-server-mini' | 'kincony-pi5r8'
 export type ControllerStatus = 'online' | 'offline'
 

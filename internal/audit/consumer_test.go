@@ -113,3 +113,58 @@ func TestRecordFromUnrecognizedSubject(t *testing.T) {
 		t.Errorf("recordFrom(too short) = ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
 }
+
+// The values a cmd.grant carries — an operator door-pop and a badge holder's own
+// remote unlock — must reach the column. They were emitted before migration
+// 1750000044 widened the select to accept them, so every one of them failed to
+// project and was redelivered forever.
+func TestRecordFromCommandAndBadgeSources(t *testing.T) {
+	for _, source := range []string{"command", "badge", "nats", "osdp"} {
+		c, app := newConsumer(t)
+		data := []byte(`{"cred":"CARD-009","allow":true,"reason":"allow_command_grant","source":"` + source + `"}`)
+
+		rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+		if err != nil || !ok {
+			t.Fatalf("%s: recordFrom: ok=%v err=%v", source, ok, err)
+		}
+		if got := rec.GetString("source"); got != source {
+			t.Errorf("%s: source = %q, want %q", source, got, source)
+		}
+		if err := app.Save(rec); err != nil {
+			t.Fatalf("%s: save events row: %v", source, err)
+		}
+	}
+}
+
+// A source value from another vocabulary must not take the row down with it. The
+// arm-transition event used to ship arm provenance (standing/scheduled/override)
+// under `source`; PocketBase rejected the out-of-range select value, so the whole
+// row failed and the consumer retried it forever. The value belongs in payload,
+// where it is still queryable, and the row must still save.
+func TestRecordFromForeignSourceStillProjects(t *testing.T) {
+	c, app := newConsumer(t)
+	data := []byte(`{"arm":"armed","previous":"disarmed","source":"override"}`)
+
+	rec, ok, err := c.recordFrom("acc.hq.area.warehouse.evt.state", data)
+	if err != nil || !ok {
+		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
+	}
+	if got := rec.GetString("source"); got != "" {
+		t.Errorf("source = %q, want empty (a foreign value must not reach the column)", got)
+	}
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save events row: %v — a row the projection can never accept is an error loop", err)
+	}
+
+	saved, err := app.FindFirstRecordByData("events", "portal", "warehouse")
+	if err != nil {
+		t.Fatalf("saved events row not found: %v", err)
+	}
+	var payload map[string]any
+	if err := saved.UnmarshalJSONField("payload", &payload); err != nil {
+		t.Fatalf("payload unmarshal: %v", err)
+	}
+	if payload["source"] != "override" {
+		t.Errorf("payload source = %v, want override (dropped from the column, kept in payload)", payload["source"])
+	}
+}

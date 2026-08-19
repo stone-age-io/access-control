@@ -25,7 +25,7 @@ const searchQuery = ref('')
 const selected = ref<AccessEvent | null>(null)
 
 const KINDS: EventKind[] = ['tap', 'state', 'alarm', 'fire', 'command']
-const SOURCES: EventSource[] = ['nats', 'osdp']
+const SOURCES: EventSource[] = ['nats', 'osdp', 'command', 'badge']
 
 function queryOpts() {
   const clauses: string[] = []

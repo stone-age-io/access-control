@@ -390,6 +390,15 @@ func (p *Projector) apply(key string, value []byte) {
 // state (standing/scheduled/override), so an operator can tell a scheduled auto-arm
 // from someone pressing a button. An area with no resolvable location cannot be
 // addressed on the wire and is skipped.
+//
+// That provenance goes out as `armSource`, NOT `source`, and the rename is
+// load-bearing. `events.source` is a select over reader transports and actors
+// (nats/osdp/command/badge) which the audit consumer fills from `body["source"]`,
+// so shipping arm provenance under that key handed it a value from an unrelated
+// vocabulary. PocketBase rejected the row, the consumer retried, and JetStream
+// redelivered forever — every scheduled auto-arm in the building minting its own
+// error loop. The two questions ("how did this event arrive" vs "why is this area
+// armed") were never the same one; they only shared a word.
 func (p *Projector) emitArmTransition(r row, prev string) {
 	if p.publish == nil {
 		return // no NATS wired
@@ -402,7 +411,7 @@ func (p *Projector) emitArmTransition(r row, prev string) {
 		"arm":        r.state,
 		"previous":   prev,
 		"controller": r.controller,
-		"source":     str(r.payload["source"]),
+		"armSource":  str(r.payload["source"]),
 		"ts":         r.changed,
 	})
 	if err != nil {

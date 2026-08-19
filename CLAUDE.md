@@ -219,6 +219,19 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   **No new `kind` value has ever been added**: `kind` is a SelectField (a migration + UI filter change) while
   `type` is plain text, so the *pair* `(type, kind)` carries every newer shape — `(area, state)` is an arm
   transition, `(ctrl, state)` a liveness flip, `(door, alarm)` with `type: no_entry` a grant nobody used.
+  **`events.source` is a SelectField too, and that is a trap with teeth.** An out-of-range select value fails the
+  whole record, so one event body carrying a foreign word means that message never projects — and a durable
+  consumer retried permanent failures as eagerly as transient ones, so it was redelivered *immediately and
+  forever*: a log file filling from a single event. It happened twice from opposite directions. An emitter added
+  values the schema did not have (`command`/`badge` on `cmd.grant`, shipped without a migration; widened by
+  `1750000044`), and an unrelated feature reused the key for a different question (the arm-transition event put the
+  shadow's `standing|scheduled|override` provenance under `source`; it is `armSource` now). Three defences, because
+  the two causes were independent: the column's vocabulary is one thing — how an event *arrived*
+  (`nats`/`osdp`/`command`/`badge`) — and arm provenance is not it; the consumer asks the *collection* whether a
+  value is accepted before writing it, keeping an unknown one in `payload` rather than losing the row (the schema
+  is the authority, so there is no second list to drift); and `retry` backs off (~5 min total) then `Term`s, since
+  giving up costs one row until a rebuild while looping costs the log. Adding a value to
+  `internal/subjects.Source*` **is a migration plus the UI's `EventSource` union and `SOURCES` filter list**.
 - **Notification opt-in has two axes, not one.** Beyond the source×recipient AND, `users.notify_types` selects
   *which kinds* page an operator, because opting in used to mean forced + held + intrusion together — and `held`
   (a propped door in July) is the highest-volume and least urgent of the three, which is how a notification
@@ -515,7 +528,9 @@ event-plane** pass: `1750000042` (`users.notify_types` — which kinds page an o
 for the liveness transitions accessd now emits; plus `events.repage_count`, which lives on the row so the
 reminder cap survives a restart — an in-memory counter would reset and page forever), and `1750000043`
 (`aux_input.point_type` gains `fire`, which is what finally gives the fire input a *source*: it had a consumer
-and a transport but nothing produced the signal, since `drivers.FAIInput` had zero implementations).
+and a transport but nothing produced the signal, since `drivers.FAIInput` had zero implementations), and
+`1750000044` (`events.source` gains `command`/`badge` — the two values `cmd.grant` already carried and the select
+rejected, which was not a missing column value but an unbounded audit-redelivery loop; see the Audit section).
 
 **The base `1750000000` is NOT frozen any more, and there are gaps at 30/34/35.** The badge tier used to be a second
 auth collection (`badge_users`, migrations `1750000030`/`1750000034`/`1750000035`); it was collapsed into

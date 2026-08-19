@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pocketbase/dbx"
@@ -18,6 +20,18 @@ import (
 )
 
 const durableName = "acc-audit"
+
+// nakBackoff is the delay before each redelivery, indexed by the attempt that just
+// failed; maxDeliveries is where the consumer stops asking. Roughly five minutes of
+// patience in total — long enough to ride out a database that is briefly busy, short
+// enough that a genuinely broken message is not a permanent log source. len() of the
+// table IS the cap, so the two can never disagree.
+var nakBackoff = []time.Duration{
+	time.Second, 2 * time.Second, 5 * time.Second, 15 * time.Second,
+	30 * time.Second, time.Minute, 2 * time.Minute, 2 * time.Minute,
+}
+
+var maxDeliveries = uint64(len(nakBackoff)) + 1
 
 // Consumer is a durable JetStream consumer that writes events to PocketBase.
 type Consumer struct {
@@ -54,9 +68,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 
 	cc, err := cons.Consume(func(msg jetstream.Msg) {
 		if err := c.handle(msg); err != nil {
-			c.log.Error("audit write failed; will redeliver", "subject", msg.Subject(), "error", err)
-			c.m.IncAuditWrite("error")
-			_ = msg.Nak()
+			c.retry(msg, err)
 			return
 		}
 		c.m.IncAuditWrite("ok")
@@ -68,6 +80,44 @@ func (c *Consumer) Start(ctx context.Context) error {
 	c.cc = cc
 	c.log.Info("audit consumer started", "stream", c.stream, "durable", durableName)
 	return nil
+}
+
+// retry backs off, and eventually gives up, on a message that will not project.
+//
+// It used to be a bare Nak, which asks for immediate redelivery, with no delivery
+// cap on the consumer. That is correct for a transient failure (a locked database
+// mid-migration) and pathological for a permanent one: a single record PocketBase
+// will never accept — a select value out of range, say — is retried as fast as the
+// process can log, forever, and the operator sees a log file filling with one
+// event. Which is exactly what happened.
+//
+// Rather than classify errors (the taxonomy is PocketBase's and it moves), treat
+// every failure the same way and let the delivery count decide: back off so a
+// transient outage still resolves itself, then Term so a poison message stops
+// rather than outliving the deployment. Terminating loses the projection ROW, not
+// the event — JetStream is the system of record and `events` is rebuildable, so
+// the cost of giving up is one missing row until a rebuild, against an unbounded
+// loop for the alternative.
+func (c *Consumer) retry(msg jetstream.Msg, cause error) {
+	c.m.IncAuditWrite("error")
+
+	attempt := uint64(1)
+	if meta, err := msg.Metadata(); err == nil && meta.NumDelivered > 0 {
+		attempt = meta.NumDelivered
+	}
+
+	if attempt >= maxDeliveries {
+		c.log.Error("audit write failed; giving up on this message",
+			"subject", msg.Subject(), "error", cause, "attempts", attempt,
+			"note", "the events row is missing until the projection is rebuilt")
+		_ = msg.Term()
+		return
+	}
+
+	delay := nakBackoff[int(attempt)-1]
+	c.log.Error("audit write failed; will redeliver",
+		"subject", msg.Subject(), "error", cause, "attempt", attempt, "retryIn", delay)
+	_ = msg.NakWithDelay(delay)
 }
 
 // Stop halts consumption.
@@ -134,12 +184,43 @@ func (c *Consumer) recordFrom(subject string, data []byte) (*core.Record, bool, 
 		rec.Set("allow", allow)
 	}
 	rec.Set("reason", str(body["reason"]))
-	rec.Set("source", str(body["source"]))
+	c.setSource(rec, col, str(body["source"]))
 	if ts := str(body["ts"]); ts != "" {
 		rec.Set("ts", ts)
 	}
 	rec.Set("payload", body)
 	return rec, true, nil
+}
+
+// setSource writes body["source"] onto the row only if events.source actually
+// accepts it, asking the collection rather than carrying a second copy of the
+// list. Anything else is dropped from the column and left in `payload`, where it
+// is still queryable and still forensically present.
+//
+// This exists because the alternative is not a wrong value in a column, it is an
+// error loop. events.source is a select; PocketBase rejects an out-of-range value
+// for the whole record, so ONE event body carrying a word from another vocabulary
+// takes down the projection of that message permanently — and a durable consumer
+// retries permanent failures as eagerly as transient ones. It has happened twice
+// already from opposite directions: an emitter added values the schema did not
+// have (command/badge, now migrated in), and an unrelated feature reused the key
+// for a different question (the arm shadow's standing/scheduled/override, now
+// `armSource`). The schema is the authority on what this column may hold, so ask
+// it, and let a projection be slightly lossy rather than stuck.
+func (c *Consumer) setSource(rec *core.Record, col *core.Collection, source string) {
+	if source == "" {
+		return
+	}
+	f, ok := col.Fields.GetByName("source").(*core.SelectField)
+	if !ok {
+		return // retyped or removed; payload still carries the value
+	}
+	if slices.Contains(f.Values, source) {
+		rec.Set("source", source)
+		return
+	}
+	c.log.Warn("audit: unknown event source, keeping it in payload only",
+		"source", source, "accepted", f.Values)
 }
 
 func str(v any) string {
