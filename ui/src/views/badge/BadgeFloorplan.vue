@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import { actionErrorText } from './reasonText'
 import { badgePb } from '@/utils/badgePb'
 import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
@@ -16,10 +16,27 @@ import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
  * so this is an image with absolutely-positioned buttons, and the phone downloads no map
  * library at all.
  *
+ * # It fills the height it is given, and that is why it measures
+ *
+ * The plan used to be an `h-auto` image in a growing card, which on a phone left the bottom
+ * third of the screen empty on a wide plan and pushed the action bar off it on a tall one.
+ * Now the card is a flex column inside a panel of known height and the image is capped by
+ * `max-h-full`/`max-w-full`, so it shrinks to fit whatever the switcher and picker leave —
+ * one screen, no scrolling, the picture as big as the phone allows.
+ *
  * Positions arrive as pixel coordinates in the image's own space (the same space the
- * operator's editor writes). They become percentages once the image reports its natural
- * size, so the plan scales to any screen without the server knowing anything about the
- * image.
+ * operator's editor writes). They used to become percentages of the wrapper, which worked
+ * only because the wrapper was sized BY the image. Once the image is capped in both axes it
+ * is centred in a box bigger than itself on one axis, and a percentage of that box lands a
+ * pin in the letterboxing — so the rendered image box is measured instead, and pins are
+ * placed in px against it. `object-contain` would let CSS do the fitting but hides the
+ * result: the element box stays the container's, so the same measurement problem comes back
+ * with less to measure. Capping a plain image keeps element box == image box.
+ *
+ * A ResizeObserver on the plan area is what keeps that honest. It watches the CONTAINER, not
+ * the image: selecting a pin adds the action bar below, which shortens the plan area, and on
+ * a width-limited plan the image's own size does not change at all — only where it is
+ * centred. Observing the image would miss exactly that case and leave every pin shifted.
  *
  * Areas are deliberately absent: only portals and aux I/O carry a position, because an
  * area is a set of points with no single place to put a pin. They live in the list.
@@ -65,6 +82,14 @@ const props = withDefaults(
 )
 
 const natural = ref<{ w: number; h: number } | null>(null)
+/** The plan area — the positioning context every pin is placed in, and what is observed. */
+const area = ref<HTMLElement | null>(null)
+const image = ref<HTMLImageElement | null>(null)
+/**
+ * The image's rendered box within the plan area, in CSS px. Null until the image has loaded
+ * and been laid out, which is also what hides the pins until there is something to pin to.
+ */
+const box = ref<{ left: number; top: number; w: number; h: number } | null>(null)
 /** The selected marker, whose name and action fill the bar under the plan. */
 const selected = ref<string>('')
 // One selection can act at a time, so these are scalars rather than the per-pin maps this
@@ -72,20 +97,53 @@ const selected = ref<string>('')
 const busy = ref(false)
 const result = ref<{ ok: boolean; message: string } | null>(null)
 
+/**
+ * Where the image actually ended up. `offsetLeft`/`offsetTop` are relative to the nearest
+ * positioned ancestor, which is the plan area — so this is exactly the origin pins are
+ * placed from, with no `getBoundingClientRect` and no scroll-position arithmetic.
+ */
+function measure() {
+  const img = image.value
+  if (!img || !img.offsetWidth || !img.offsetHeight) {
+    box.value = null
+    return
+  }
+  box.value = { left: img.offsetLeft, top: img.offsetTop, w: img.offsetWidth, h: img.offsetHeight }
+}
+
+let observer: ResizeObserver | null = null
+
 function onImageLoad(e: Event) {
   const img = e.target as HTMLImageElement
   if (img.naturalWidth > 0 && img.naturalHeight > 0) {
     natural.value = { w: img.naturalWidth, h: img.naturalHeight }
   }
+  measure()
+  // Started on load rather than on mount: before the image has a natural size there is no
+  // box to measure, so the first callbacks would have nothing to say.
+  if (!observer && area.value && typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver(measure)
+    observer.observe(area.value)
+  }
 }
 
-/** Percent offsets for a pin. Until the image has loaded there is nothing to place against. */
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  observer = null
+})
+
+/**
+ * Pixel offsets for a pin, from the image's measured box. Until the image has loaded and
+ * been measured there is nothing to place against, so the pins stay hidden rather than
+ * stacking at the corner.
+ */
 function pinStyle(p: BadgeLivePoint) {
+  const b = box.value
   const n = natural.value
-  if (!n) return { display: 'none' }
+  if (!b || !n) return { display: 'none' }
   return {
-    left: `${(p.x / n.w) * 100}%`,
-    top: `${(p.y / n.h) * 100}%`,
+    left: `${b.left + (p.x / n.w) * b.w}px`,
+    top: `${b.top + (p.y / n.h) * b.h}px`,
   }
 }
 
@@ -128,17 +186,26 @@ async function act() {
 </script>
 
 <template>
-  <div class="card bg-base-100 shadow-sm">
-    <div class="card-body gap-3 p-3">
-      <h2 class="card-title text-base px-1">{{ location.name }}</h2>
+  <div class="card bg-base-100 shadow-sm h-full">
+    <!-- A flex column: the title and the action bar take what they need, the plan area takes
+         the rest. `min-h-0` on both this and the plan area is what allows that rest to be
+         SMALLER than the image's intrinsic height — without it the column floors at the
+         content and the card grows past the viewport again. -->
+    <div class="card-body flex min-h-0 flex-col gap-3 p-3">
+      <h2 class="card-title shrink-0 text-base px-1">{{ location.name }}</h2>
 
-      <!-- The plan. `relative` is the positioning context every pin is placed against, so
-           the image and the markers scale together with no JS on resize. -->
-      <div class="relative bg-base-200 rounded-lg overflow-hidden">
+      <!-- The plan. `relative` is the positioning context every pin is measured and placed
+           against; the flex centring is what letterboxes a plan whose shape does not match
+           the space, and the image caps itself rather than stretching to fill. -->
+      <div
+        ref="area"
+        class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-base-200"
+      >
         <img
+          ref="image"
           :src="location.floorplan"
           :alt="`Floor plan of ${location.name}`"
-          class="block w-full h-auto select-none"
+          class="block h-auto max-h-full w-auto max-w-full select-none"
           @load="onImageLoad"
         />
         <!-- A 44px square hit area wrapping a small visible dot: big enough to hit on a
@@ -172,7 +239,7 @@ async function act() {
 
       <!-- One caption + action bar for whichever pin is selected, rather than a label per
            pin: on a phone-sized plan, per-pin text would cover the plan it annotates. -->
-      <div v-if="selectedPin" class="px-1 space-y-2">
+      <div v-if="selectedPin" class="shrink-0 px-1 space-y-2">
         <div class="text-sm font-medium">{{ selectedPin.name }}</div>
 
         <button
@@ -196,7 +263,7 @@ async function act() {
           {{ result.message }}
         </p>
       </div>
-      <p v-else class="text-xs text-base-content/50 px-1">
+      <p v-else class="shrink-0 text-xs text-base-content/50 px-1">
         Tap a marker to see which door it is.
       </p>
     </div>

@@ -4,8 +4,16 @@ import { badgePb } from '@/utils/badgePb'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 import BadgeFloorplan from './BadgeFloorplan.vue'
 import BadgeOnSiteList, { type OnSiteItem } from './BadgeOnSiteList.vue'
+import BadgeFilterInput from './BadgeFilterInput.vue'
 import { actionErrorText } from './reasonText'
-import type { BadgeArea, BadgeLive, BadgeMe, BadgeOutput, BadgePortal } from '@/types/badge'
+import type {
+  BadgeArea,
+  BadgeLive,
+  BadgeLiveLocation,
+  BadgeMe,
+  BadgeOutput,
+  BadgePortal,
+} from '@/types/badge'
 
 /**
  * What this badge can DO: doors, areas, and aux outputs.
@@ -107,12 +115,21 @@ onMounted(async () => {
 // cares about is what they can press a button for versus what they must walk to — and past
 // a few doors that list wants grouping by building, which BadgeOnSiteList does and the
 // action lists do not.
-type ViewKey = 'plan' | 'doors' | 'areas' | 'controls' | 'onsite'
+//
+// The portal segment is labelled "Portals", not "Doors", because that is what the rest of
+// the system calls them and because a portal is not always a door — a turnstile, a gate, an
+// elevator and a logical portal all show up here, and a holder whose badge opens the vehicle
+// gate should not have to read it as a door.
+type ViewKey = 'plan' | 'portals' | 'areas' | 'controls' | 'onsite'
 interface ViewTab {
   key: ViewKey
   label: string
   icon: string
-  /** Shown beside the label; omitted for the plan, which is one thing not a count of them. */
+  /**
+   * Shown beside the label. For a list segment it is how many rows are in it. For the plan
+   * it is how many SITES there are, and it is omitted at one — the plan shows one picture at
+   * a time, so "Plan 1" would be counting the thing already on screen.
+   */
   count?: number
 }
 
@@ -120,9 +137,18 @@ const VIEW_STORAGE_KEY = 'sa.badge.view'
 
 const views = computed<ViewTab[]>(() => {
   const out: ViewTab[] = []
-  if (plans.value.length) out.push({ key: 'plan', label: 'Plan', icon: '🗺️' })
+  // The count here is a count of SITES, not of pins: it is the only thing on the tab row
+  // that says a second plan exists at all. Without it a two-site holder saw one plan and
+  // nothing hinting at the other.
+  if (plans.value.length)
+    out.push({
+      key: 'plan',
+      label: 'Plan',
+      icon: '🗺️',
+      count: plans.value.length > 1 ? plans.value.length : undefined,
+    })
   if (remotePortals.value.length)
-    out.push({ key: 'doors', label: 'Doors', icon: '🚪', count: remotePortals.value.length })
+    out.push({ key: 'portals', label: 'Portals', icon: '🚪', count: remotePortals.value.length })
   if (remoteAreas.value.length)
     out.push({ key: 'areas', label: 'Areas', icon: '🛡️', count: remoteAreas.value.length })
   if (remoteOutputs.value.length)
@@ -136,9 +162,12 @@ function storedView(): ViewKey | '' {
   // Never in the operator's preview: it renders this component to show what the HOLDER
   // sees, so a segment chosen while troubleshooting must not follow the operator to their
   // own badge.
+  //
+  // A holder who last chose the old 'doors' key falls through to the first segment, which
+  // is what this returning '' already means and needs no migration: one visit re-picks it.
   if (props.readonly) return ''
   const raw = localStorage.getItem(VIEW_STORAGE_KEY)
-  return raw === 'plan' || raw === 'doors' || raw === 'areas' || raw === 'controls' || raw === 'onsite'
+  return raw === 'plan' || raw === 'portals' || raw === 'areas' || raw === 'controls' || raw === 'onsite'
     ? raw
     : ''
 }
@@ -161,6 +190,77 @@ function setView(key: ViewKey) {
   chosen.value = key
   if (!props.readonly) localStorage.setItem(VIEW_STORAGE_KEY, key)
 }
+
+// --- which site's plan is showing -------------------------------------------
+//
+// /api/badge/live returns every site the holder has something placed at, and this used to
+// render all of them stacked. That is not wrong so much as invisible: each plan is a
+// full-width image, so on a phone the first one plus its action bar is about a screen, and
+// the second card's header starts below the fold with nothing to suggest it is there.
+//
+// So the plan segment shows ONE site, chosen from a row of its own. This is the same
+// adaptive rule as the view switcher above it — with one site the row does not render at
+// all, which is the ordinary badge — and the same shape the operator console reaches for,
+// where /monitor is an all-sites overview and /monitor/:locationId is one building's plan.
+//
+// Rendering one at a time also settles something the stacked version got wrong for free:
+// each BadgeFloorplan owns its own selection, so two plans on screen could each caption a
+// selected door, and the one scrolled off the top kept its stale result text. Keying the
+// component by site id means switching destroys and rebuilds it, so a selection can never
+// outlive the plan it was made on.
+const SITE_STORAGE_KEY = 'sa.badge.site'
+
+function storedSite(): string {
+  // Not in the operator's preview, for the same reason the view choice is not: this renders
+  // what the HOLDER sees, and a site picked while troubleshooting must not follow the
+  // operator to their own badge.
+  if (props.readonly) return ''
+  return localStorage.getItem(SITE_STORAGE_KEY) || ''
+}
+const chosenSite = ref<string>(storedSite())
+
+/**
+ * The site actually rendered. Resolved rather than stored, like `activeView`, so a stale
+ * choice needs no cleanup anywhere: a site that opted out of badge plans, or one whose last
+ * granted door was removed, simply stops matching and the first site takes over. Remembering
+ * is never worse than not — the fallback is the same name-sorted first entry the server
+ * already returns.
+ */
+const activeSite = computed<BadgeLiveLocation | undefined>(() => {
+  const available = plans.value
+  return available.find((l) => l.id === chosenSite.value) ?? available[0]
+})
+
+function setSite(id: string) {
+  chosenSite.value = id
+  if (!props.readonly) localStorage.setItem(SITE_STORAGE_KEY, id)
+}
+
+// --- filtering the portal list ----------------------------------------------
+//
+// The same shape BadgeOnSiteList already uses, and offered on the same terms: past a
+// handful of doors you know the name of the one you want, and below that a search box is
+// chrome over a list you can read at a glance. Matched against the building name too,
+// because "warehouse" is how a holder with four sites narrows to one — which is also why
+// this stayed a filter rather than becoming a location picker: a picker set to one building
+// would keep the other three's doors off the screen for as long as it stayed set, and this
+// is the surface where a hidden door is a holder standing outside one.
+//
+// Deliberately NOT persisted, unlike the segment and the plan's site. A filter is a thing
+// you are doing right now; coming back to a badge that shows three of your twelve doors,
+// because of something typed last week, is how a holder concludes their access was revoked.
+const PORTAL_FILTER_THRESHOLD = 6
+
+const portalQuery = ref('')
+const showPortalFilter = computed(() => remotePortals.value.length >= PORTAL_FILTER_THRESHOLD)
+
+const filteredPortals = computed<BadgePortal[]>(() => {
+  const q = portalQuery.value.trim().toLowerCase()
+  if (!q) return remotePortals.value
+  return remotePortals.value.filter((p) =>
+    `${p.name} ${p.location}`.toLowerCase().includes(q),
+  )
+})
 
 /**
  * Run one badge action. `refresh` re-fetches the badge afterwards, which arming needs:
@@ -202,8 +302,13 @@ function stateLabel(state: BadgeArea['state']) {
 </script>
 
 <template>
-  <div class="space-y-3">
-    <div v-if="!passUsable && !nothingGranted" class="alert alert-warning py-2 text-sm">
+  <!-- A flex column, not a stack of margins, because the plan view has to fill the height it
+       is given: the shell hands this panel a definite height (see BadgeView's ONE scroll
+       region), the rows below are all `shrink-0`, and the plan card takes the rest. The list
+       views leave the column's slack empty and overflow it when they are long, which the
+       shell's scroll region carries exactly as before. -->
+  <div class="flex h-full flex-col gap-3">
+    <div v-if="!passUsable && !nothingGranted" class="alert alert-warning shrink-0 py-2 text-sm">
       <span>
         {{
           readonly
@@ -217,7 +322,7 @@ function stateLabel(state: BadgeArea['state']) {
          and double-scrolls once several segments overflow a phone (the same reason Reports
          does it this way); `min-h-11` because this is badge chrome a thumb aims at. Hidden
          entirely at one segment — a switcher with nothing to switch to is decoration. -->
-    <div v-if="views.length > 1" role="tablist" class="flex flex-wrap gap-2">
+    <div v-if="views.length > 1" role="tablist" class="flex shrink-0 flex-wrap gap-2">
       <button
         v-for="v in views"
         :key="v.key"
@@ -241,26 +346,62 @@ function stateLabel(state: BadgeArea['state']) {
     <!-- Floor plans, when a location opted in. First segment, because "which door am I at"
          is the question a plan answers better than a list ever does. -->
     <template v-if="activeView === 'plan'">
+      <!-- One site at a time, picked from a native select. A row of pills was the first
+           attempt and it competes with the segment row directly above it — two rows of
+           chips, same size, different meaning. A select is one line whatever the site
+           count, hands the choosing to the platform's own picker (a wheel on iOS, a sheet
+           on Android), and above all gives the plan back the vertical space: the whole
+           point of this view is the picture. `min-h-11` since DaisyUI's `select-sm` is
+           2rem and this is badge chrome a thumb aims at. Absent at one site. -->
+      <select
+        v-if="plans.length > 1"
+        class="select select-bordered select-sm min-h-11 w-full shrink-0 text-sm"
+        aria-label="Site"
+        :value="activeSite?.id ?? ''"
+        @change="setSite(($event.target as HTMLSelectElement).value)"
+      >
+        <option v-for="p in plans" :key="p.id" :value="p.id">{{ p.name }}</option>
+      </select>
+
+      <!-- `flex-1 min-h-0` is the whole viewport-filling story on this side: the panel is a
+           flex column of known height (see the root), so the plan card takes what the
+           switcher and picker leave and the image sizes itself to that. -->
       <BadgeFloorplan
-        v-for="plan in plans"
-        :key="plan.id"
-        :location="plan"
+        v-if="activeSite"
+        :key="activeSite.id"
+        :location="activeSite"
         :enabled="canAct"
         :disabled-note="readonly ? 'Read-only preview — open doors from Live View' : undefined"
+        class="flex-1 min-h-0"
       />
     </template>
 
-    <!-- Doors.
+    <!-- Portals.
          These three lists used to bound themselves to ~256px and scroll inside the page,
          because all of them were stacked and a badge with twenty remote doors turned the
          tab into a document. With one view on screen at a time that reason is gone, and
          what is left is a nested scroll region on a phone — so they grow and the page's own
          scroll carries them. -->
-    <div v-if="activeView === 'doors'" class="card bg-base-100 shadow-sm">
+    <div v-if="activeView === 'portals'" class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3 p-4">
-        <h2 class="card-title text-base">Open a door</h2>
+        <div class="flex items-baseline justify-between gap-2">
+          <h2 class="card-title text-base">Portals</h2>
+          <span class="text-xs text-base-content/50">{{ remotePortals.length }}</span>
+        </div>
+
+        <BadgeFilterInput
+          v-if="showPortalFilter"
+          v-model="portalQuery"
+          placeholder="Filter by name or building"
+          label="Filter your portals"
+        />
+
+        <p v-if="!filteredPortals.length" class="text-sm text-base-content/50 py-4 text-center">
+          Nothing matches “{{ portalQuery }}”.
+        </p>
+
         <div class="space-y-2">
-          <div v-for="p in remotePortals" :key="p.id" class="space-y-1">
+          <div v-for="p in filteredPortals" :key="p.id" class="space-y-1">
             <button
               class="btn btn-primary w-full justify-between"
               :disabled="busy[p.id] || !canAct"
@@ -360,7 +501,7 @@ function stateLabel(state: BadgeArea['state']) {
 
     <!-- Everything on the badge that can only be used in person: grouped by building,
          collapsible, filterable, and bounded. See BadgeOnSiteList. -->
-    <BadgeOnSiteList v-if="activeView === 'onsite'" :items="onSiteItems" :pass-usable="passUsable" />
+    <BadgeOnSiteList v-if="activeView === 'onsite'" :items="onSiteItems" />
 
     <div v-if="nothingGranted" class="text-center text-sm text-base-content/50 py-8">
       {{ readonly ? 'Nothing is assigned to this badge yet.' : 'Nothing is assigned to your badge yet.' }}

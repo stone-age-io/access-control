@@ -37,8 +37,11 @@ import type { BadgeMe } from '@/types/badge'
  * puts the bottom of the content under it. `dvh` tracks the viewport as it actually is.
  *
  * Everything else follows from that frame: the password form became a modal (rare,
- * deliberate act — no reason for it to occupy the badge permanently), and the long lists
- * on the Access tab bound and scroll themselves rather than growing the page.
+ * deliberate act — no reason for it to occupy the badge permanently), and the Access tab is
+ * handed a DEFINITE height rather than growing to its content, which is what lets its floor
+ * plan fill the screen exactly instead of being sized by the image it happens to load. A
+ * list longer than the frame still overflows into the scroll region above; the difference is
+ * only that a view can now know how much room it has.
  */
 const route = useRoute()
 const router = useRouter()
@@ -228,12 +231,18 @@ onMounted(load)
       <!-- The ONE scroll region. `min-h-0` is what lets it shrink inside the flex column
            instead of pushing the frame taller than the viewport. -->
       <main class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-3">
-        <div class="max-w-sm mx-auto">
-          <p v-if="passwordSaved" class="alert alert-success py-2 text-sm mb-3">
+        <!-- `h-full` + flex column so the Access tab's floor-plan view can fill the screen
+             rather than being sized by its image. This is the definite height the whole chain
+             below depends on — the panel takes it as a flex item, and the plan card's image
+             caps itself against it. A list taller than this still overflows and this region
+             still scrolls, exactly as before; what changed is only that a view CAN know how
+             much room it has. -->
+        <div class="max-w-sm mx-auto flex h-full flex-col">
+          <p v-if="passwordSaved" class="alert alert-success shrink-0 py-2 text-sm mb-3">
             Your password has been set.
           </p>
           <BadgePassPanel v-if="tab === 'badge'" :me="me" />
-          <BadgeAccessPanel v-else :me="me" @refresh="refresh" />
+          <BadgeAccessPanel v-else :me="me" class="min-h-0 flex-1" @refresh="refresh" />
         </div>
       </main>
     </template>

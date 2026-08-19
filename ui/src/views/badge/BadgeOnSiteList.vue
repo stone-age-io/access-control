@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import BadgeFilterInput from './BadgeFilterInput.vue'
 
 /**
  * Everything on a badge that can only be used IN PERSON — doors without remote unlock,
@@ -37,7 +38,14 @@ export interface OnSiteItem {
   kind: 'door' | 'area' | 'control'
 }
 
-const props = defineProps<{ items: OnSiteItem[]; passUsable: boolean }>()
+/**
+ * `passUsable` used to be here, to caption the card with either "present your badge at
+ * these" or "these need a valid pass". Both are gone: the panel already raises one alert
+ * about an unusable pass above every segment, so the second copy was the same warning
+ * twice, and the first was explaining the card's own title back to the holder. Losing it
+ * also lines this card up with the portals list, which never had a caption.
+ */
+const props = defineProps<{ items: OnSiteItem[] }>()
 
 /** Offered only once a list is big enough to be worth searching. */
 const FILTER_THRESHOLD = 6
@@ -128,33 +136,12 @@ function toggle(location: string) {
         <h2 class="card-title text-base">On site only</h2>
         <span class="text-xs text-base-content/50">{{ items.length }}</span>
       </div>
-      <p class="text-xs text-base-content/60">
-        {{
-          passUsable
-            ? 'Present your badge, or use the keypad, at these.'
-            : 'These are on your badge but need a valid pass.'
-        }}
-      </p>
-
-      <label v-if="showFilter" class="input input-bordered input-sm flex items-center gap-2">
-        <span class="opacity-40 text-xs">🔍</span>
-        <input
-          v-model="query"
-          type="search"
-          class="grow min-w-0 bg-transparent outline-none text-sm"
-          placeholder="Filter by name or building"
-          aria-label="Filter your in-person access"
-        />
-        <button
-          v-if="query"
-          type="button"
-          class="btn btn-ghost btn-xs btn-circle"
-          aria-label="Clear filter"
-          @click="query = ''"
-        >
-          ✕
-        </button>
-      </label>
+      <BadgeFilterInput
+        v-if="showFilter"
+        v-model="query"
+        placeholder="Filter by name or building"
+        label="Filter your in-person access"
+      />
 
       <!-- Bounded with its own scroll so the filter above stays reachable: on a badge with
            thirty doors, a filter you have to scroll back up to find is a filter nobody uses.

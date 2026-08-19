@@ -310,6 +310,35 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   the three kinds because the split a holder cares about is press-a-button vs walk-to, and past a few doors that list
   wants grouping by building (`BadgeOnSiteList`) which the action lists do not. Showing one view at a time is also why
   the action lists no longer bound their own height: the nested scroll existed because four cards were stacked.
+  The **plan segment shows one site**, picked from a `<select>` when `/api/badge/live` returns several (that route
+  always returned every opted-in site; the panel used to stack them, which is not wrong so much as invisible — each
+  plan is a full-width image, so on a phone the second card's header starts below the fold with nothing to suggest
+  it exists, and the tab said "Plan" whether there was one or four). The same adaptive rule applies: no picker at
+  one site, and the tab carries a count of **sites** only past one. A native select rather than a pill row, which
+  competed with the segment row directly above it and cost the picture a line of chrome per site. It mirrors the
+  operator console's `/monitor` overview → `/monitor/:locationId` drill-in, and keying `BadgeFloorplan` by site id
+  settles the stacked version's other bug for free — each instance owns its selection, so two plans on screen could
+  each caption a selected door, and the one scrolled off the top kept stale result text.
+  **The plan fills the frame instead of being sized by its image**, which is why the shell hands the Access tab a
+  *definite* height (`BadgeView`'s one scroll region → `h-full` wrapper → panel as a flex item) and the plan card is
+  a flex column whose image caps itself with `max-h-full`/`max-w-full`. A list longer than the frame still overflows
+  into that same scroll region; the change is only that a view can now know how much room it has. That switch is
+  what moved the pins from percentages to **measurement**: a percentage of the wrapper was right only while the
+  wrapper was sized BY the image, and a capped image is centred in a box bigger than itself on one axis, so those
+  percentages land pins in the letterboxing. `BadgeFloorplan` measures the rendered image box (`offsetLeft`/`Top`/
+  `offsetWidth`/`Height`, relative to the `relative` plan area) and places pins in px against it. `object-contain`
+  is the wrong tool here — it makes CSS do the fitting but hides the result, since the element box stays the
+  container's. The `ResizeObserver` watches the **plan area, not the image**: selecting a pin adds the action bar,
+  which shortens the area, and on a width-limited plan the image's own size does not change at all — only where it
+  is centred, which observing the image would miss while leaving every pin shifted.
+  The portal segment is labelled **Portals**, not "Doors" — what the rest of the system calls them, and a portal is
+  not always a door (a holder whose badge opens the vehicle gate should not read it as one). It has a filter past
+  six entries, on the same terms as `BadgeOnSiteList`'s, sharing one `BadgeFilterInput` so two search boxes a
+  segment apart cannot drift. It stayed a **filter rather than a location picker**: a picker left set to one
+  building keeps the other buildings' doors off the screen for as long as it stays set, and this is the surface
+  where a hidden door is a holder standing outside one. It is also deliberately **not persisted**, unlike the
+  segment and the plan's site — coming back to a badge showing three of your twelve doors, because of something
+  typed last week, is how a holder concludes their access was revoked.
   `GET /api/badge/preview/{id}` (`enroll`, operator-only, `preview.go`) is the **operator's** read of a holder's badge,
   for "my pass doesn't work" — it returns the holder's own `/me` and `/live` payloads (the same `buildMe`/`buildLive`
   builders serve both, so a preview that differs from their screen is a bug) plus the three facts a badge cannot show
