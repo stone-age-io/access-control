@@ -347,7 +347,11 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   plan is a full-width image, so on a phone the second card's header starts below the fold with nothing to suggest
   it exists, and the tab said "Plan" whether there was one or four). The same adaptive rule applies: no picker at
   one site, and the Plan item carries a count of **sites** only past one. A native select rather than a row of pills,
-  which read as a second switcher and cost the picture a line of chrome per site. It mirrors the
+  which read as a second switcher and cost the picture a line of chrome per site. The picker sits in the plan card's
+  **header slot**, where the card's own title would go — both name the location, so side by side they said it twice
+  (the heading, and the same words again as the select's chosen option a row above it); the picker IS the answer to
+  "which building", so it takes that place and the plan gets a row back. At one site the slot falls back to the title.
+  It mirrors the
   operator console's `/monitor` overview → `/monitor/:locationId` drill-in, and keying `BadgeFloorplan` by site id
   settles the stacked version's other bug for free — each instance owns its selection, so two plans on screen could
   each caption a selected door, and the one scrolled off the top kept stale result text.
@@ -369,6 +373,17 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   reading. `shrink-0` does not help (the item was growing, not shrinking) and a `grow-0` utility only wins on source
   order, so the caption is wrapped in a `<div>`: the paragraph is out of the flex line, no specificity argument, and a
   sentence stays a `<p>`. **Any direct-child `<p>` of a `card-body` that is a flex column has this bug.**
+  The **selected-marker bar overlays the plan** rather than sitting under it, and that is a correctness fix, not a
+  style: below the plan it added a name and a full-width button to the card on selection, so the plan area shrank by
+  ~80px, the image re-fitted, and *every pin moved* — the marker jumped out from under the thumb that had just tapped
+  it while the button being reached for slid up into where that thumb already was. Overlaid, the plan area's size never
+  changes, so nothing re-fits (measured: area and pin centre identical in both states). It also answers "the action
+  appears out of nowhere": the bar is always there and selecting only changes what it says, hint → door. Being
+  `absolute` takes it out of the flex line, which neutralises the `<p>` trap above for everything inside it. Tapping the
+  plan clears the selection (pins `@click.stop`), which is the dismissal gesture an overlay implies — and the recovery
+  for the one cost of this: a pin in the bottom strip sits behind the bar. Usually that strip is letterboxing, and the
+  bar names the door it covers. `max-h-full overflow-y-auto` on it guards the operator preview, the one place the plan
+  area is sized BY the image, where a very wide plan renders too short to hold the bar.
   Pins are placed against the **drawn rectangle, computed** — not the element box, and not percentages. Under
   `object-contain` the element fills the area and the picture is letterboxed inside it, so `BadgeFloorplan` repeats the
   browser's own fit (`scale = min(boxW/naturalW, boxH/naturalH)`, centred) from `offsetLeft`/`Top`/`offsetWidth`/

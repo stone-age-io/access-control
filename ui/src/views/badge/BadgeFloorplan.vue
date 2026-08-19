@@ -39,10 +39,12 @@ import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
  * only while the wrapper was sized BY the image) and then measuring the element box (right
  * only while the element WAS the image) — and both landed pins in the letterboxing.
  *
- * A ResizeObserver on the plan area is what keeps that honest. It watches the CONTAINER, not
- * the image: selecting a pin adds the action bar below, which shortens the plan area, and on
- * a width-limited plan the drawn width does not change at all — only where it is centred.
- * Observing the image would miss exactly that case and leave every pin shifted.
+ * A ResizeObserver on the plan area is what keeps that honest across rotation, a resize, and
+ * the on-screen keyboard. It watches the CONTAINER rather than the image because on a
+ * width-limited plan the drawn width does not change when the area's HEIGHT does — only where
+ * it is centred — so observing the image would miss that case and leave every pin shifted.
+ * (Selecting a marker used to be the everyday version of exactly that; it no longer resizes
+ * anything, see the marker bar in the template.)
  *
  * Areas are deliberately absent: only portals and aux I/O carry a position, because an
  * area is a set of points with no single place to put a pin. They live in the list.
@@ -66,10 +68,11 @@ import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
  *
  * Both go away by giving the marker one job. Selecting is idempotent and harmless, so an
  * overlapping hit box costs a wrong NAME on screen, which the holder can see and correct,
- * rather than a wrong door. Acting moved to a full-width labelled button below the plan —
- * the same control the Doors view uses, so there is one way to unlock a door and not two.
- * The marker is now a plain 44px button wrapping a small dot, rather than a DaisyUI `btn`
- * whose sizing classes fight each other.
+ * rather than a wrong door. Acting moved to a full-width labelled button in a bar over the
+ * bottom of the plan — the same control the Portals view uses, so there is one way to unlock a
+ * door and not two. Tapping the plan itself clears the selection. The marker is now a plain
+ * 44px button wrapping a small dot, rather than a DaisyUI `btn` whose sizing classes fight
+ * each other.
  */
 const props = withDefaults(
   defineProps<{
@@ -199,16 +202,28 @@ function act() {
          SMALLER than the image's intrinsic height — without it the column floors at the
          content and the card grows past the viewport again. -->
     <div class="card-body flex min-h-0 flex-col gap-3 p-3">
-      <h2 class="card-title shrink-0 text-base px-1">{{ location.name }}</h2>
+      <!-- Which building this is. A host that offers a site PICKER puts it here instead: the
+           picker answers the same question the title does, so rendering both named the location
+           twice, once as a heading and again as the selected option a row above it. -->
+      <div class="shrink-0 px-1">
+        <slot name="header">
+          <h2 class="card-title text-base">{{ location.name }}</h2>
+        </slot>
+      </div>
 
       <!-- The plan. `relative` is the positioning context every pin is placed against, and
            `flex-1 min-h-0` is what makes the area take the height the card has left rather
            than the height the image happens to want. The image then fills that area and
            `object-contain` fits the picture inside it, scaling UP as well as down — the pins
-           are placed against the drawn rect, not this box. See `measure`. -->
+           are placed against the drawn rect, not this box. See `measure`.
+
+           Tapping the plan itself clears the selection: the marker bar overlays this area, so
+           "tap the map to dismiss it" is the gesture the layout already implies. Pins stop
+           propagation so aiming at one never counts as a background tap. -->
       <div
         ref="area"
         class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-base-200"
+        @click="selected = ''"
       >
         <img
           ref="image"
@@ -229,7 +244,7 @@ function act() {
           :title="pin.name"
           :aria-label="pin.name"
           :aria-pressed="pin.id === selected"
-          @click="select(pin)"
+          @click.stop="select(pin)"
         >
           <span
             class="pointer-events-none flex h-7 w-7 items-center justify-center rounded-full border text-xs shadow transition-colors"
@@ -244,42 +259,59 @@ function act() {
             {{ pin.kind === 'portal' ? '🚪' : '⚡' }}
           </span>
         </button>
-      </div>
 
-      <!-- One caption + action bar for whichever pin is selected, rather than a label per
-           pin: on a phone-sized plan, per-pin text would cover the plan it annotates. -->
-      <div v-if="selectedPin" class="shrink-0 px-1 space-y-2">
-        <div class="text-sm font-medium">{{ selectedPin.name }}</div>
-
-        <button
-          v-if="selectedPin.remote"
-          type="button"
-          class="btn w-full justify-between"
-          :class="results[selectedPin.id] ? (results[selectedPin.id].ok ? 'btn-success' : 'btn-error') : 'btn-primary'"
-          :disabled="busy[selectedPin.id] || !enabled"
-          @click="act"
+        <!-- The marker bar — ONE slot at the bottom of the plan, whose CONTENT swaps between
+             the hint and the selected door. It used to live below the plan, and that was the
+             bug: selecting a pin added a name and a full-width button to the card, the plan
+             area shrank by ~80px to make room, the image re-fitted and re-centred, and every
+             pin moved. On a phone that means the marker jumps out from under the thumb that
+             just tapped it, while the button you are reaching for slides up into where that
+             thumb already is.
+             Overlaying it fixes the cause rather than the symptom: the plan area's size never
+             changes, so nothing re-fits and no pin ever moves. It is also why the action no
+             longer "appears out of nowhere" — this bar is always here, and selecting a marker
+             only changes what it says.
+             Being `absolute` also takes it out of the flex line entirely, which is what
+             neutralises DaisyUI's `.card-body :where(p){flex-grow:1}` (see CLAUDE.md) for the
+             paragraphs inside it.
+             The cost, stated plainly: a pin in the bottom strip of the plan sits behind this.
+             Usually that strip is letterboxing, the bar names the door it covers, and tapping
+             the plan dismisses it. -->
+        <!-- `max-h-full overflow-y-auto` is the guard for the one context where the plan area
+             is sized BY the image rather than by the frame: the operator's preview modal, where
+             a very wide plan can render only a few dozen pixels tall. Without it the bar would
+             be clipped by the area's `overflow-hidden` and the unlock button unreachable. -->
+        <div
+          class="absolute inset-x-0 bottom-0 max-h-full overflow-y-auto border-t border-base-300 bg-base-100/95 px-3 py-2 backdrop-blur-sm"
+          @click.stop
         >
-          <span>{{ actionLabel }}</span>
-          <span v-if="busy[selectedPin.id]" class="loading loading-spinner loading-sm"></span>
-        </button>
-        <p v-else class="text-xs text-base-content/60">
-          Use this one in person — it cannot be opened remotely.
-        </p>
+          <div v-if="selectedPin" class="space-y-2">
+            <div class="text-sm font-medium">{{ selectedPin.name }}</div>
 
-        <p v-if="selectedPin.remote && !enabled" class="text-xs text-base-content/60">
-          {{ disabledNote }}
-        </p>
-        <BadgeActionNote :result="results[selectedPin.id]" />
-      </div>
-      <!-- Wrapped, and that wrapper is load-bearing. DaisyUI ships
-           `.card-body :where(p){flex-grow:1}`, so a bare <p> as a direct child of a card-body
-           flex column is a GROWING item — it split the card's free space evenly with the plan
-           area, which is why the plan filled about half the screen and a blank band sat under
-           the caption. `shrink-0` does not help; the item was growing, not shrinking. A <div>
-           child keeps the paragraph out of the flex line, without either relying on a utility
-           winning a specificity tie or downgrading a sentence to a <div>. -->
-      <div v-else class="shrink-0 px-1">
-        <p class="text-xs text-base-content/50">Tap a marker to see which door it is.</p>
+            <button
+              v-if="selectedPin.remote"
+              type="button"
+              class="btn w-full justify-between"
+              :class="results[selectedPin.id] ? (results[selectedPin.id].ok ? 'btn-success' : 'btn-error') : 'btn-primary'"
+              :disabled="busy[selectedPin.id] || !enabled"
+              @click="act"
+            >
+              <span>{{ actionLabel }}</span>
+              <span v-if="busy[selectedPin.id]" class="loading loading-spinner loading-sm"></span>
+            </button>
+            <p v-else class="text-xs text-base-content/60">
+              Use this one in person — it cannot be opened remotely.
+            </p>
+
+            <p v-if="selectedPin.remote && !enabled" class="text-xs text-base-content/60">
+              {{ disabledNote }}
+            </p>
+            <BadgeActionNote :result="results[selectedPin.id]" />
+          </div>
+          <p v-else class="text-xs text-base-content/50">
+            Tap a marker to see which door it is.
+          </p>
+        </div>
       </div>
     </div>
   </div>

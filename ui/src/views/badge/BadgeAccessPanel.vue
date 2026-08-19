@@ -215,30 +215,35 @@ function stateLabel(state: BadgeArea['state']) {
     </div>
 
     <!-- Floor plans, when a location opted in. First in the navigation, because "which door
-         am I at" is the question a plan answers better than a list ever does. -->
-    <template v-if="view === 'plan'">
-      <select
-        v-if="plans.length > 1"
-        class="select select-bordered select-sm min-h-11 w-full shrink-0 text-sm"
-        aria-label="Site"
-        :value="activeSite?.id ?? ''"
-        @change="setSite(($event.target as HTMLSelectElement).value)"
-      >
-        <option v-for="p in plans" :key="p.id" :value="p.id">{{ p.name }}</option>
-      </select>
+         am I at" is the question a plan answers better than a list ever does.
 
-      <!-- `flex-1 min-h-0` is the whole viewport-filling story on this side: the panel is a
-           flex column of known height (see the root), so the plan card takes what the site
-           picker leaves and the image fits itself to that. -->
-      <BadgeFloorplan
-        v-if="activeSite"
-        :key="activeSite.id"
-        :location="activeSite"
-        :enabled="canAct"
-        :disabled-note="readonly ? 'Read-only preview — open doors from Live View' : undefined"
-        class="flex-1 min-h-0"
-      />
-    </template>
+         `flex-1 min-h-0` is the whole viewport-filling story on this side: the panel is a flex
+         column of known height (see the root), so the plan card takes the rest of it.
+
+         The site picker goes in the card's HEADER slot rather than in a row above the card.
+         Both name the location, so side by side they said it twice — "East Coast Office" as the
+         card's heading and again as the select's chosen option directly above it. Putting the
+         picker where the heading goes makes it the answer to "which building", which is what it
+         already was, and gives the plan back a row. -->
+    <BadgeFloorplan
+      v-if="view === 'plan' && activeSite"
+      :key="activeSite.id"
+      :location="activeSite"
+      :enabled="canAct"
+      :disabled-note="readonly ? 'Read-only preview — open doors from Live View' : undefined"
+      class="flex-1 min-h-0"
+    >
+      <template v-if="plans.length > 1" #header>
+        <select
+          class="select select-bordered select-sm min-h-11 w-full text-sm"
+          aria-label="Site"
+          :value="activeSite.id"
+          @change="setSite(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="p in plans" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
+      </template>
+    </BadgeFloorplan>
 
     <!-- Portals.
          These lists used to bound themselves to ~256px and scroll inside the page, because all
