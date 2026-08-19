@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount } from 'vue'
-import { actionErrorText } from './reasonText'
-import { badgePb } from '@/utils/badgePb'
+import BadgeActionNote from './BadgeActionNote.vue'
+import { useBadgeAction } from './useBadgeAction'
 import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
 
 /**
@@ -98,10 +98,11 @@ const image = ref<HTMLImageElement | null>(null)
 const box = ref<{ left: number; top: number; w: number; h: number } | null>(null)
 /** The selected marker, whose name and action fill the bar under the plan. */
 const selected = ref<string>('')
-// One selection can act at a time, so these are scalars rather than the per-pin maps this
-// component used to carry. Both are about the current selection and are cleared with it.
-const busy = ref(false)
-const result = ref<{ ok: boolean; message: string } | null>(null)
+// Keyed by pin id and self-expiring, shared with the action lists (see useBadgeAction). This
+// used to be a pair of scalars cleared by hand on every selection change; keying by id means an
+// outcome belongs to the marker that produced it, so no clearing is needed to stop one door
+// being captioned with another's result.
+const { busy, results, run } = useBadgeAction()
 
 /**
  * Where the picture actually ended up inside the element that holds it.
@@ -177,30 +178,17 @@ const actionLabel = computed(() =>
   selectedPin.value?.kind === 'portal' ? 'Unlock this door' : 'Activate this control',
 )
 
+/** Selecting is idempotent and harmless — that is the whole point of it. See the header. */
 function select(pin: Pin) {
-  if (selected.value === pin.id) return
   selected.value = pin.id
-  // The outcome belonged to the previous selection; carrying it over would caption one door
-  // with another's result.
-  result.value = null
 }
 
-async function act() {
+function act() {
   const pin = selectedPin.value
-  if (!pin || !pin.remote || !props.enabled || busy.value) return
-
-  busy.value = true
-  result.value = null
+  if (!pin || !pin.remote || !props.enabled) return
   const path =
     pin.kind === 'portal' ? `/api/badge/unlock/${pin.id}` : `/api/badge/outputs/${pin.id}/pulse`
-  try {
-    await badgePb.send(path, { method: 'POST' })
-    result.value = { ok: true, message: pin.kind === 'portal' ? 'Unlocked' : 'Activated' }
-  } catch (err: any) {
-    result.value = { ok: false, message: actionErrorText(err) }
-  } finally {
-    busy.value = false
-  }
+  run(pin.id, path, pin.kind === 'portal' ? 'Unlocked' : 'Activated')
 }
 </script>
 
@@ -266,12 +254,13 @@ async function act() {
         <button
           v-if="selectedPin.remote"
           type="button"
-          class="btn btn-primary w-full justify-between"
-          :disabled="busy || !enabled"
+          class="btn w-full justify-between"
+          :class="results[selectedPin.id] ? (results[selectedPin.id].ok ? 'btn-success' : 'btn-error') : 'btn-primary'"
+          :disabled="busy[selectedPin.id] || !enabled"
           @click="act"
         >
           <span>{{ actionLabel }}</span>
-          <span v-if="busy" class="loading loading-spinner loading-sm"></span>
+          <span v-if="busy[selectedPin.id]" class="loading loading-spinner loading-sm"></span>
         </button>
         <p v-else class="text-xs text-base-content/60">
           Use this one in person — it cannot be opened remotely.
@@ -280,9 +269,7 @@ async function act() {
         <p v-if="selectedPin.remote && !enabled" class="text-xs text-base-content/60">
           {{ disabledNote }}
         </p>
-        <p v-if="result" class="text-xs" :class="result.ok ? 'text-success' : 'text-error'">
-          {{ result.message }}
-        </p>
+        <BadgeActionNote :result="results[selectedPin.id]" />
       </div>
       <!-- Wrapped, and that wrapper is load-bearing. DaisyUI ships
            `.card-body :where(p){flex-grow:1}`, so a bare <p> as a direct child of a card-body

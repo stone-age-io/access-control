@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { badgePb } from '@/utils/badgePb'
 import { useBadgeAuthStore } from '@/stores/badgeAuth'
@@ -191,9 +191,34 @@ function dismissMenu() {
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
 }
 
+/**
+ * "Your password has been set" is a confirmation, not a status, so it expires — the same rule
+ * `useBadgeAction` applies to an unlock. It used to sit above the badge until the next reload,
+ * which by the following morning reads as a state ("my password is set") rather than as an
+ * answer to something the holder did a moment ago.
+ */
+const SAVED_NOTE_MS = 5000
+let savedNoteTimer: ReturnType<typeof setTimeout> | undefined
+
+function clearSavedNote() {
+  if (savedNoteTimer !== undefined) {
+    clearTimeout(savedNoteTimer)
+    savedNoteTimer = undefined
+  }
+  passwordSaved.value = false
+}
+
+function notePasswordSaved() {
+  clearSavedNote()
+  passwordSaved.value = true
+  savedNoteTimer = setTimeout(clearSavedNote, SAVED_NOTE_MS)
+}
+
+onUnmounted(clearSavedNote)
+
 function openPasswordModal() {
   dismissMenu()
-  passwordSaved.value = false
+  clearSavedNote()
   showPasswordModal.value = true
 }
 
@@ -277,7 +302,12 @@ onMounted(() => {
              rather than being sized by its image. This is the definite height the whole chain
              below depends on. -->
         <div class="max-w-sm mx-auto flex h-full flex-col">
-          <p v-if="passwordSaved" class="alert alert-success shrink-0 py-2 text-sm mb-3">
+          <p
+            v-if="passwordSaved"
+            role="status"
+            aria-live="polite"
+            class="alert alert-success shrink-0 py-2 text-sm mb-3"
+          >
             Your password has been set.
           </p>
           <BadgeAccessPanel
@@ -341,6 +371,6 @@ onMounted(() => {
       </nav>
     </template>
 
-    <BadgePasswordModal v-model:open="showPasswordModal" @saved="passwordSaved = true" />
+    <BadgePasswordModal v-model:open="showPasswordModal" @saved="notePasswordSaved" />
   </div>
 </template>

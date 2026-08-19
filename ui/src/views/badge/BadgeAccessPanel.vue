@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { badgePb } from '@/utils/badgePb'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 import BadgeFloorplan from './BadgeFloorplan.vue'
 import BadgeOnSiteList, { type OnSiteItem } from './BadgeOnSiteList.vue'
 import BadgeFilterInput from './BadgeFilterInput.vue'
+import BadgeActionNote from './BadgeActionNote.vue'
 import { onSiteGrants, remoteGrants, type BadgeViewKey } from './badgeNav'
-import { actionErrorText } from './reasonText'
+import { useBadgeAction } from './useBadgeAction'
 import type { BadgeArea, BadgeLive, BadgeLiveLocation, BadgeMe, BadgeOutput, BadgePortal } from '@/types/badge'
 
 /**
@@ -56,10 +56,10 @@ const props = withDefaults(
 )
 const emit = defineEmits<{ refresh: [] }>()
 
-// Per-target in-flight + result state, keyed by record id, so one target's outcome
-// never overwrites another's.
-const busy = ref<Record<string, boolean>>({})
-const results = ref<Record<string, { ok: boolean; message: string }>>({})
+// In-flight + outcome state, keyed by record id and self-expiring. See useBadgeAction for why
+// an outcome must not outlive itself: a remote unlock is a momentary pulse, so a permanent
+// "Unlocked" beside a door states something untrue about the world.
+const { busy, results, run } = useBadgeAction()
 
 // The same split `badgeNav` counts the segments from, so a segment's count can never
 // disagree with the number of rows under it.
@@ -159,31 +159,30 @@ const filteredPortals = computed<BadgePortal[]>(() => {
   return remotePortals.value.filter((p) => `${p.name} ${p.location}`.toLowerCase().includes(q))
 })
 
-/**
- * Run one badge action. `refresh` re-fetches the badge afterwards, which arming needs: an
- * area's state is server-resolved, so the only honest way to show the new state is to ask
- * again rather than assume the write landed as requested.
- */
-async function act(id: string, path: string, successText: string, refresh = false) {
-  busy.value = { ...busy.value, [id]: true }
-  delete results.value[id]
-  try {
-    await badgePb.send(path, { method: 'POST' })
-    results.value = { ...results.value, [id]: { ok: true, message: successText } }
-    if (refresh) emit('refresh')
-  } catch (err: any) {
-    results.value = { ...results.value, [id]: { ok: false, message: actionErrorText(err) } }
-  } finally {
-    const next = { ...busy.value }
-    delete next[id]
-    busy.value = next
-  }
-}
+// Arming asks the shell to re-fetch, and only on success: an area's state is resolved
+// server-side, so the only honest way to show the new state is to ask again rather than assume
+// the write landed as requested. The other three change nothing durable and need no reload.
+const reload = () => emit('refresh')
 
-const unlock = (p: BadgePortal) => act(p.id, `/api/badge/unlock/${p.id}`, 'Unlocked')
-const arm = (a: BadgeArea) => act(a.id, `/api/badge/areas/${a.id}/arm`, 'Armed', true)
-const disarm = (a: BadgeArea) => act(a.id, `/api/badge/areas/${a.id}/disarm`, 'Disarmed', true)
-const pulse = (o: BadgeOutput) => act(o.id, `/api/badge/outputs/${o.id}/pulse`, 'Activated')
+const unlock = (p: BadgePortal) => run(p.id, `/api/badge/unlock/${p.id}`, 'Unlocked')
+const arm = (a: BadgeArea) => run(a.id, `/api/badge/areas/${a.id}/arm`, 'Armed', reload)
+const disarm = (a: BadgeArea) => run(a.id, `/api/badge/areas/${a.id}/disarm`, 'Disarmed', reload)
+const pulse = (o: BadgeOutput) => run(o.id, `/api/badge/outputs/${o.id}/pulse`, 'Activated')
+
+/**
+ * The button's own colour while an outcome is showing — the confirmation you can take in
+ * without reading, next to the sentence that says what happened.
+ *
+ * The LABEL deliberately does not change. It is the door's name, and swapping it for "Unlocked"
+ * for a few seconds leaves the holder unsure which of six similar buttons they actually pressed
+ * (and makes the control's accessible name change under a screen reader mid-action). Tinting
+ * says the same thing without taking the name away.
+ */
+function toneClass(id: string, idle: string): string {
+  const result = results.value[id]
+  if (!result) return idle
+  return result.ok ? 'btn-success' : 'btn-error'
+}
 
 /** The state chip. `unknown` gets no colour: it is an absence of information. */
 function stateTone(state: BadgeArea['state']) {
@@ -267,7 +266,8 @@ function stateLabel(state: BadgeArea['state']) {
         <div class="space-y-2">
           <div v-for="p in filteredPortals" :key="p.id" class="space-y-1">
             <button
-              class="btn btn-primary w-full justify-between"
+              class="btn w-full justify-between"
+              :class="toneClass(p.id, 'btn-primary')"
               :disabled="busy[p.id] || !canAct"
               @click="unlock(p)"
             >
@@ -277,13 +277,7 @@ function stateLabel(state: BadgeArea['state']) {
               </span>
               <span v-if="busy[p.id]" class="loading loading-spinner loading-sm"></span>
             </button>
-            <p
-              v-if="results[p.id]"
-              class="text-xs px-1"
-              :class="results[p.id].ok ? 'text-success' : 'text-error'"
-            >
-              {{ results[p.id].message }}
-            </p>
+            <BadgeActionNote :result="results[p.id]" class="px-1" />
           </div>
         </div>
       </div>
@@ -293,7 +287,10 @@ function stateLabel(state: BadgeArea['state']) {
          either may be absent. -->
     <div v-if="view === 'areas'" class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3 p-4">
-        <h2 class="card-title text-base">Areas</h2>
+        <div class="flex items-baseline justify-between gap-2">
+          <h2 class="card-title text-base">Areas</h2>
+          <span class="text-xs text-base-content/50">{{ remoteAreas.length }}</span>
+        </div>
         <div class="space-y-3">
           <div v-for="a in remoteAreas" :key="a.id" class="space-y-2">
             <div class="flex items-center justify-between gap-2">
@@ -322,13 +319,11 @@ function stateLabel(state: BadgeArea['state']) {
               </button>
               <span v-if="busy[a.id]" class="loading loading-spinner loading-sm self-center"></span>
             </div>
-            <p
-              v-if="results[a.id]"
-              class="text-xs px-1"
-              :class="results[a.id].ok ? 'text-success' : 'text-error'"
-            >
-              {{ results[a.id].message }}
-            </p>
+            <!-- No tint on the area buttons, unlike portals and controls: an area has TWO of
+                 them sharing one outcome, and the chip above already shows the resulting state
+                 once the re-fetch lands. Colouring both Arm and Disarm green would say the
+                 wrong thing about whichever one was not pressed. -->
+            <BadgeActionNote :result="results[a.id]" class="px-1" />
           </div>
         </div>
       </div>
@@ -337,11 +332,18 @@ function stateLabel(state: BadgeArea['state']) {
     <!-- Aux outputs: one momentary action each. -->
     <div v-if="view === 'controls'" class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3 p-4">
-        <h2 class="card-title text-base">Controls</h2>
+        <div class="flex items-baseline justify-between gap-2">
+          <h2 class="card-title text-base">Controls</h2>
+          <span class="text-xs text-base-content/50">{{ remoteOutputs.length }}</span>
+        </div>
         <div class="space-y-2">
           <div v-for="o in remoteOutputs" :key="o.id" class="space-y-1">
+            <!-- Idle tone is '' so `btn-outline` stays and the tone composes with it: a control
+                 flashing a green OUTLINE is the same signal as a door flashing solid, without a
+                 momentary-relay button impersonating the primary action on the screen. -->
             <button
               class="btn btn-outline w-full justify-between"
+              :class="toneClass(o.id, '')"
               :disabled="busy[o.id] || !canAct"
               @click="pulse(o)"
             >
@@ -351,13 +353,7 @@ function stateLabel(state: BadgeArea['state']) {
               </span>
               <span v-if="busy[o.id]" class="loading loading-spinner loading-sm"></span>
             </button>
-            <p
-              v-if="results[o.id]"
-              class="text-xs px-1"
-              :class="results[o.id].ok ? 'text-success' : 'text-error'"
-            >
-              {{ results[o.id].message }}
-            </p>
+            <BadgeActionNote :result="results[o.id]" class="px-1" />
           </div>
         </div>
       </div>

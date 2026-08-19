@@ -378,6 +378,22 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   area, not the image**: selecting a pin adds the action bar, which shortens the area, and on a width-limited plan the
   drawn width does not change at all — only where it is centred, which observing the image would miss while leaving
   every pin shifted.
+  **Every action outcome expires** (`useBadgeAction`, shared by the action lists and the plan's
+  marker bar; rendered by `BadgeActionNote`). An outcome used to be written into a map and left
+  there, so one tap put a green "Unlocked" under a door until the badge was reloaded — and that is
+  not untidiness, it is a past *event* rendered as present *state*: a remote unlock is a momentary
+  pulse, the strike relocks, and nothing about that door is unlocked a minute later. Same argument
+  the service worker caches nothing for. Success clears after 4s, failure after 9s (a denial is a
+  sentence that has to be read, not a word), and a fresh attempt supersedes the last answer
+  immediately. The **button tints** for that window and the **label does not change**: the label is
+  the door's name, and swapping it for "Unlocked" leaves the holder unsure which of six similar
+  buttons they pressed — and changes a control's accessible name mid-action. Area buttons are the
+  exception (two of them share one outcome, and the state chip already shows the result). The note
+  carries a glyph as well as a colour, is a `role="status"` live region, and success fires
+  `navigator.vibrate` where it exists — at a door with your hands full the useful confirmation is
+  one you do not have to look at, and iOS not implementing it is exactly why the colour and the
+  sentence are still there. The same rule reaches the shell's "your password has been set" banner,
+  which had the identical bug.
   The **badge face** (`BadgePassPanel`) is a centred column, not a list row: the photo sits above the name at 112px
   (a badge is held up to be compared against a face, so it is the largest thing after the code itself — the old 64px
   thumbnail beside the name was sized like a list avatar), the name below it at `text-lg`, and the QR at 208px. The
