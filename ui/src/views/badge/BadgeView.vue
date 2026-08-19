@@ -348,6 +348,17 @@ onMounted(() => {
             :class="activeTab === item.key ? 'text-primary' : 'text-base-content/60'"
             @click="setTab(item.key)"
           >
+            <!-- The active indicator, sitting ON the divider (`-top-px` covers the 1px border
+                 at this column). Colour and label weight already mark the active item; a bar
+                 is the third channel, and the one that reads at a glance without comparing two
+                 greys — which matters here because this is the only thing on the screen that
+                 says which of six screens you are looking at. Inset so neighbouring bars
+                 cannot touch and be read as one. -->
+            <span
+              v-if="activeTab === item.key"
+              aria-hidden="true"
+              class="absolute inset-x-2 -top-px h-0.5 rounded-full bg-primary"
+            ></span>
             <!-- The count rides the icon rather than the label: at ~62px a column "Portals 3"
                  would wrap, and a number beside a glyph is the shape every phone already uses
                  for a count. Neutral, not primary — it is a quantity, not an alert. -->
