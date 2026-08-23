@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { badgePb } from '@/utils/badgePb'
+import { clearFileToken } from '@/composables/useFileUrl'
 
 /**
  * Badge-tier auth store — sign-in for cardholders and visitors, NOT operators.
@@ -120,6 +121,10 @@ export const useBadgeAuthStore = defineStore('badgeAuth', () => {
   function logout() {
     badgePb.authStore.clear()
     record.value = null
+    // The badge photo is a PROTECTED file and its token is bound to the session that
+    // minted it, so a cached one would 403 for whoever signs in next in this tab. The
+    // client is named explicitly because the two tiers cache separately.
+    clearFileToken(badgePb)
   }
 
   /**

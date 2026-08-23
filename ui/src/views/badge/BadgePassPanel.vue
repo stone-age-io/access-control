@@ -2,6 +2,7 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import type PocketBase from 'pocketbase'
 import { badgePb } from '@/utils/badgePb'
+import { fileTokenFor } from '@/composables/useFileUrl'
 import QrCode from '@/components/ui/QrCode.vue'
 import type { BadgeMe, BadgePassState } from '@/types/badge'
 
@@ -156,6 +157,14 @@ const passUsable = computed(() => props.me.passState === 'valid')
 /**
  * The cardholder photo is a PROTECTED file, so its URL needs a short-lived file token,
  * issued against whichever session is asking (see the `client` prop).
+ *
+ * The token comes from the SHARED per-session cache, never `client.files.getToken()`
+ * directly, and that is what stops the photo blinking on every screen change. A token
+ * is part of the query string, so it is part of the browser's cache key: minting a fresh
+ * one here produced a URL the cache had never seen, and this panel is mounted and
+ * unmounted every time the holder moves between the face and an access view. One shared
+ * token means one stable URL, and the next render is a cache hit rather than a download.
+ * See composables/useFileUrl.
  */
 async function loadPhoto() {
   const m = props.me
@@ -164,7 +173,7 @@ async function loadPhoto() {
     return
   }
   try {
-    const token = await props.client.files.getToken()
+    const token = await fileTokenFor(props.client)
     photoUrl.value = props.client.files.getURL(
       { id: m.photoRecord, collectionId: 'cardholders', collectionName: 'cardholders' },
       m.photoFile,

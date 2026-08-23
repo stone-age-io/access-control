@@ -311,18 +311,36 @@ onMounted(() => {
           >
             Your password has been set.
           </p>
-          <BadgeAccessPanel
-            v-if="accessView"
-            :me="me"
-            :plans="plans"
-            :view="accessView"
-            class="min-h-0 flex-1"
-            @refresh="refresh"
-          />
-          <!-- `my-auto` centres the face in whatever height is left over, and collapses to
-               nothing when there is none — so a short screen scrolls rather than clipping the
-               top of the photo, which is what `justify-center` on the column would have done. -->
-          <BadgePassPanel v-else :me="me" class="my-auto" />
+          <!-- Kept alive, not rebuilt on every screen change. These two swap constantly, and
+               tearing them down meant a fresh <img> each time: the floor plan repainted from a
+               grey box and the photo re-decoded, which reads as a reload even when nothing is
+               fetched. Alive, the elements and their decoded images survive, so a screen change
+               is a repaint — and the plan keeps its measured box and selected marker, and a
+               list keeps its filter text, across a trip to the face and back.
+
+               This is only half of it: the photo URL also had to stop changing per mount, or
+               the very first paint of the face would still be a download. See
+               composables/useFileUrl.
+
+               Nothing may sit BETWEEN the two branches below, not even a comment: the compiler
+               stashes a comment there into the v-else branch in dev only, which makes that
+               branch a Fragment, and KeepAlive silently skips a child that is not a stateful
+               component. The face would then be cached in production and not in dev — so the
+               note that belongs on BadgePassPanel is here instead: `my-auto` centres the face
+               in whatever height is left over and collapses to nothing when there is none, so
+               a short screen scrolls rather than clipping the top of the photo, which is what
+               `justify-center` on the column would have done. -->
+          <KeepAlive>
+            <BadgeAccessPanel
+              v-if="accessView"
+              :me="me"
+              :plans="plans"
+              :view="accessView"
+              class="min-h-0 flex-1"
+              @refresh="refresh"
+            />
+            <BadgePassPanel v-else :me="me" class="my-auto" />
+          </KeepAlive>
         </div>
       </main>
 

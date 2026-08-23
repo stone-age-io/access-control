@@ -39,10 +39,12 @@ import type { BadgeLiveLocation, BadgeLivePoint } from '@/types/badge'
  * only while the wrapper was sized BY the image) and then measuring the element box (right
  * only while the element WAS the image) — and both landed pins in the letterboxing.
  *
- * A ResizeObserver on the plan area is what keeps that honest across rotation, a resize, and
- * the on-screen keyboard. It watches the CONTAINER rather than the image because on a
- * width-limited plan the drawn width does not change when the area's HEIGHT does — only where
- * it is centred — so observing the image would miss that case and leave every pin shifted.
+ * A ResizeObserver on the plan area is what keeps that honest across rotation, a resize, the
+ * on-screen keyboard, and being hidden and shown again — this view is `v-show`n between the
+ * access screens and kept alive behind the badge face, and both report 0×0 while off screen.
+ * It watches the CONTAINER rather than the image because on a width-limited plan the drawn
+ * width does not change when the area's HEIGHT does — only where it is centred — so observing
+ * the image would miss that case and leave every pin shifted.
  * (Selecting a marker used to be the everyday version of exactly that; it no longer resizes
  * anything, see the marker bar in the template.)
  *
@@ -119,10 +121,18 @@ const { busy, results, run } = useBadgeAction()
 function measure() {
   const img = image.value
   const n = natural.value
-  if (!img || !n || !img.offsetWidth || !img.offsetHeight) {
+  // Nothing to place against yet: no natural size means the image has not loaded.
+  if (!n) {
     box.value = null
     return
   }
+  // A zero-sized read is not "there is no box", it is "not on screen right now". The plan
+  // is `v-show`n between access screens and kept alive behind the badge face, and both
+  // report 0×0 — so clearing the box here hid every pin for a frame on the way back IN,
+  // which is the flicker this arrangement exists to remove. Keeping the previous value is
+  // the house rule for an unreadable input anyway, and it is stale for exactly as long as
+  // it is invisible: the observer fires again the moment the area has a box.
+  if (!img || !img.offsetWidth || !img.offsetHeight) return
   const scale = Math.min(img.offsetWidth / n.w, img.offsetHeight / n.h)
   const w = n.w * scale
   const h = n.h * scale

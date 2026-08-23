@@ -224,9 +224,21 @@ function stateLabel(state: BadgeArea['state']) {
          Both name the location, so side by side they said it twice — "East Coast Office" as the
          card's heading and again as the select's chosen option directly above it. Putting the
          picker where the heading goes makes it the answer to "which building", which is what it
-         already was, and gives the plan back a row. -->
+         already was, and gives the plan back a row.
+
+         `v-show`, not `v-if`, for which screen is up: tearing the plan down on every tab
+         switch destroyed its <img>, so coming back repainted from a grey box and popped the
+         pins in a frame later — indistinguishable from a reload, though the bytes were in
+         cache the whole time. Hidden, the element and its decoded image survive and the switch
+         is a repaint. `v-if` still guards whether there is a SITE at all, since the component
+         cannot render without one.
+
+         The cost, stated: the plan is now mounted whichever access screen is up, so a holder
+         who lands on Portals downloads a plan they may not open. One image, and it is exactly
+         the one they need if they do tap Plan — cheaper than the machinery to defer it. -->
     <BadgeFloorplan
-      v-if="view === 'plan' && activeSite"
+      v-if="activeSite"
+      v-show="view === 'plan'"
       :key="activeSite.id"
       :location="activeSite"
       :enabled="canAct"
