@@ -13,8 +13,9 @@ import { useToast } from '@/composables/useToast'
  * Three ways to set the pin: search a place (explicit — on Enter or the button,
  * never debounced, to respect Nominatim's usage policy), click the map, or drag
  * the pin. The search hits Nominatim's public endpoint directly from the browser
- * (same OSM ecosystem as the tiles in useLeafletMap), so it needs internet and
- * degrades to manual lat/lon entry when offline.
+ * (still OpenStreetMap data, though the basemap in useLeafletMap now comes
+ * from OpenFreeMap), so it needs internet and degrades to manual lat/lon entry
+ * when offline.
  */
 
 const lat = defineModel<number>('lat', { required: true })

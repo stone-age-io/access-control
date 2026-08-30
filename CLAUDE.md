@@ -734,3 +734,21 @@ width whether it holds 2 fields or 9, so columns line up across cards. Tailwind 
   resolve to deny or "keep previous value," never to a grant or a crash.
 - Decision **reason codes** (`policy.go`) are stable strings that flow verbatim into events and the UI — treat
   them as a public contract.
+- **The basemap is OpenFreeMap, and `maplibre-gl` is pinned to 5, not 6.** The
+  geographic map (`useLeafletMap`) moved off raster tiles because both sources
+  had to go: CARTO put its rasters behind an API key and is retiring them, and
+  the light layer was calling `tile.openstreetmap.org` directly, which the OSMF
+  tile usage policy does not allow for a product. OpenFreeMap is keyless,
+  uncapped, commercial-use-permitted and self-hostable — but it publishes no
+  raster endpoint, so the basemap is a MapLibre style document rendered through
+  `L.maplibreGL` onto a **WebGL canvas**. Markers, selection and the floor-plan
+  map (`useFloorPlan`, `CRS.Simple` with no tiles at all) are unchanged Leaflet
+  on top of it. The pin matters more than it looks: v5 inlines its tile-parsing
+  worker, v6 resolves it as a sibling file Vite never emits once the library is
+  in a hashed chunk, and **nothing throws and nothing reaches the console** —
+  the style loads and its background layer paints, so water, landuse, roads and
+  labels vanish together and the map reads as a flat sheet of theme colour
+  rather than as a failure. v5 is also what OpenFreeMap's own quick start pins.
+  Mirrors the platform, which moved first. Revisit when
+  `@maplibre/maplibre-gl-leaflet` documents v6 rather than merely permitting it
+  in `peerDependencies`.
