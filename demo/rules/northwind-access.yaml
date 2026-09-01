@@ -33,8 +33,7 @@
 #
 #   On a Stone Age platform deployment, give each controller the credential of
 #   its OWN Thing — the platform's demo-seed enrols all four controller codes and
-#   mints each a signed identity. See demo/rules/README.md, which also covers the
-#   `no_entry` alarm the mock driver raises after every grant.
+#   mints each a signed identity. See demo/rules/README.md.
 #
 # PUBLISH MODE — the split below is deliberate, not cosmetic
 #   `mode: core`      for anything a CONTROLLER consumes: taps, cmd.*, evt.fire.

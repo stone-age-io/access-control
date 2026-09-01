@@ -103,25 +103,13 @@ is observed on a DPS input and `driver: mock` has none, so those three are
 published as finished `evt.alarm` events. Run a controller with `driver: gpio`
 on real hardware and you can delete that section.
 
-## Expect a `no_entry` alarm after every allow
-
-Under `driver: mock` each granted tap is followed 10–20 seconds later by a
-`no_entry` alarm — "access granted, nobody came through" — so at these rates the
-Alarm Console fills with a few hundred an hour and buries the forced, held and
-intrusion alarms this file injects on purpose.
-
-That is not the rules' doing. `sweepNoEntry` gates on whether the portal's
-*policy binding* declares a `dpsInput`, and the seeded portals all do; but the
-mock driver supplies no door input, so an open is genuinely unobservable and the
-grace window always expires unused. The gate checks that a contact is
-**configured** rather than that one is **observable**, and those two only diverge
-under the mock driver — which is precisely where the demo lives. The code comment
-above that function describes the failure exactly ("would report `no_entry` on
-EVERY grant") while gating on the wrong thing.
-
-Until that is fixed, either filter the Alarm Console to `forced` / `held` /
-`intrusion`, or narrow the allow-tap crons. Notification is unaffected —
-`no_entry` is opt-in there and off by default, so nobody gets emailed.
+**No `no_entry` alarms under mock hardware, by design.** A `no_entry` — "access
+granted, nobody came through" — needs an open to be *observable*, which takes both
+a `dpsInput` on the portal's binding and a door-input driver on the controller.
+`driver: mock` has the first and not the second, so the controller stays silent
+rather than raising one per granted tap. If it did, the Alarm Console would take
+a few hundred an hour and bury the forced, held and intrusion alarms this file
+stages on purpose. Run `driver: gpio` on real hardware and they become real.
 
 **Business hours live in the cron, not in conditions.** Cron is 5-field with a
 one-minute floor, and every rule carries `timezone: America/Chicago`. That makes

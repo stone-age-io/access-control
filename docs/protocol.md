@@ -170,9 +170,15 @@ held-open timer instead.
 through, which separates a real entry from a badge test, a stuck strike, or someone
 who badged and walked away. It is **exception-only** (a used grant emits nothing, so
 the happy path adds no volume) and is evaluated on the existing hold-eval tick rather
-than a per-grant timer, so it lands 10–20s after the grant. A portal with **no
-`dpsInput`** can never observe an open and never emits it. It is diagnostic rather
+than a per-grant timer, so it lands 10–20s after the grant. It is diagnostic rather
 than urgent, so notification treats it as opt-in (see below).
+
+It is emitted only where an open is genuinely **observable**, which takes two
+independent things: the portal's binding declares a `dpsInput`, *and* the
+controller has a door-input driver. Either alone is not enough. They agree on real
+hardware and diverge under `driver: mock`, which has a lock and no inputs — so a
+box running the simulated reader (every demo and dev box) emits no `no_entry` at
+all, rather than one per granted tap.
 
 While a location's **fire** input is active, alarm emission is suppressed
 (forced/held/intrusion during evacuation would be false alarms) — but only if the

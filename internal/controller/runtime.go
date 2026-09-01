@@ -289,9 +289,30 @@ func (r *Runtime) reconcileHolds(at time.Time) {
 // 10–20s later. That sampling imprecision is irrelevant for "nobody walked through",
 // and it is the same trade scheduled-posture holds already accept.
 //
-// A portal with no DPS wired can never observe an open, so it would report no_entry
-// on EVERY grant — the binding's dpsInput gates it out entirely.
+// A portal whose door-open is unobservable can never clear a grant, so it would
+// report no_entry on EVERY one. Two independent things have to be true for an
+// open to be observable, and the gate below checks both:
+//
+//	b.DpsInput != 0   the portal's policy binding declares a door contact
+//	r.input != nil    this controller has a driver that can actually read one
+//
+// Checking only the first was a bug with a narrow but important blast radius.
+// The two conditions agree on real hardware, and diverge exactly under
+// driver: mock — which has a lock but no inputs, and which is what every demo,
+// every dev box and the whole `reader: nats` simulation path runs. There, the
+// seeded portals all declare a DPS, nothing ever reports an open, and every
+// single granted tap produced a no_entry alarm 10-20s later. They land in the
+// Alarm Console unacknowledged, so a busy demo buried the forced/held/intrusion
+// alarms it was staged to show under a few hundred an hour of noise.
+//
+// r.input != nil is the same test statusShadow already uses to decide whether
+// door state is knowable (see the DoorUnknown branch above); this is that
+// question asked about the same fact.
 func (r *Runtime) sweepNoEntry(portal string, at time.Time) {
+	if r.input == nil {
+		return // no door-input driver: an open is unobservable on this box
+	}
+
 	b, ok := r.store.Binding(portal)
 	if !ok || b.DpsInput == 0 {
 		return // no door contact: an open is unobservable, so silence is correct

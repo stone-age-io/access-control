@@ -232,7 +232,7 @@ func TestDoorHeldClearEscapesFireSuppression(t *testing.T) {
 	rt, _, _, emit := runtimeFor(t)
 	at := ny(t, 2026, 1, 5, 9, 0)
 	rt.handleTap(drivers.Tap{Portal: lobby, Credential: "CARD-001", At: at}) // grant
-	rt.handleDPS(lobby, false, at)                                          // authorized open; arms DOTL
+	rt.handleDPS(lobby, false, at)                                           // authorized open; arms DOTL
 	eventually(t, 2*time.Second, func() bool { return countAlarm(emit, AlarmHeld) == 1 })
 
 	rt.SetFire("hq", true, at)                     // evacuation begins mid-alarm
@@ -264,4 +264,36 @@ func TestDoorInputLoopEmitsForced(t *testing.T) {
 
 	input.Send(drivers.InputEvent{Portal: lobby, Kind: drivers.InputDPS, Closed: false, At: ny(t, 2026, 1, 5, 9, 0)})
 	eventually(t, 2*time.Second, func() bool { return countAlarm(emit, AlarmForced) == 1 })
+}
+
+// A controller with no door-input driver can never observe an open, so an unused
+// grant must stay silent — even though the portal's policy binding declares a DPS.
+//
+// Those two facts are independent, and they diverge in exactly one place: the
+// mock driver, which has a lock and no inputs, and which is what every demo, dev
+// box and `reader: nats` simulation runs. sweepNoEntry checked only the binding,
+// so on that setup every single granted tap produced a no_entry alarm 10-20s
+// later. They land unacknowledged in the Alarm Console, so a demo staged to show
+// a forced door buried it under a few hundred an hour of "access granted, nobody
+// came through" — from doors nobody had touched.
+//
+// The companion is TestNoEntryAfterUnusedGrant, which asserts the alarm DOES fire
+// when a door input is present. Together they pin that no_entry depends on both
+// halves being true, which is the property the fix is about.
+func TestNoEntrySilentWithoutADoorInputDriver(t *testing.T) {
+	rt, _, emit := runtimeWithoutDoorInput(t)
+	at := ny(t, 2026, 1, 5, 9, 0)
+
+	// lobby-main's binding DOES declare a dpsInput; the driver is what is absent.
+	if b, ok := rt.store.Binding(lobby); !ok || b.DpsInput == 0 {
+		t.Fatal("fixture changed: this test needs a portal whose binding declares a DPS")
+	}
+
+	rt.handleTap(drivers.Tap{Portal: lobby, Credential: "CARD-001", At: at})
+	rt.reconcileHolds(at.Add(accessGrace + time.Second))
+	rt.reconcileHolds(at.Add(accessGrace + time.Minute))
+
+	if got := countAlarm(emit, AlarmNoEntry); got != 0 {
+		t.Errorf("no_entry alarms = %d, want 0 (no door-input driver: an open is unobservable)", got)
+	}
 }

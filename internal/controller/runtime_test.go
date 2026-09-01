@@ -71,16 +71,40 @@ func (e *fakeEmitter) countSubject(s string) int {
 
 // runtimeFor builds a runtime over the seeded fixture store with a mock reader
 // and a single lock for lobby-main.
+// runtimeFor builds a runtime with door monitoring WIRED — a non-nil DoorInput —
+// because that is what the tests below mean when they call handleDPS to simulate
+// a door opening. It used to pass nil, which is the interface's way of saying
+// "this box has no door-input driver at all" (see drivers.DoorInput), so the
+// suite was quietly asserting the behaviour of a configuration where an open can
+// never be observed. That is exactly the configuration `driver: mock` runs, and
+// it is where no_entry fired on every grant. runtimeWithoutDoorInput below is now
+// the deliberate way to test it.
+//
+// Run() exits on the reader channel closing and the input channel is only
+// selected while open, so an unclosed mock input does not hang drain().
 func runtimeFor(t *testing.T) (*Runtime, *drivers.MockReader, *drivers.MockLock, *fakeEmitter) {
 	t.Helper()
 	store := seeded(t)
 	reader := drivers.NewMockReader(8)
 	lock := drivers.NewMockLock("lobby-main", nil)
 	emit := &fakeEmitter{}
-	rt := NewRuntime("hq", store, reader, nil,
+	rt := NewRuntime("hq", store, reader, drivers.NewMockDoorInput(8),
 		map[string]drivers.LockDriver{"lobby-main": lock}, emit,
 		subjects.Default(), logger.NewNopLogger(), nil)
 	return rt, reader, lock, emit
+}
+
+// runtimeWithoutDoorInput builds a runtime with NO door-input driver — the
+// `driver: mock` shape, and any real box where door monitoring is not wired.
+func runtimeWithoutDoorInput(t *testing.T) (*Runtime, *drivers.MockReader, *fakeEmitter) {
+	t.Helper()
+	store := seeded(t)
+	reader := drivers.NewMockReader(8)
+	emit := &fakeEmitter{}
+	rt := NewRuntime("hq", store, reader, nil,
+		map[string]drivers.LockDriver{"lobby-main": drivers.NewMockLock("lobby-main", nil)}, emit,
+		subjects.Default(), logger.NewNopLogger(), nil)
+	return rt, reader, emit
 }
 
 // drain enqueues taps, closes the reader, and runs the loop to completion —
