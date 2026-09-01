@@ -1,0 +1,551 @@
+# =============================================================================
+# Northwind Traders — live access activity for the `accessd demo-seed` estate
+# =============================================================================
+# rule-router scheduler rules that drive the three seeded sites hard enough to
+# look like a working building: badge taps at ten portals, operator door-pops,
+# a scheduled lockdown, yard lighting, and a trickle of alarms.
+#
+# THIS FILE DRIVES REAL CONTROLLERS. It publishes credential presentations to
+# the READER subject `acc.{location}.{type}.{thing}.tap`, so a running
+# access-controller decides each one itself against its mirrored policy graph
+# and emits the resulting `evt.tap`. Nothing here fabricates a decision. That
+# means the reason codes on the Events screen are the ones `policy.Decide`
+# actually produced, the strike really pulses, `disarm_on_grant` really disarms
+# the Springfield dock, and a policy edit in the console changes what you see on
+# the next tap. Its predecessor, demo/access-demo.yaml, injected finished
+# `evt.tap` events instead — correct when no controller is running, but it can
+# only ever replay a decision someone typed into a YAML file.
+#
+# PREREQUISITES
+#   1. Seed:            ./accessd migrate up && ./accessd demo-seed --confirm
+#   2. Run accessd:     ./accessd serve
+#   3. Run one controller per seeded panel (four of them):
+#        SA_CONTROLLER_CODE=ctrl-kc-dc1-1    SA_CONTROLLER_LOCATION=KC-DC1    ./access-controller
+#        SA_CONTROLLER_CODE=ctrl-kc-dc1-2    SA_CONTROLLER_LOCATION=KC-DC1    ./access-controller
+#        SA_CONTROLLER_CODE=ctrl-kc-office-1 SA_CONTROLLER_LOCATION=KC-OFFICE ./access-controller
+#        SA_CONTROLLER_CODE=ctrl-sgf-xd2-1   SA_CONTROLLER_LOCATION=SGF-XD2   ./access-controller
+#      Defaults are already right for a demo: driver `mock`, reader `nats`.
+#   4. Run the scheduler:
+#        rule-router --config config/rule-scheduler.yaml --rules demo/rules
+#
+#   All four processes plus rule-router must share one NATS server AND one
+#   account, and rule-router's identity needs publish on `acc.>`.
+#
+#   On a Stone Age platform deployment, give each controller the credential of
+#   its OWN Thing — the platform's demo-seed enrols all four controller codes and
+#   mints each a signed identity. See demo/rules/README.md, which also covers the
+#   `no_entry` alarm the mock driver raises after every grant.
+#
+# PUBLISH MODE — the split below is deliberate, not cosmetic
+#   `mode: core`      for anything a CONTROLLER consumes: taps, cmd.*, evt.fire.
+#                     No JetStream stream covers `acc.*.*.*.tap` or `.cmd.>`, so
+#                     a jetstream publish there would hang waiting for an ack
+#                     that no stream will ever send.
+#   `mode: jetstream` for the injected alarms at the bottom, which only the
+#                     ACC_EVENTS stream consumes. The ack is the proof the
+#                     stream captured it; without one a missing stream would
+#                     look identical to a working demo.
+#   Every action states its mode, so the file behaves the same whatever
+#   `nats.publish.mode` the config happens to be set to.
+#
+# TIMEZONE
+#   All three sites are America/Chicago and every cron below says so. Cron is
+#   5-field with a one-minute floor (rule-router validates this), so business
+#   hours are expressed in the cron's hour/day-of-week fields rather than in
+#   conditions — exact, and visible on the line you are reading.
+#
+# TURNING IT DOWN
+#   Peak is roughly four or five taps a minute on a weekday shift. To calm it,
+#   widen the busiest crons (`*/2` → `*/6`); to quieten alarms, widen the three
+#   at the bottom. Alarms project UNACKNOWLEDGED and accumulate until someone
+#   acks them in the Alarm Console — fine for an hour's demo, a nuisance if you
+#   leave this running for a week.
+#
+# CREDENTIALS AND CODES
+#   Every credential value, portal code and site code below is one
+#   `accessd demo-seed` creates (internal/demoseed/data.go). Seed first, or the
+#   controller answers every tap `deny_unknown_credential` and the demo shows
+#   one reason code all day.
+
+# -----------------------------------------------------------------------------
+# WAREHOUSE SHIFT — the bulk of the traffic
+#
+# ag-nw-warehouse runs on nw-warehouse-shift (Mon-Sat 05:00-22:00) and covers
+# the DC main entrance, Dock A, the freezer door, and both Springfield doors.
+# -----------------------------------------------------------------------------
+
+# Elena Sokolova (Warehouse Associate) — Dock A personnel door, all shift.
+# The busiest reader in the estate.
+- trigger:
+    schedule:
+      cron: "*/2 5-21 * * 1-6"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-dock-a.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0003"}'
+
+# Marco Ferreira (Warehouse Associate) — DC main entrance.
+- trigger:
+    schedule:
+      cron: "*/3 5-21 * * 1-6"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0004"}'
+
+# Marco again — Freezer Zone 1. A maglock rather than a strike, so this is the
+# one to watch if you are looking at what the lock driver does differently.
+- trigger:
+    schedule:
+      cron: "*/4 5-21 * * 1-6"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-freezer-1.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0004"}'
+
+# The drawer card — "Loading Dock Spare Card", a cardholder with no email who
+# cannot sign in by any method and still opens doors. Springfield Dock B.
+- trigger:
+    schedule:
+      cron: "*/5 5-21 * * 1-6"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.SGF-XD2.door.sgf-xd2-dock-b.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0100"}'
+
+# -----------------------------------------------------------------------------
+# THE MORNING OPEN — `disarm_on_grant` in action
+#
+# sgf-xd2-dock stands ARMED and sgf-xd2-main is disarm_on_grant, so the first
+# valid badge of the day disarms the dock floor with no operator clearing
+# anything. Runs at 05:07 rather than on the hour so it is distinguishable in
+# the timeline from everything else that fires at :00.
+# -----------------------------------------------------------------------------
+- trigger:
+    schedule:
+      cron: "7 5 * * 1-6"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.SGF-XD2.door.sgf-xd2-main.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0003"}'
+
+# Springfield main entrance through the day — drivers and staff, business hours
+# (ag-nw-entrances runs on nw-business-hours, Mon-Fri 07:00-18:00).
+- trigger:
+    schedule:
+      cron: "*/6 7-17 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.SGF-XD2.door.sgf-xd2-main.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0006"}'
+
+# -----------------------------------------------------------------------------
+# OFFICE — and the difference between a posture and a grant
+#
+# kc-office-lobby carries a scheduled `unlocked` posture over nw-business-hours.
+# During those hours the controller never consults the credential at all and
+# answers allow_posture_unlocked; the same card at 18:30 gets allow_grant. One
+# reader, two reason codes, decided by the clock — which is the fastest way to
+# see that posture resolves ABOVE the policy graph, not inside it.
+# -----------------------------------------------------------------------------
+
+# Dana Whitfield (Office Staff + IT) — lobby, during the unlocked window.
+- trigger:
+    schedule:
+      cron: "*/3 7-17 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-OFFICE.door.kc-office-lobby.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0001"}'
+
+# Priya Raman (Cleaning Crew, 18:00-23:00) — the same lobby after the unlocked
+# window closes. This is the allow_grant half of the pair above.
+- trigger:
+    schedule:
+      cron: "*/4 18-22 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-OFFICE.door.kc-office-lobby.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0007"}'
+
+# Priya at the DC main entrance on the evening round.
+- trigger:
+    schedule:
+      cron: "*/6 18-22 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0007"}'
+
+# -----------------------------------------------------------------------------
+# 24/7 — the comms cabinets
+#
+# ag-nw-comms runs on nw-always, which is written 00:00-00:00 (End == Start
+# takes the crosses-midnight branch and is open all day). These two are the only
+# traffic on the board overnight, which is what makes the schedule denials
+# further down legible.
+# -----------------------------------------------------------------------------
+
+# Raj Malhotra (Facilities) — KC comms cabinet.
+- trigger:
+    schedule:
+      cron: "*/7 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-mdf.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0002"}'
+
+# Dana Whitfield (IT) — Springfield comms cabinet.
+- trigger:
+    schedule:
+      cron: "*/9 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.SGF-XD2.door.sgf-xd2-mdf.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0001"}'
+
+# -----------------------------------------------------------------------------
+# THE YARD GATE — a `gate`, not a `door`
+#
+# The subject's third token is the portal TYPE, so this one is
+# acc.KC-DC1.gate.kc-dc1-yard.tap. Getting it wrong is not an error anywhere: the
+# controller subscribes with acc.KC-DC1.*.*.tap, the wildcard matches, and the
+# tap resolves to no portal — deny_unknown_point, from a card that is perfectly
+# valid. It is the single most likely mistake when hand-writing these subjects.
+# -----------------------------------------------------------------------------
+
+# Owen Pryce (Driver) — yard gate, warehouse-shift hours.
+- trigger:
+    schedule:
+      cron: "*/4 6-20 * * 1-6"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.gate.kc-dc1-yard.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0006"}'
+
+# -----------------------------------------------------------------------------
+# VISITORS
+# -----------------------------------------------------------------------------
+
+# Sandra Okonkwo, the live auditor pass (valid yesterday through +3 days).
+# A visitor badge carries the credential VALUE, not the inert identifier a staff
+# badge shows, so this is exactly what her QR encodes.
+- trigger:
+    schedule:
+      cron: "*/8 8-16 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      mode: core
+      payload: '{"cred":"NW-VISIT-001"}'
+
+# -----------------------------------------------------------------------------
+# DENIALS — the security-interesting traffic
+#
+# Five of the six seeded denial causes appear here, each from a card that is
+# genuinely in that state rather than from a hand-written reason string. The
+# sixth, deny_not_yet_valid, has no seeded credential: it needs a future
+# valid_from, which the seed deliberately does not create because a pass nobody
+# can use yet is invisible in every screen. Mint one on the Visitors page with a
+# start date of tomorrow and add a rule here if you want the full set.
+# -----------------------------------------------------------------------------
+
+# Casey Nakamura — enrolled as a Contractor, a role that grants nothing at all.
+# deny_no_access: the card is fine and the person is fine; nobody gave them
+# anything. The most common real-world denial and the least alarming.
+- trigger:
+    schedule:
+      cron: "*/11 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0010"}'
+
+# A card the system has never seen. deny_unknown_credential.
+- trigger:
+    schedule:
+      cron: "*/13 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-dock-a.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-9999"}'
+
+# Glen Hargrove — SUSPENDED PERSON holding an active card.
+- trigger:
+    schedule:
+      cron: "*/17 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-dock-a.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0008"}'
+
+# Brett Nolan — ACTIVE PERSON holding a revoked (lost) card. The mirror image of
+# Glen, and the pair is the point: both come back deny_revoked, because the
+# holder is told no more than that they were refused. The two causes are
+# distinguishable in the console and deliberately not at the door.
+- trigger:
+    schedule:
+      cron: "*/19 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-dock-a.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0009"}'
+
+# Dale Whitmore — a vendor pass that expired a fortnight ago. deny_expired is
+# decided at the EDGE from the credential's own valid_until, so it denies whether
+# or not the housekeeping sweep has got round to marking the pass revoked, and it
+# denies with the WAN down.
+- trigger:
+    schedule:
+      cron: "*/23 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      mode: core
+      payload: '{"cred":"NW-VISIT-002"}'
+
+# Tasha Bell (Security) on the small-hours patrol. Every group she holds runs on
+# a schedule that is closed at 02:00, so a valid card at a portal she is granted
+# comes back deny_schedule_closed — which is a different sentence from "no
+# access" and the reason those are two codes rather than one.
+- trigger:
+    schedule:
+      cron: "*/21 0-4 * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      mode: core
+      payload: '{"cred":"NW-CARD-0005"}'
+
+# -----------------------------------------------------------------------------
+# OPERATOR COMMANDS — acts that never touched a reader
+#
+# These are the reason `source` exists on a tap event. A cmd.grant produces an
+# evt.tap with allow_command_grant and source=command, so a door someone popped
+# from a console stays forensically distinguishable from a card read forever
+# after. Nothing about the physical effect differs — the same strike, the same
+# pulse length.
+# -----------------------------------------------------------------------------
+
+# Reception buzzing someone into the office server room.
+- trigger:
+    schedule:
+      cron: "*/12 8-17 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-OFFICE.door.kc-office-server.cmd.grant"
+      mode: core
+      payload: '{"seconds":5,"actor":"demo-operator","reason":"escorted delivery"}'
+
+# The office gate strike, driven as an AUX OUTPUT rather than a portal. An aux
+# output is a relay with no reader, no door contact and no decision — the type
+# token is the reserved `auxout`, and ag-nw-relays is an access group whose only
+# targets are outputs. A badge that opens no door and still authorizes something
+# is why targets are three independent relations instead of a wider portal list.
+- trigger:
+    schedule:
+      cron: "*/15 8-17 * * 1-5"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-OFFICE.auxout.kc-office-gate.cmd.output"
+      mode: core
+      payload: '{"action":"pulse","seconds":5,"actor":"demo-operator","reason":"visitor at the gate"}'
+
+# Yard lighting on at dusk, off at dawn — a HELD output rather than a pulse.
+- trigger:
+    schedule:
+      cron: "0 18 * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.auxout.kc-dc1-yard-lights.cmd.output"
+      mode: core
+      payload: '{"action":"on","actor":"demo-scheduler","reason":"dusk"}'
+
+- trigger:
+    schedule:
+      cron: "0 6 * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.auxout.kc-dc1-yard-lights.cmd.output"
+      mode: core
+      payload: '{"action":"off","actor":"demo-scheduler","reason":"dawn"}'
+
+# -----------------------------------------------------------------------------
+# POSTURE — a lockdown, and the fact that nothing reverts it on its own
+#
+# The yard gate goes to `lockdown` at 20:00 and back to `clear` at 05:00. Two
+# rules, not one with an `until`: the command's `until` field is parsed and
+# DELIBERATELY IGNORED, because a controller that quietly reverted a lockdown on
+# a timer would be a controller that unlocks a gate while nobody is watching.
+# Timed reversion is an external scheduler's job, and this pair is that scheduler.
+#
+# Owen's yard-gate taps above run to 20:59, so the ones in that last hour come
+# back deny_lockdown — a posture beating a perfectly valid credential, which is
+# the whole point of having one.
+# -----------------------------------------------------------------------------
+- trigger:
+    schedule:
+      cron: "0 20 * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.gate.kc-dc1-yard.cmd.posture"
+      mode: core
+      payload: '{"posture":"lockdown","actor":"demo-scheduler","reason":"yard closed"}'
+
+# `clear` reverts to the EFFECTIVE posture from policy — the scheduled one if its
+# window is open, otherwise the standing one. Not "secure": hard-coding the value
+# you think it should be is how an override outlives the schedule it was masking.
+- trigger:
+    schedule:
+      cron: "0 5 * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.gate.kc-dc1-yard.cmd.posture"
+      mode: core
+      payload: '{"posture":"clear","actor":"demo-scheduler","reason":"yard open"}'
+
+# -----------------------------------------------------------------------------
+# ALARMS — injected, because mock hardware has no door to force
+#
+# Everything above drives the real decision path. These three cannot: a forced
+# or held-open door is observed on a DPS input, and `driver: mock` has no inputs
+# to observe. So these are published as finished `evt.alarm` events straight to
+# the audit subtree, exactly as demo/access-demo.yaml does for taps.
+#
+# Wire them up for real by running a controller with `driver: gpio` on a board
+# with the seeded relay/input map, and delete this section.
+#
+# `mode: jetstream` here and nowhere else: ACC_EVENTS is the only consumer, so
+# the publish ack is the one thing that proves the event was captured.
+# -----------------------------------------------------------------------------
+
+# Forced — Dock A opened with no grant and no REX behind it.
+- trigger:
+    schedule:
+      cron: "*/16 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-dock-a.evt.alarm"
+      mode: jetstream
+      payload: '{"type":"forced","ts":"{@timestamp.iso}"}'
+
+# Held open (DOTL) — the DC main entrance propped past its 30s threshold, then
+# closed two minutes later. The pair matters: a `held` with no `held_clear`
+# leaves an open alarm on the console with nothing that can ever resolve it, and
+# an hour of that is a wall of red that means nothing.
+- trigger:
+    schedule:
+      cron: "*/26 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-main.evt.alarm"
+      mode: jetstream
+      payload: '{"type":"held","ts":"{@timestamp.iso}"}'
+
+- trigger:
+    schedule:
+      cron: "2,28,54 * * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.door.kc-dc1-main.evt.alarm"
+      mode: jetstream
+      payload: '{"type":"held_clear","ts":"{@timestamp.iso}"}'
+
+# Intrusion — the warehouse motion point tripping while its area is armed. An
+# AREA is addressed as a Thing of the reserved type `area`, so this rides the
+# same six-token event wildcard as a portal alarm and needs no stream subject of
+# its own. Only meaningful overnight, when nw-night-arm has kc-dc1-warehouse
+# armed; the cron is restricted to that window so the demo never shows an
+# intrusion in an area that is plainly disarmed.
+- trigger:
+    schedule:
+      cron: "*/34 22-23,0-4 * * *"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.area.kc-dc1-warehouse.evt.alarm"
+      mode: jetstream
+      payload: '{"type":"intrusion","point":"kc-dc1-motion-1","ts":"{@timestamp.iso}"}'
+
+# -----------------------------------------------------------------------------
+# FIRE DRILL — asserted AND cleared
+#
+# `acc.{location}.evt.fire` is the one bidirectional subject: a control input
+# every controller at the site subscribes to, and an audited event the stream
+# captures. Two rules because it is edge-triggered — assert at 03:00 Monday,
+# clear at 03:02. A drill that only ever asserts leaves KC-DC1 latched in fire
+# state, which at that site (`fai_suppress`) means door alarms stay suppressed
+# indefinitely and nobody notices the demo has gone quiet.
+#
+# Software's role here is narrow: suppress false alarms, record, notify. It never
+# unlocks anything — the fire panel's relay drops maglock power directly, and
+# hardware owns egress.
+#
+# 03:00 Monday so it stays out of the way. To see it during a demo, publish it
+# by hand instead:
+#   nats pub acc.KC-DC1.evt.fire '{"active":true}'
+#   nats pub acc.KC-DC1.evt.fire '{"active":false}'
+# -----------------------------------------------------------------------------
+- trigger:
+    schedule:
+      cron: "0 3 * * 1"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.evt.fire"
+      mode: core
+      payload: '{"active":true,"ts":"{@timestamp.iso}"}'
+
+- trigger:
+    schedule:
+      cron: "2 3 * * 1"
+      timezone: "America/Chicago"
+  action:
+    nats:
+      subject: "acc.KC-DC1.evt.fire"
+      mode: core
+      payload: '{"active":false,"ts":"{@timestamp.iso}"}'

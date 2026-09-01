@@ -1,15 +1,40 @@
 # Demo data
 
-Two files that turn a fresh `accessd` into something worth showing: a believable
-multi-site company, and a live trickle of door activity.
+> **Start with `accessd demo-seed --confirm`.** The Northwind Traders seed is now
+> built into the binary (`internal/demoseed`), covered by `go test ./...`, and it
+> uses the same three site codes the Stone Age platform's own `demo-seed` writes —
+> so the two demos describe one company. It needs no `pb` CLI, no superuser
+> session, and no running server.
+>
+> ```bash
+> ./accessd migrate up
+> ./accessd demo-seed --confirm
+> ```
+>
+> What you get: three sites (`KC-DC1`, `KC-OFFICE`, `SGF-XD2`), four controllers
+> across both board models, ten portals including a maglock and a vehicle gate,
+> four areas with scheduled arming, eight aux inputs spanning all three point
+> types, four aux outputs, a holiday calendar, eight roles, six access groups
+> (including the arm-only cleaning crew), fifteen cardholders with badge logins,
+> three visitor passes in three different states, and ~240 backdated events
+> carrying every decision reason code plus three unacknowledged alarms.
+>
+> The two files below still work and are kept for now. `seed.ps1` creates a
+> **different** company (`dc`, `east-office`) so the two do not collide, but
+> running both leaves you with two unrelated demos in one database — pick one.
 
 | File | What it is |
 |---|---|
-| [`seed.ps1`](seed.ps1) | Idempotent PowerShell seed — sites, controllers, portals, an armed area, roles, people, credentials, badge logins, visitor passes, and a backfill of recent events plus unacknowledged alarms. |
-| [`access-demo.yaml`](access-demo.yaml) | [rule-router](https://github.com/stone-age-io) scheduler rules that publish synthetic events on a cron, so the Overview and Alarm Console keep moving during a demo. |
+| [`rules/`](rules) | **Start here for live activity.** rule-router scheduler rules for the `demo-seed` estate. Publishes to the *reader* subject, so running `access-controller` processes make the decisions — nothing about a reason code is fabricated. Needs four controllers up; see [`rules/README.md`](rules/README.md). |
+| [`seed.ps1`](seed.ps1) | Superseded by `accessd demo-seed`. Idempotent PowerShell seed driving the REST API — sites, controllers, portals, an armed area, roles, people, credentials, badge logins, visitor passes, and a backfill of recent events plus unacknowledged alarms. |
+| [`access-demo.yaml`](access-demo.yaml) | The older simulator, for `seed.ps1`'s company and for a deployment with **no controller running**: it injects finished `evt.tap` events into the audit subtree. Still the right tool when you want a moving event feed and nothing else. |
 
-Both are **dev/demo tooling**, not part of either binary. Nothing here ships to a
-customer install, and the passwords below are deliberately weak and well-known.
+> Point `rule-router --rules` at `demo/rules`, not at `demo/` — the latter loads
+> `access-demo.yaml` too, and the two target different companies.
+
+`seed.ps1` and `access-demo.yaml` are **dev/demo tooling**, not part of either
+binary. Nothing here ships to a customer install, and the passwords below are
+deliberately weak and well-known.
 
 ## Seeding
 

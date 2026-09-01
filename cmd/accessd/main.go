@@ -36,6 +36,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/badgesweep"
 	"github.com/stone-age-io/access-control/internal/changelog"
 	"github.com/stone-age-io/access-control/internal/commandapi"
+	"github.com/stone-age-io/access-control/internal/demoseed"
 	"github.com/stone-age-io/access-control/internal/disarm"
 	"github.com/stone-age-io/access-control/internal/health"
 	"github.com/stone-age-io/access-control/internal/logger"
@@ -107,6 +108,13 @@ func main() {
 	// changelog prune, so it registers here rather than in OnServe. No-op unless
 	// eventRetentionDays > 0 — opt-in, so an upgrade never deletes event history.
 	audit.RegisterPrune(pb, cfg.Accessd.EventRetentionDays, log)
+
+	// `demo-seed`: Northwind Traders across three sites, on the same site codes
+	// the platform's own demo uses. A one-shot subcommand, so it registers here
+	// like every other pure-PocketBase concern — it writes records and lets the
+	// mirror's hooks (or SyncAll on the next boot) carry them to KV, exactly as an
+	// operator's edits do.
+	demoseed.RegisterCommand(pb)
 
 	// Resources brought up only when actually serving (not for migrate/superuser).
 	var (

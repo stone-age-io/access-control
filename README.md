@@ -18,6 +18,49 @@ edge controllers (`access-controller`) watch that keyspace and decide locally.
 > CM4) and MCP23017 over I2C (`internal/drivers/i2c`, KinCony Pi5R8 / CM5). Door
 > monitoring (forced / held-open) and controller heartbeat/health are implemented.
 
+## Something to look at
+
+A fresh `accessd` has one door and one cardholder, which is enough to prove the
+decision function runs and not much else. One command fills it:
+
+```bash
+./accessd migrate up
+./accessd demo-seed --confirm
+```
+
+Northwind Traders across three sites: four controllers spanning both board models,
+ten portals (including a maglock on a freezer door and a vehicle gate), four areas
+with scheduled overnight arming, aux inputs covering all three point types, a
+holiday calendar, eight roles, six access groups, fifteen cardholders with badge
+logins, three visitor passes in three different states, and a backdated event
+history carrying **every decision reason code** plus three unacknowledged alarms.
+
+Every badge login is `demo1234`. Sign in at `/login?as=badge` as
+`elena@northwind.example` (warehouse — can arm *and* disarm) and
+`priya@northwind.example` (cleaning — can arm, **cannot** disarm) to see why arm
+and disarm are two rights rather than one checkbox.
+
+The three site codes — `KC-DC1`, `KC-OFFICE`, `SGF-XD2` — are the ones the
+[Stone Age platform](https://github.com/stone-age-io/platform)'s own `demo-seed`
+writes for its Northwind organization, and every controller and portal code above
+is also a Thing in that platform's inventory. Seed both and the two apps describe
+one company: a door here and a Thing there are the same door, and its QR label
+resolves in either.
+
+Idempotent, so re-running tops up rather than duplicating. `--confirm` is
+required and is the whole safety mechanism — this ships in the binary you run in
+production, and it creates people holding working credentials on real doors.
+
+### Making it move
+
+[`demo/rules/`](demo/rules) holds [rule-router](https://github.com/stone-age-io)
+scheduler rules that keep the estate busy: badge taps at all ten portals,
+operator door-pops, a nightly gate lockdown, yard lighting, alarms and a fire
+drill. They publish to the **reader** subject, so running controllers decide each
+one for real — the reason codes on the Events screen are the ones
+`policy.Decide` produced, and editing an access group changes what the next tap
+returns.
+
 ## Docs
 
 - [`docs/protocol.md`](docs/protocol.md) — the NATS wire contract: subjects, KV
