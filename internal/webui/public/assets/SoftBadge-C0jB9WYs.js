@@ -1,1 +1,0 @@
-import{L as e,P as t,b as n,m as r,p as i,wt as a}from"./pb-EgFc37vy.js";var o={key:0,class:`badge-dot`},s=n({__name:`SoftBadge`,props:{tone:{default:`neutral`},dot:{type:Boolean,default:!1}},setup(n){return(s,c)=>(t(),r(`span`,{class:a([`badge-soft`,`badge-soft-${n.tone}`])},[n.dot?(t(),r(`span`,o)):i(``,!0),e(s.$slots,`default`)],2))}});export{s as t};

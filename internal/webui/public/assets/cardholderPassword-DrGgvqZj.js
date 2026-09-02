@@ -1,1 +1,0 @@
-var e=24;function t(){let t=new Uint8Array(e);return crypto.getRandomValues(t),btoa(String.fromCharCode(...t))}function n(e){let n=e;if(!n.password){let e=t();n.password=e,n.passwordConfirm=e}return e}export{n as t};
