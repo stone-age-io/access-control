@@ -179,7 +179,11 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
+// Guards decide by RETURNING, not by calling a next() callback: a path string or
+// location redirects, false aborts and stays put, and returning nothing lets the
+// navigation through. vue-router 5 deprecates next() (it still works, and warns
+// once per navigation in dev); this is also the shape the platform app uses.
+router.beforeEach((to, from) => {
   // Badge routes are guarded by the BADGE session, never the operator one. Handled
   // first and returned from, so no operator rule below can redirect a badge holder to
   // the operator login (or vice versa) — the two tiers share a browser but nothing
@@ -187,33 +191,29 @@ router.beforeEach((to, from, next) => {
   if (to.meta.badge) {
     const badgeAuth = useBadgeAuthStore()
     if (to.meta.badgeAuth && !badgeAuth.isAuthenticated) {
-      next({ name: 'Login', query: { as: 'badge' } })
-      return
+      return { name: 'Login', query: { as: 'badge' } }
     }
     // /login is shared by both tiers, so skipping it when already signed in has to
     // respect which tier is being asked for.
     if (to.name === 'Login') {
       const wantsBadge = to.query.as === 'badge'
       if (wantsBadge && badgeAuth.isAuthenticated) {
-        next('/badge')
-        return
+        return '/badge'
       }
       // An OPERATOR is deliberately not bounced to / when ?as=badge is present: signing
       // a visitor in at a kiosk the operator is already logged into is a normal flow,
       // and redirecting them to the console would make it impossible.
       if (!wantsBadge && useAuthStore().isAuthenticated) {
-        next('/')
-        return
+        return '/'
       }
     }
-    next()
+    // Badge tier handled: let it through WITHOUT falling into the operator rules.
     return
   }
 
   const authStore = useAuthStore()
   if (to.meta.requiresAuth !== false && !authStore.isAuthenticated) {
-    next('/login')
-    return
+    return '/login'
   }
   // Capability gate: a route may require a specific operator capability. On an
   // in-app navigation we stay put (just toast); on a direct URL load (no prior
@@ -221,14 +221,8 @@ router.beforeEach((to, from, next) => {
   const capability = to.meta.capability as string | undefined
   if (capability && authStore.isAuthenticated && !authStore.can(capability)) {
     useToast().error('You do not have permission to access that page.')
-    if (from.name) {
-      next(false)
-    } else {
-      next('/')
-    }
-    return
+    return from.name ? false : '/'
   }
-  next()
 })
 
 // Keep the browser tab title in sync with the active route.
