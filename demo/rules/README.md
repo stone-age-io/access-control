@@ -2,8 +2,13 @@
 
 [`northwind-access.yaml`](northwind-access.yaml) keeps the `accessd demo-seed`
 estate moving: badge taps at all ten portals across the three sites, operator
-door-pops, a nightly gate lockdown, yard lighting, a trickle of alarms, and a
+door-pops, a nightly gate lockdown, yard lighting, the dock horn and the weekly
+siren test, intrusions in all three armed areas, a trickle of alarms, and a
 weekly fire drill.
+
+Every portal code, output code, area code, detector code and credential value in
+it is one the seed creates — including the fire-lockbox card and the two aux
+outputs that nothing used to drive.
 
 It **drives real controllers**. Taps are published to the reader subject
 `acc.{location}.{type}.{thing}.tap`, so a running `access-controller` decides
@@ -85,21 +90,24 @@ role fits it.
 
 | Where | What |
 |---|---|
-| Events | a steady mix of `allow_grant`, `allow_posture_unlocked`, and five different denial codes |
-| Alarm Console | a forced door on Dock A, and a held-open on the DC entrance that clears itself two minutes later |
-| Monitor | strikes pulsing, the Springfield dock disarming on the morning open, the yard gate under lockdown after 20:00 |
+| Events | a steady mix of `allow_grant`, `allow_posture_unlocked`, and five different denial codes — under **half a dozen different names**, not one repeated |
+| Alarm Console | a forced door on Dock A, a held-open on the DC entrance that clears itself two minutes later, and overnight intrusions in three different areas |
+| Monitor | strikes pulsing, the Springfield dock disarming on the morning open, the yard gate under lockdown after 20:00, the dock horn on a pulse |
 | Controllers | four boxes online, heartbeating every 15s |
+
+A minute is now generous: taps run on a seconds-granularity cron, so the Events
+screen is visibly moving within about twenty seconds of the scheduler starting.
 
 ## Things the file is deliberately doing
 
 **Publish mode is set per action, not inherited.** `mode: core` for anything a
 controller consumes — taps and `cmd.*` have no JetStream stream covering them, so
 a jetstream publish would hang waiting for an ack that never comes. `mode:
-jetstream` for the three injected alarms, where the ACC_EVENTS ack is the only
+jetstream` for the injected alarms, where the ACC_EVENTS ack is the only
 proof the event was captured.
 
 **The alarms are the one thing not driven for real.** A forced or held-open door
-is observed on a DPS input and `driver: mock` has none, so those three are
+is observed on a DPS input and `driver: mock` has none, so they are
 published as finished `evt.alarm` events. Run a controller with `driver: gpio`
 on real hardware and you can delete that section.
 
@@ -111,20 +119,47 @@ rather than raising one per granted tap. If it did, the Alarm Console would take
 a few hundred an hour and bury the forced, held and intrusion alarms this file
 stages on purpose. Run `driver: gpio` on real hardware and they become real.
 
-**Business hours live in the cron, not in conditions.** Cron is 5-field with a
-one-minute floor, and every rule carries `timezone: America/Chicago`. That makes
-the window exact and visible on the line you are reading.
+**Business hours live in the cron, not in conditions.** Every rule carries
+`timezone: America/Chicago`, which makes the window exact and visible on the line
+you are reading. Cron now takes an **optional leading seconds field**, so read
+the field count before assuming a `*/20` is minutes: `*/20 * 5-21 * * 1-6` is
+every twenty seconds during warehouse shift.
+
+**Which card taps is a `{@random.choice(...)}`; which denial fires is not.** An
+allow-tap rule picks among the cards that are *all* granted at that portal on
+that schedule, so one rule produces a mix of names instead of one name repeated.
+The denial rules stay one card each on a minute cron, because the point of that
+section is that each reason code arrives at a **known rate from a known cause** —
+folding six causes into one choice would randomise the rate along with the name.
+The cron sets the rate; random sets who.
+
+The sets are read straight off `internal/demoseed/data.go` (a role holds groups,
+a group holds portals and a schedule) and must not be widened casually: adding a
+card that is not on the group turns a staged allow into a `deny_no_access` that
+nobody staged. Glen (suspended) and Brett (revoked card) hold the warehouse role
+and are deliberately absent from every allow set for exactly that reason.
 
 **The fire drill both asserts and clears.** `evt.fire` is edge-triggered; a rule
 that only ever asserts leaves KC-DC1 latched in fire state, which at that site
 (`fai_suppress`) silently suppresses every door alarm from then on.
 
+## Requirements
+
+A rule-router build with **six-field cron** and the **`{@random.*}` template
+functions**. On an older one every rule in the file fails to load, loudly, at
+startup.
+
 ## Turning it down
 
-Peak is roughly four or five taps a minute on a weekday shift. Widen the busiest
-crons (`*/2` → `*/6`) to calm it. Alarms project **unacknowledged and
-accumulate** until someone acks them in the Alarm Console — fine for an hour,
-a nuisance over a week.
+Peak is roughly **ten taps a minute** on a weekday shift — enough that the Events
+screen fills in seconds rather than in a quarter of an hour, and more than you
+want running for a week. Widen the busiest crons (`*/20` → `*/90`), or drop the
+seconds field entirely to go back to minute granularity.
+
+Alarms project **unacknowledged and accumulate** until someone acks them in the
+Alarm Console. They were deliberately left on minute crons and single hard-coded
+values while the taps got faster, because their rate is the number a reader most
+needs to be able to predict from the cron alone.
 
 ## Two things that expire
 

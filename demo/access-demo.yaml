@@ -32,8 +32,24 @@
 #     ACC_EVENTS, so each publish is ACKed by the stream).
 #
 # NOTES
-#   - Cron is 1-minute granularity (5-field). Time-of-day gating is done with cron
-#     hour/day-of-week fields + per-rule timezone, not conditions, so it's exact.
+#   - Cron takes an optional leading SECONDS field, so the allow-taps below run on
+#     a seconds cadence (`*/30 * 7-18 * * 1-5` is every thirty seconds during
+#     business hours) and the Recent Activity feed fills in seconds rather than in
+#     a quarter of an hour. Read the field count before assuming a `*/30` is
+#     minutes. Time-of-day gating stays in the cron hour/day-of-week fields plus a
+#     per-rule timezone rather than in conditions, so it's exact.
+#   - The DENY taps and the alarms below are deliberately left on MINUTE crons.
+#     The point of those sections is that each reason code and each alarm arrives
+#     at a known rate; speeding them up trades that for volume, and alarms
+#     accumulate unacknowledged besides.
+#   - NO `{@random.choice(...)}` ON THE CREDENTIALS HERE, and the reason is worth
+#     knowing before you copy the pattern from demo/rules/northwind-access.yaml,
+#     which does use it. Every payload in THIS file carries a `cred` AND a `user`
+#     that have to refer to the same person. Two independent random draws cannot
+#     guarantee that, so a choice on each would eventually publish one person's
+#     card under another person's name — in an event that looks like an audit
+#     record. The other file can randomise safely because it publishes only
+#     `{"cred": ...}` and lets the controller resolve the holder.
 #   - Alarms project as unacknowledged and ACCUMULATE until an operator acks them
 #     in the Alarm Console. Keep the scheduler running only as long as you want the
 #     trickle; raise the alarm intervals below if it gets noisy.
@@ -54,7 +70,7 @@
 # HQ — Lobby Main, weekday business hours (Central)
 - trigger:
     schedule:
-      cron: "*/2 7-18 * * 1-5"
+      cron: "*/30 * 7-18 * * 1-5"
       timezone: "America/Chicago"
   action:
     nats:
@@ -64,7 +80,7 @@
 # HQ — Public Lobby (auto-unlocked during office hours → posture allow)
 - trigger:
     schedule:
-      cron: "*/3 7-18 * * 1-5"
+      cron: "*/40 * 7-18 * * 1-5"
       timezone: "America/Chicago"
   action:
     nats:
@@ -74,7 +90,7 @@
 # East Coast Office — Lobby, weekday business hours (Eastern)
 - trigger:
     schedule:
-      cron: "*/3 8-19 * * 1-5"
+      cron: "*/40 * 8-19 * * 1-5"
       timezone: "America/New_York"
   action:
     nats:
@@ -84,7 +100,7 @@
 # Distribution Center — pedestrian turnstile, extended hours Mon–Sat (Central)
 - trigger:
     schedule:
-      cron: "*/4 6-21 * * 1-6"
+      cron: "*/45 * 6-21 * * 1-6"
       timezone: "America/Chicago"
   action:
     nats:
