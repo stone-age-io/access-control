@@ -6,6 +6,14 @@
          viewport-fit=cover lets us pad for notches/home indicator via env() safe-area insets. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Stone Access</title>
+    <!-- The basemap origin. MapLibre does not ask for the style until the map is
+         constructed, a megabyte of renderer into the page, so the DNS + TCP + TLS
+         handshake to this host is worth starting during the HTML parse instead.
+         crossorigin is load-bearing, not decoration: the style, glyphs, sprite and
+         tiles are all CORS fetches, and a preconnect without it opens the socket in
+         the wrong credentials mode, so nothing reuses it and the handshake happens
+         twice. Mirrors the platform app. -->
+    <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin>
     <meta name="theme-color" content="#0a0a0a">
     <!-- PWA: installable to a home screen, which is the point for a badge holder —
          a badge you tap an icon for beats one you find a bookmark for. Matches the

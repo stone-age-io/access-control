@@ -26,8 +26,30 @@ export default defineConfig({
     // internal/webui/public and served by accessd's OnServe SPA route.
     outDir: '../internal/webui/public',
     emptyOutDir: true,
-    // Vite 8 bundles with rolldown; default chunking is fine for an app this
-    // size (no manualChunks object — rolldown only accepts the function form).
     chunkSizeWarningLimit: 600,
+    // Vite 8 bundles with Rolldown, not Rollup. The object form of
+    // `manualChunks` is gone, but `codeSplitting.groups` replaces it and stays
+    // closer to the old object form than a function would -- a group also
+    // captures the dependencies of what it matches
+    // (`includeDependenciesRecursively` defaults to true). An earlier comment
+    // here claimed rolldown accepts only the function form; it does not, and
+    // that claim is why this app shipped with no chunking at all.
+    //
+    // Each `test` demands a path separator after the package name so a prefix
+    // cannot swallow a sibling.
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            // MapLibre GL, the vector basemap renderer behind L.maplibreGL.
+            // ~900kB on its own: left ungrouped it fell into the useLeafletMap
+            // chunk, so every edit to that composable re-hashed a megabyte and
+            // every returning user re-downloaded the renderer to pick up a
+            // five-line change.
+            { name: 'maplibre', test: /[\\/]node_modules[\\/](?:maplibre-gl|@maplibre[\\/][^\\/]+)[\\/]/ },
+          ],
+        },
+      },
+    },
   },
 })
