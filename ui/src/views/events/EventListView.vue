@@ -89,6 +89,10 @@ async function exportCsv() {
     const rows = await pb.collection('events').getFullList<AccessEvent>({
       filter: opts.filter || undefined,
       sort: opts.sort,
+      // Only the columns EXPORT_COLUMNS maps. The whole record would drag
+      // `payload` (a 64KB-ceiling JSON field) along for every row, and with no
+      // date range set this walks the entire collection.
+      fields: 'ts,created,kind,source,location,portal,type,credential,user,allow,reason',
       batch: 500,
     })
     const mapped: EventRow[] = rows.map((e) => ({

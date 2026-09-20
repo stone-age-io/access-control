@@ -919,6 +919,7 @@ func TestEventIndexes(t *testing.T) {
 			want: []string{
 				"idx_events_ts_created", "idx_events_kind_ts",
 				"idx_events_source_ts", "idx_events_kind_ack_created",
+				"idx_events_kind_allow_ts",
 			},
 		},
 		{

@@ -32,6 +32,14 @@ function rangeFilter(): string {
   return clauses.join(' && ')
 }
 
+// Exactly what the table, the two tallies and the CSV read — nothing else.
+// Without this the whole record comes back for every row, and `payload` is a
+// JSON field with a 64KB ceiling, so a few thousand denials drag several MB of
+// event bodies the report never opens across the wire and through two JSON
+// passes. This is the one query where that matters: the paged views fetch 25
+// rows at a time, and this one fetches the entire range at once.
+const FIELDS = 'id,ts,created,location,portal,credential,user,reason'
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -39,6 +47,7 @@ async function load() {
     denials.value = await pb.collection('events').getFullList<AccessEvent>({
       filter: rangeFilter(),
       sort: '-ts,-created',
+      fields: FIELDS,
       batch: 500,
     })
   } catch (err: any) {
