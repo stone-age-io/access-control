@@ -11,8 +11,12 @@ import ListLayout from '@/components/ui/ListLayout.vue'
 import ListPagination from '@/components/ui/ListPagination.vue'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 
+// countOnce: audit_logs grows without bound (a row per policy edit and per
+// operator login), and its rows are wide — `before`/`after` are 1MB-ceiling JSON
+// — so the COUNT(*) behind totalItems is an expensive pass. Same reasoning as
+// the events timeline: take it on load(), reuse it while paging under it.
 const { items: logs, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
-  usePagination<AuditLog>('audit_logs', 25)
+  usePagination<AuditLog>('audit_logs', 25, { countOnce: true })
 
 const typeFilter = ref<AuditEventType | ''>('')
 const searchQuery = ref('')

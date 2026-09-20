@@ -897,3 +897,55 @@ func TestGroupTargetsFixture(t *testing.T) {
 		t.Errorf("fixture aux output lobby-gate missing: %v", err)
 	}
 }
+
+// TestEventIndexes pins the indexes the high-volume collections are read
+// through. These were added because the events timeline and the audit log both
+// sorted without an index that could serve the ORDER BY, so every page turn
+// full-scanned the table and sorted it into a temp B-tree (1750000045/46/47).
+//
+// It also pins the three DROPPED audit_logs indexes as absent. They were on
+// columns nothing queries, and the likeliest way they come back is a migratecmd
+// Automigrate snapshot of a dashboard edit — which this catches.
+func TestEventIndexes(t *testing.T) {
+	app := newApp(t)
+
+	for _, tc := range []struct {
+		collection string
+		want       []string
+		absent     []string
+	}{
+		{
+			collection: "events",
+			want: []string{
+				"idx_events_ts_created", "idx_events_kind_ts",
+				"idx_events_source_ts", "idx_events_kind_ack_created",
+			},
+		},
+		{
+			collection: "audit_logs",
+			want:       []string{"idx_audit_logs_timestamp_created", "idx_audit_logs_type_timestamp"},
+			absent: []string{
+				"idx_audit_logs_collection", "idx_audit_logs_record", "idx_audit_logs_actor",
+			},
+		},
+		{collection: "credentials", want: []string{"idx_credentials_user_created"}},
+		{collection: "cardholders", want: []string{"idx_cardholders_name", "idx_cardholders_kind_created"}},
+	} {
+		col, err := app.FindCollectionByNameOrId(tc.collection)
+		if err != nil {
+			t.Errorf("collection %q not found: %v", tc.collection, err)
+			continue
+		}
+		joined := strings.Join(col.Indexes, "\n")
+		for _, name := range tc.want {
+			if !strings.Contains(joined, name) {
+				t.Errorf("%s: missing index %q\ngot:\n%s", tc.collection, name, joined)
+			}
+		}
+		for _, name := range tc.absent {
+			if strings.Contains(joined, name) {
+				t.Errorf("%s: index %q should have been dropped\ngot:\n%s", tc.collection, name, joined)
+			}
+		}
+	}
+}
