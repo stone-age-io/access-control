@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { pb } from '@/utils/pb'
 import { formatDate, formatConstant, localInputToISO, isoToLocalInput } from '@/utils/format'
-import { tsRangeClauses } from '@/utils/events'
+import { tsRangeClauses, eventUser } from '@/utils/events'
 import { toCsv, downloadCsv, fileStamp, type CsvColumn } from '@/utils/csv'
 import { useClientPagination } from '@/composables/useClientPagination'
 import type { AccessEvent } from '@/types/pocketbase'
@@ -38,7 +38,7 @@ function rangeFilter(): string {
 // event bodies the report never opens across the wire and through two JSON
 // passes. This is the one query where that matters: the paged views fetch 25
 // rows at a time, and this one fetches the entire range at once.
-const FIELDS = 'id,ts,created,location,portal,credential,user,reason'
+const FIELDS = 'id,ts,created,location,portal,credential,user,user_name,reason'
 
 async function load() {
   loading.value = true
@@ -72,7 +72,7 @@ const filtered = computed(() => {
     e.location?.toLowerCase().includes(q) ||
     e.portal?.toLowerCase().includes(q) ||
     e.credential?.toLowerCase().includes(q) ||
-    e.user?.toLowerCase().includes(q) ||
+    eventUser(e).toLowerCase().includes(q) ||
     e.reason?.toLowerCase().includes(q),
   )
 })
@@ -116,7 +116,7 @@ function exportCsv() {
     location: e.location,
     portal: e.portal,
     credential: e.credential,
-    cardholder: e.user,
+    cardholder: eventUser(e),
     reason: e.reason,
   }))
   downloadCsv(`denied-access-${fileStamp()}.csv`, toCsv(rows, EXPORT_COLUMNS))
@@ -210,7 +210,7 @@ onMounted(load)
                 <td><code class="text-xs">{{ e.location || '-' }}</code></td>
                 <td>{{ e.portal || '-' }}</td>
                 <td class="font-mono text-xs">{{ e.credential || '-' }}</td>
-                <td>{{ e.user || '-' }}</td>
+                <td>{{ eventUser(e) || '-' }}</td>
                 <td><SoftBadge tone="error">{{ formatConstant(e.reason) || '-' }}</SoftBadge></td>
               </tr>
             </tbody>

@@ -324,6 +324,8 @@ export interface Credential extends BaseRecord {
   value: string
   type: CredentialType | ''
   user: string
+  /** Cardholder display name resolved at projection time; empty on rows whose `user` is not a cardholder id (legacy rows, command actors, unknown credentials). */
+  user_name: string
   status: CredentialStatus | ''
   label: string
   /** ISO datetime; presentations before this deny. Empty = no lower bound. */
@@ -435,6 +437,8 @@ export interface AccessEvent extends BaseRecord {
   kind: EventKind | ''
   credential: string
   user: string
+  /** Cardholder display name resolved at projection time; empty on rows whose `user` is not a cardholder id (legacy rows, command actors, unknown credentials). */
+  user_name: string
   allow: boolean
   reason: string
   /** Reader transport that produced a tap; empty for non-tap and legacy rows. */

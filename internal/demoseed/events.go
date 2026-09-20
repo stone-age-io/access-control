@@ -123,6 +123,22 @@ func (s *seeder) seedEvents() error {
 		}
 		holderName[ch.ExternalID] = ch.Name
 	}
+
+	// Seeded rows have to carry what a REAL event carries, or the demo hides
+	// bugs in the shape of the data. This one did: `user` used to get the
+	// person's name here, while a live event carries the cardholder's record id
+	// (policykv.User has no name for the edge to emit), so the console read
+	// correctly on seeded history and showed a raw id on everything the system
+	// actually produced. The id goes in `user` and the name in `user_name`,
+	// exactly as internal/audit's consumer writes them.
+	holderID := map[string]string{}
+	holders, err := s.app.FindAllRecords("cardholders")
+	if err != nil {
+		return err
+	}
+	for _, h := range holders {
+		holderID[h.GetString("external_id")] = h.Id
+	}
 	portalLoc := map[string]string{}
 	portalType := map[string]string{}
 	for _, p := range portals {
@@ -186,7 +202,8 @@ func (s *seeder) seedEvents() error {
 			"type":       portalType[spec.Portal],
 			"kind":       "tap",
 			"credential": cred,
-			"user":       holderName[spec.Holder],
+			"user":       holderID[spec.Holder],
+			"user_name":  holderName[spec.Holder],
 			"allow":      spec.Allow,
 			"reason":     spec.Reason,
 			"source":     spec.Source,

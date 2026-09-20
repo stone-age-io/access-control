@@ -189,7 +189,42 @@ func (c *Consumer) recordFrom(subject string, data []byte) (*core.Record, bool, 
 		rec.Set("ts", ts)
 	}
 	rec.Set("payload", body)
+	c.setUserName(rec)
 	return rec, true, nil
+}
+
+// setUserName resolves the cardholder id in `user` to a display name, so the
+// console can show who an event was about without every view learning how to
+// look a person up — and so the answer is the name that was current WHEN the
+// event happened, not whatever the record says later.
+//
+// `user` stays the id. This is a denormalized snapshot: the id is the join key,
+// the name is what an operator reads, and an audit trail wants both. Resolving
+// at display time instead would show a renamed cardholder's new name against an
+// old event, and would show nothing at all once that cardholder is deleted —
+// which is precisely when someone is asking who it was.
+//
+// Fail-safe, like everything else here: anything that does not resolve to a
+// cardholder leaves user_name empty and the row is written regardless. That is
+// the common case for several legitimate shapes — a deny_unknown_credential tap
+// has no user, an operator command's actor is not a cardholder, and legacy rows
+// carry a name in `user` already — none of which is an error, and none of which
+// is worth failing a projection over. The UI falls back to `user`.
+//
+// No cache. It is one primary-key lookup on a message path that also loads the
+// collection and writes a row, and a cache here would have to answer when a
+// rename should become visible — a question with no good answer that this does
+// not have to ask.
+func (c *Consumer) setUserName(rec *core.Record) {
+	id := rec.GetString("user")
+	if id == "" {
+		return
+	}
+	holder, err := c.app.FindRecordById("cardholders", id)
+	if err != nil {
+		return // not a cardholder id (command actor, legacy name, deleted holder)
+	}
+	rec.Set("user_name", holder.GetString("name"))
 }
 
 // setSource writes body["source"] onto the row only if events.source actually

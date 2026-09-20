@@ -3,6 +3,7 @@ package audit
 import (
 	"testing"
 
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/subjects"
@@ -166,5 +167,73 @@ func TestRecordFromForeignSourceStillProjects(t *testing.T) {
 	}
 	if payload["source"] != "override" {
 		t.Errorf("payload source = %v, want override (dropped from the column, kept in payload)", payload["source"])
+	}
+}
+
+// A tap whose `user` is a real cardholder id gets that person's name resolved
+// into user_name, while `user` keeps the id. This is what stops the console
+// rendering a 15-character record id where an operator expects a name — the
+// policy wire carries no name (policykv.User is {id, status, roles}), so the
+// edge emits the id and the projection is the only place the two can meet.
+func TestRecordFromTapResolvesUserName(t *testing.T) {
+	c, app := newConsumer(t)
+
+	col, err := app.FindCollectionByNameOrId("cardholders")
+	if err != nil {
+		t.Fatalf("cardholders: %v", err)
+	}
+	holder := core.NewRecord(col)
+	holder.Set("external_id", "nw-test")
+	holder.Set("name", "Ada Lovelace")
+	holder.Set("status", "active")
+	holder.Set("password", "0123456789abcdef")
+	if err := app.Save(holder); err != nil {
+		t.Fatalf("save cardholder: %v", err)
+	}
+
+	data := []byte(`{"cred":"CARD-001","user":"` + holder.Id + `","allow":false,"reason":"deny_no_access","ts":"2026-01-05T14:00:00Z"}`)
+	rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+	if err != nil || !ok {
+		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
+	}
+	if got := rec.GetString("user"); got != holder.Id {
+		t.Errorf("user = %q, want the id %q — the join key must survive", got, holder.Id)
+	}
+	if got := rec.GetString("user_name"); got != "Ada Lovelace" {
+		t.Errorf("user_name = %q, want %q", got, "Ada Lovelace")
+	}
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save events row: %v", err)
+	}
+}
+
+// Everything that is not a cardholder id leaves user_name empty and still
+// projects. These are ordinary shapes, not errors: a deny_unknown_credential
+// tap has no user at all, an operator command's actor is not a cardholder, and
+// a deleted holder's id resolves to nothing. The UI falls back to `user`.
+func TestRecordFromTapUnresolvableUserStillProjects(t *testing.T) {
+	c, app := newConsumer(t)
+
+	for _, tc := range []struct{ name, user string }{
+		{"no user at all", ""},
+		{"command actor", "badge:some-cardholder"},
+		{"deleted or unknown id", "zzzzzzzzzzzzzzz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(`{"cred":"CARD-999","user":"` + tc.user + `","allow":false,"reason":"deny_unknown_credential","ts":"2026-01-05T14:00:00Z"}`)
+			rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+			if err != nil || !ok {
+				t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
+			}
+			if got := rec.GetString("user_name"); got != "" {
+				t.Errorf("user_name = %q, want empty", got)
+			}
+			if got := rec.GetString("user"); got != tc.user {
+				t.Errorf("user = %q, want %q passed through untouched", got, tc.user)
+			}
+			if err := app.Save(rec); err != nil {
+				t.Fatalf("save events row: %v", err)
+			}
+		})
 	}
 }

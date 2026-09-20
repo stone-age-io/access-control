@@ -55,6 +55,24 @@ export function reasonExplanation(code: string): string {
   return REASON_EXPLANATIONS[code] || ''
 }
 
+/**
+ * Who an event was about, for display.
+ *
+ * `user` holds the cardholder's PocketBase record id — the policy wire carries
+ * no name (policykv.User is {id, status, roles}), so an id is all the edge can
+ * emit. `user_name` is the name the audit consumer resolved when it projected
+ * the row, which is the name that was current at the time rather than now.
+ *
+ * The fallback is not defensive padding; several real shapes have no resolvable
+ * holder and must still read sensibly: a deny_unknown_credential tap (nobody),
+ * an operator command (the actor is not a cardholder), and every row projected
+ * before migration 1750000049. Showing the raw `user` beats showing a blank
+ * where a name should be.
+ */
+export function eventUser(e: AccessEvent): string {
+  return e.user_name || e.user || ''
+}
+
 /** The specific alarm sub-type (intrusion/forced/held/tamper) from the payload, else the kind. */
 export function alarmType(e: AccessEvent): string {
   return (e.payload?.type as string) || e.kind || 'alarm'

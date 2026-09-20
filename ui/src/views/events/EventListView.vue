@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { usePagination } from '@/composables/usePagination'
 import { pb } from '@/utils/pb'
 import { formatDate, formatConstant, localInputToISO } from '@/utils/format'
-import { eventKindTone, tsRangeClauses } from '@/utils/events'
+import { eventKindTone, tsRangeClauses, eventUser } from '@/utils/events'
 import { toCsv, downloadCsv, fileStamp, type CsvColumn } from '@/utils/csv'
 import type { AccessEvent, EventKind, EventSource } from '@/types/pocketbase'
 import type { Column } from '@/components/ui/ResponsiveList.vue'
@@ -92,7 +92,7 @@ async function exportCsv() {
       // Only the columns EXPORT_COLUMNS maps. The whole record would drag
       // `payload` (a 64KB-ceiling JSON field) along for every row, and with no
       // date range set this walks the entire collection.
-      fields: 'ts,created,kind,source,location,portal,type,credential,user,allow,reason',
+      fields: 'ts,created,kind,source,location,portal,type,credential,user,user_name,allow,reason',
       batch: 500,
     })
     const mapped: EventRow[] = rows.map((e) => ({
@@ -103,7 +103,7 @@ async function exportCsv() {
       portal: e.portal,
       type: e.type,
       credential: e.credential,
-      user: e.user,
+      user: eventUser(e),
       result: e.kind === 'tap' ? (e.allow ? 'allow' : 'deny') : '',
       reason: e.reason,
     }))
@@ -122,7 +122,7 @@ const filtered = computed(() => {
     e.location?.toLowerCase().includes(q) ||
     e.portal?.toLowerCase().includes(q) ||
     e.credential?.toLowerCase().includes(q) ||
-    e.user?.toLowerCase().includes(q) ||
+    eventUser(e).toLowerCase().includes(q) ||
     e.reason?.toLowerCase().includes(q)
   )
 })

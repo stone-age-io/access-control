@@ -5,7 +5,7 @@
  * caller owns the selected event and clears it on `close`.
  */
 import { formatDate, formatConstant } from '@/utils/format'
-import { eventKindTone } from '@/utils/events'
+import { eventKindTone, eventUser } from '@/utils/events'
 import type { AccessEvent } from '@/types/pocketbase'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 
@@ -34,7 +34,14 @@ const emit = defineEmits<{ close: [] }>()
             <span v-else class="opacity-40">n/a</span>
           </div>
           <div><span class="opacity-50 text-xs uppercase block">Credential</span><code>{{ event.credential || '-' }}</code></div>
-          <div><span class="opacity-50 text-xs uppercase block">User</span><code>{{ event.user || '-' }}</code></div>
+          <!-- The one place the raw id stays on screen: this is the forensic
+               join key, and a detail dialog is where someone is asking exactly
+               that. Elsewhere the name alone is what an operator wants. -->
+          <div>
+            <span class="opacity-50 text-xs uppercase block">User</span>
+            <span>{{ eventUser(event) || '-' }}</span>
+            <code v-if="event.user_name && event.user" class="block text-xs opacity-50">{{ event.user }}</code>
+          </div>
           <div><span class="opacity-50 text-xs uppercase block">Source</span>
             <SoftBadge v-if="event.source">{{ event.source }}</SoftBadge>
             <span v-else class="opacity-40">n/a</span>
