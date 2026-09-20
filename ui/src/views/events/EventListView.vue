@@ -14,8 +14,12 @@ import ListPagination from '@/components/ui/ListPagination.vue'
 import EventDetailModal from '@/components/ui/EventDetailModal.vue'
 import SoftBadge from '@/components/ui/SoftBadge.vue'
 
+// countOnce: events is the one unbounded collection, so the COUNT(*) behind
+// totalItems is a full pass over every row — paying it again on each page turn
+// doubled the cost of the click. It's taken on load() (mount, and every filter
+// change, both of which reset to page 1) and reused while paging under it.
 const { items: events, page, totalPages, totalItems, loading, error, load, nextPage, prevPage } =
-  usePagination<AccessEvent>('events', 25)
+  usePagination<AccessEvent>('events', 25, { countOnce: true })
 
 const kindFilter = ref<EventKind | ''>('')
 const sourceFilter = ref<EventSource | ''>('')
