@@ -190,7 +190,9 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   disarmed) and writes a **per-controller arm shadow** to ACC_STATUS (`area.{controller}.{areacode}`), stamping
   the full participant set (`peers`) so the console can tell "all armed" from "a box never reported." It reconciles
   on policy change *and* on the runtime's hold-eval tick (so scheduled-arm boundaries refresh — **no new timer**),
-  and drops a shadow when an area leaves the box. That shadow is also where an arm/disarm becomes an **event**:
+  rewrites a shadow only when its arm/source/peers change (it once re-stamped `updatedAt` every tick, which defeated
+  the StatusWriter's value dedup and put every area key on every box every 10s), and drops a shadow when an area
+  leaves the box. That shadow is also where an arm/disarm becomes an **event**:
   all four paths that change arm-state (the operator route, entry-disarm, the one-shot release, and a scheduled
   auto-arm evaluated at the edge) converge on it, so accessd's status projector emits
   `acc.{loc}.area.{code}.evt.state` by comparing old-vs-new on the record it has *already loaded* — one

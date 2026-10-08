@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -40,7 +41,7 @@ type AreaManager struct {
 	wg     sync.WaitGroup
 
 	// Goroutine-confined to the reconcile loop; no lock needed.
-	shadowed map[string]struct{} // area codes this box currently shadows (for removal)
+	shadowed map[string]areaShadow // what this box last wrote per area (for removal and dedup)
 }
 
 // NewAreaManager builds an area reconciler for the controller with the given code.
@@ -54,7 +55,7 @@ func NewAreaManager(code, location string, store *PolicyStore, sw AreaShadowWrit
 		sw:       sw,
 		log:      log.With("component", "area-manager"),
 		dirty:    make(chan struct{}, 1),
-		shadowed: make(map[string]struct{}),
+		shadowed: make(map[string]areaShadow),
 	}
 }
 
@@ -98,10 +99,25 @@ func (am *AreaManager) Stop() {
 	am.wg.Wait()
 }
 
+// areaShadow is the part of an area's arm shadow that means something. The
+// shadow's updatedAt is NOT in it: it is "when this last changed", so a reconcile
+// that finds the same state must not re-stamp it. (Stamping the tick's time made
+// every value differ, so the StatusWriter's value dedup never matched and every
+// box rewrote every area key every hold-eval tick.)
+type areaShadow struct {
+	location, arm, source string
+	peers                 []string
+}
+
+func (a areaShadow) equal(b areaShadow) bool {
+	return a.location == b.location && a.arm == b.arm && a.source == b.source &&
+		slices.Equal(a.peers, b.peers)
+}
+
 // reconcile writes the arm shadow for every area this box participates in, and
 // drops the shadow for any it no longer does. Runs only on the reconcile
-// goroutine, so shadowed needs no locking. The StatusWriter dedups on value, so a
-// re-write of an unchanged shadow is a no-op (no churn on the tick).
+// goroutine, so shadowed needs no locking. An area whose state, provenance and
+// peers are unchanged is not rewritten, so the hold-eval tick causes no churn.
 func (am *AreaManager) reconcile() {
 	now := time.Now().UTC()
 
@@ -135,9 +151,12 @@ func (am *AreaManager) reconcile() {
 		if armed {
 			arm = statuskv.AreaArmed
 		}
-		peers := am.store.AreaControllers(code)
-		am.sw.SetArea(code, loc, arm, source, peers, now)
-		am.shadowed[code] = struct{}{}
+		cur := areaShadow{location: loc, arm: arm, source: source, peers: am.store.AreaControllers(code)}
+		if prev, ok := am.shadowed[code]; ok && prev.equal(cur) {
+			continue
+		}
+		am.sw.SetArea(code, loc, arm, source, cur.peers, now)
+		am.shadowed[code] = cur
 	}
 }
 

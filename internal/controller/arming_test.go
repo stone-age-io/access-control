@@ -337,6 +337,7 @@ func TestGrantedOpenWhileArmedNoIntrusion(t *testing.T) {
 type fakeAreaShadow struct {
 	set     map[string]statuskv.AreaStatus
 	deleted []string
+	writes  int
 }
 
 func newFakeAreaShadow() *fakeAreaShadow {
@@ -344,6 +345,7 @@ func newFakeAreaShadow() *fakeAreaShadow {
 }
 
 func (f *fakeAreaShadow) SetArea(code, location, arm, source string, peers []string, _ time.Time) {
+	f.writes++
 	f.set[code] = statuskv.AreaStatus{Code: code, Location: location, Arm: arm, Source: source, Peers: peers}
 	for i := range f.deleted { // a re-set un-deletes
 		if f.deleted[i] == code {
@@ -387,5 +389,34 @@ func TestAreaManagerReconcileWritesAndPrunes(t *testing.T) {
 	}
 	if len(fake.deleted) == 0 || fake.deleted[len(fake.deleted)-1] != "zone1" {
 		t.Errorf("expected DeleteArea(zone1), deletes = %v", fake.deleted)
+	}
+}
+
+// The hold-eval tick reconciles every 10s. An area whose state has not changed
+// must not be rewritten: the shadow carries "when this last changed", and a
+// fresh stamp per tick would put every area key on every box once a tick.
+func TestAreaManagerReconcileSkipsUnchangedShadow(t *testing.T) {
+	s := withArea(t, `{"code":"zone1","location":"hq","arm":"armed"}`)
+	fake := newFakeAreaShadow()
+	am := NewAreaManager("ctrl-hq-1", "hq", s, fake, logger.NewNopLogger())
+
+	am.reconcile()
+	am.reconcile()
+	am.reconcile()
+	if fake.writes != 1 {
+		t.Fatalf("writes after three unchanged reconciles = %d, want 1", fake.writes)
+	}
+
+	s.apply("area.zone1", []byte(`{"code":"zone1","location":"hq","arm":"disarmed"}`))
+	am.reconcile()
+	if fake.writes != 2 || fake.set["zone1"].Arm != statuskv.AreaDisarmed {
+		t.Fatalf("after disarm: writes = %d, arm = %q; want 2, disarmed", fake.writes, fake.set["zone1"].Arm)
+	}
+
+	// A new peer is a change too: the console aggregates over the peer set.
+	s.apply("auxin.motion-2", []byte(`{"code":"motion-2","location":"hq","controller":"ctrl-hq-2","area":"zone1","pointType":"intrusion"}`))
+	am.reconcile()
+	if fake.writes != 3 {
+		t.Fatalf("after a peer joined: writes = %d, want 3", fake.writes)
 	}
 }
