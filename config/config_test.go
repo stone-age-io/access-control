@@ -120,3 +120,23 @@ func TestDiagnosticsDefaultsAndEnv(t *testing.T) {
 		t.Errorf("diagnostics from env = %+v, want enabled=true address=0.0.0.0:9999", cfg.Diagnostics)
 	}
 }
+
+// TestCacheDefaultsAndEnvOnlyKeys pins two Load regressions: the offline cache's
+// path/maxAge defaults must apply when only `enabled` is set, and keys absent from
+// the file must still take their SA_ env override.
+func TestCacheDefaultsAndEnvOnlyKeys(t *testing.T) {
+	t.Setenv("SA_POLICY_CACHE_ENABLED", "true")
+	t.Setenv("SA_ACCESSD_WEBHOOKURL", "https://hooks.example/x")
+	t.Setenv("SA_ACCESSD_EVENTRETENTIONDAYS", "30")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	c := cfg.Policy.Cache
+	if !c.Enabled || c.Path != DefaultPolicyCachePath || c.MaxAge != DefaultPolicyCacheMaxAge {
+		t.Errorf("cache = %+v, want enabled with default path/maxAge", c)
+	}
+	if cfg.Accessd.WebhookURL != "https://hooks.example/x" || cfg.Accessd.EventRetentionDays != 30 {
+		t.Errorf("accessd = %+v, want env overrides applied", cfg.Accessd)
+	}
+}

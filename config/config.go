@@ -240,7 +240,7 @@ type ControllerConfig struct {
 	Driver string `json:"driver" yaml:"driver" mapstructure:"driver"`
 	// Model is the controller hardware model, selecting the GPIO hardware profile
 	// (logical relay/input index → physical line) and the RS485 serial port for the
-	// OSDP reader. Required when Driver is "gpio" or Reader is "osdp"; must match a
+	// OSDP reader. Required when Driver is "gpio" or Reader is "osdp" or "both"; must match a
 	// model the hardware registry knows and the controllers record.
 	Model string `json:"model" yaml:"model" mapstructure:"model"`
 	// Reader selects the credential reader: "nats" (default — simulated taps over
@@ -297,6 +297,8 @@ func Load(path string) (*Config, error) {
 		"diagnostics.enabled", "diagnostics.address",
 		"policy.bucket", "events.stream", "status.bucket", "subjects.app",
 		"accessd.dataDir", "accessd.controllerOfflineAfter",
+		"accessd.auditRetentionDays", "accessd.eventRetentionDays", "accessd.webhookURL",
+		"policy.cache.enabled", "policy.cache.path", "policy.cache.maxAge",
 		"branding.dir",
 		"controller.code", "controller.location", "controller.heartbeatInterval",
 		"controller.driver", "controller.model", "controller.reader",
@@ -365,15 +367,14 @@ func setDefaults(cfg *Config) {
 	if cfg.Policy.Bucket == "" {
 		cfg.Policy.Bucket = DefaultPolicyBucket
 	}
-	// Offline config cache: only meaningful when enabled; fill path/maxAge defaults
-	// so an install can opt in with just `enabled: true`.
-	if cfg.Policy.Cache.Enabled {
-		if cfg.Policy.Cache.Path == "" {
-			cfg.Policy.Cache.Path = DefaultPolicyCachePath
-		}
-		if cfg.Policy.Cache.MaxAge <= 0 {
-			cfg.Policy.Cache.MaxAge = DefaultPolicyCacheMaxAge
-		}
+	// Offline config cache: fill path/maxAge unconditionally so an install can opt
+	// in with just `enabled: true`. Gating this on Enabled never worked — defaults
+	// run before the file is decoded, when Enabled is always false.
+	if cfg.Policy.Cache.Path == "" {
+		cfg.Policy.Cache.Path = DefaultPolicyCachePath
+	}
+	if cfg.Policy.Cache.MaxAge <= 0 {
+		cfg.Policy.Cache.MaxAge = DefaultPolicyCacheMaxAge
 	}
 	if cfg.Events.Stream == "" {
 		cfg.Events.Stream = DefaultEventsStream
