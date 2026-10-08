@@ -128,7 +128,10 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
 
 - **Mirror** (`internal/mirror`) is deliberately dumb: one PocketBase record → one KV key, via after-commit
   record hooks. No aggregation, no whole-policy rebuild. `SyncAll` reconciles on boot (covers migration-seeded
-  data and changes made while accessd was down) and prunes stale keys.
+  data and changes made while accessd was down) and prunes stale keys, and `Publisher.Resync` re-runs it on every
+  NATS reconnect — an edit committed during an outage failed its after-commit KV put and nothing else retries it,
+  so without it a credential revoked offline stayed live at the edge until a restart. `SyncAll` skips keys that
+  already hold their payload (like `publish`), so a resync that finds nothing missed wakes no controller.
 - **Wire contract** (`internal/policykv`) is the shared JSON shape + key scheme between mirror (writer) and
   PolicyStore (reader). Key = `<prefix><natural-key>`, e.g. `cred.CARD-001`, `portal.lobby-main`, `user.<pbid>`.
   **Cross-references are stored as stable codes** (or credential value / cardholder id), never PocketBase ids,

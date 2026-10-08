@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,9 @@ import (
 )
 
 const opTimeout = 5 * time.Second
+
+// resyncTimeout bounds one background SyncAll, matching accessd's boot budget.
+const resyncTimeout = 2 * time.Minute
 
 // syncConcurrency bounds the parallel KV puts during SyncAll. Each put is one
 // network round trip, so a serial sync costs one RTT per record (minutes over a
@@ -50,18 +54,27 @@ var mirroredCollections = []string{
 
 // Publisher writes policy records to the KV bucket.
 type Publisher struct {
+	app core.App
 	kv  jetstream.KeyValue
 	log *logger.Logger
 	m   *metrics.Metrics
+
+	// Resync coalescing: at most one background SyncAll runs at a time, and a
+	// request that arrives during it schedules exactly one more.
+	syncMu  sync.Mutex
+	syncing bool
+	again   bool
+	syncWG  sync.WaitGroup // tests wait on a background resync
 }
 
 // Register wires the record hooks on the given PocketBase app and returns the
 // Publisher (call SyncAll once after registering to reconcile existing data).
 // The kv handle is the ACC_POLICY bucket. Errors writing to KV are logged (and
 // counted) but do not fail the PocketBase operation — these are after-commit
-// hooks, so the record is already persisted and will re-sync on the next change.
+// hooks, so the record is already persisted. A failed write is repaired by the
+// next change to that record, or by Resync (wired to the NATS reconnect).
 func Register(app core.App, kv jetstream.KeyValue, log *logger.Logger, m *metrics.Metrics) *Publisher {
-	p := &Publisher{kv: kv, log: log.With("component", "mirror"), m: m}
+	p := &Publisher{app: app, kv: kv, log: log.With("component", "mirror"), m: m}
 	app.OnRecordAfterCreateSuccess(mirroredCollections...).BindFunc(p.onCreate)
 	app.OnRecordAfterUpdateSuccess(mirroredCollections...).BindFunc(p.onUpdate)
 	app.OnRecordAfterDeleteSuccess(mirroredCollections...).BindFunc(p.onDelete)
@@ -72,7 +85,9 @@ func Register(app core.App, kv jetstream.KeyValue, log *logger.Logger, m *metric
 // current policy record and prunes any KV key with no backing record. This
 // covers records seeded by migrations (which predate the hooks) and any changes
 // made while accessd was down — notably credential deletes, which must not
-// linger in KV. Idempotent: Put overwrites, and missing keys delete cleanly.
+// linger in KV. Idempotent: a key already holding its payload is not re-put (so
+// a sync that finds nothing to repair wakes no controller), and missing keys
+// delete cleanly.
 func (p *Publisher) SyncAll(ctx context.Context, app core.App) error {
 	// Build every (key, value) pair serially from local SQLite first — that work is
 	// fast and keeps DB access single-threaded. expected is the set of keys we intend
@@ -102,11 +117,15 @@ func (p *Publisher) SyncAll(ctx context.Context, app core.App) error {
 
 	// Fan out only the network-bound puts, bounded by syncConcurrency. One bad key
 	// logs and is skipped (return nil), never aborting the whole sync.
-	var published atomic.Int64
+	var published, unchanged atomic.Int64
 	var g errgroup.Group
 	g.SetLimit(syncConcurrency)
 	for _, pr := range pairs {
 		g.Go(func() error {
+			if p.unchanged(ctx, pr.key, pr.val) {
+				unchanged.Add(1)
+				return nil
+			}
 			if _, err := p.kv.Put(ctx, pr.key, pr.val); err != nil {
 				p.log.Error("mirror sync: put failed", "key", pr.key, "error", err)
 				return nil
@@ -132,8 +151,45 @@ func (p *Publisher) SyncAll(ctx context.Context, app core.App) error {
 		}
 	}
 
-	p.log.Info("policy KV sync complete", "published", published.Load(), "pruned", pruned)
+	p.log.Info("policy KV sync complete",
+		"published", published.Load(), "unchanged", unchanged.Load(), "pruned", pruned)
 	return nil
+}
+
+// Resync runs SyncAll again in the background. Wire it to the NATS reconnect
+// handler: a record edited while NATS was down failed its KV write after the
+// commit, and nothing else retries it — so a credential revoked during an outage
+// would keep opening doors at the edge until the next accessd restart. Calls
+// coalesce, so a flapping link runs at most one sync plus one queued.
+func (p *Publisher) Resync() {
+	p.syncMu.Lock()
+	if p.syncing {
+		p.again = true
+		p.syncMu.Unlock()
+		return
+	}
+	p.syncing = true
+	p.syncWG.Add(1)
+	p.syncMu.Unlock()
+
+	go func() {
+		defer p.syncWG.Done()
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), resyncTimeout)
+			if err := p.SyncAll(ctx, p.app); err != nil {
+				p.log.Error("mirror resync failed", "error", err)
+			}
+			cancel()
+			p.syncMu.Lock()
+			if !p.again {
+				p.syncing = false
+				p.syncMu.Unlock()
+				return
+			}
+			p.again = false
+			p.syncMu.Unlock()
+		}
+	}()
 }
 
 func (p *Publisher) onCreate(e *core.RecordEvent) error {

@@ -127,6 +127,7 @@ func main() {
 		disarmer    *disarm.Disarmer
 		healthMon   *health.Monitor
 		statusProj  *status.Projector
+		pub         *mirror.Publisher
 		releaser    *armrelease.Releaser
 		badgeSweep  *badgesweep.Sweeper
 	)
@@ -209,11 +210,15 @@ func main() {
 		}
 
 		// On reconnect, re-establish the status watcher (WatchAll re-delivers every
-		// key = full re-sync). statusProj is assigned below, before any reconnect
-		// can fire.
+		// key = full re-sync) and re-run the policy mirror's sync, since a record
+		// edited while NATS was down failed its KV write and nothing else retries
+		// it. Both are assigned below, before any reconnect can fire.
 		nc, err = natsx.Connect(&cfg.NATS, log, m, func() {
 			if statusProj != nil {
 				statusProj.Resync()
+			}
+			if pub != nil {
+				pub.Resync()
 			}
 		}, false) // accessd fails fast: the hub has nothing to do without its own NATS
 		if err != nil {
@@ -241,7 +246,7 @@ func main() {
 		// KV mirror publisher: PocketBase record changes → ACC_POLICY keys.
 		// Register the hooks first, then reconcile existing records (migrations
 		// seed data before the hooks bind) and prune stale keys.
-		pub := mirror.Register(e.App, kv, log, m)
+		pub = mirror.Register(e.App, kv, log, m)
 		if err := pub.SyncAll(ctx, e.App); err != nil {
 			return err
 		}
