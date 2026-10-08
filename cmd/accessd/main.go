@@ -95,12 +95,11 @@ func main() {
 	// only fire once serving anyway.
 	changelog.Register(pb, cfg.Accessd.AuditRetentionDays, log)
 
-	// Badge-tier field guard: a badge login may edit its own record (the collection
-	// rule is self-scoped), but a collection rule cannot scope WHICH FIELDS — so
-	// without this a holder could repoint `cardholder` at anyone else and inherit
-	// their doors. Registered here rather than in OnServe because it guards the
-	// COLLECTION API, which is served whether or not the badge routes (and the NATS
-	// resources they need) ever came up.
+	// Badge-tier collection guards on the auth `cardholders` collection: a random
+	// password on create, a login requires an email, and a first OTP sign-in does
+	// not wipe an operator-set password (see guards.go). Registered here rather than
+	// in OnServe because they guard the COLLECTION API, which is served whether or
+	// not the badge routes (and the NATS resources they need) ever came up.
 	badgeapi.RegisterGuards(pb)
 
 	// Events-projection retention: a daily prune of the rebuildable events read
@@ -306,8 +305,9 @@ func main() {
 			return err
 		}
 
-		// Command bridge: superuser-only HTTP routes → control-plane NATS commands
-		// (cmd.grant / cmd.posture). The UI's only way to drive a portal.
+		// Command bridge: operator HTTP routes gated by the `command` capability →
+		// control-plane NATS commands (cmd.grant / cmd.posture / cmd.output), plus the
+		// durable area arm/disarm and alarm-ack record writes.
 		commandapi.Register(e, nc.NC, subj, log)
 
 		// Hardware-model catalogue: read-only GET /api/models the UI reads to render
@@ -319,9 +319,9 @@ func main() {
 		// authenticated operator; it reveals only what policy already grants.
 		simulateapi.Register(e, kv, log)
 
-		// Badge tier: GET /api/badge/me and POST /api/badge/unlock/{portalId}, for
-		// records in the `badge_users` auth collection (cardholders + visitors), NOT
-		// operators. The unlock route is authorized by the same policy.Decide the
+		// Badge tier: GET /api/badge/me, remote unlock/arm/pulse, and the operator
+		// visitor and preview routes, for the `cardholders` auth collection
+		// (cardholders + visitors), NOT operators. Unlock is authorized by the same policy.Decide the
 		// edge runs — over the same KV snapshot the simulator uses — so a remote
 		// unlock can never exceed what that person's badge opens in person, and it
 		// emits an ordinary cmd.grant (no new subject, no edge change).

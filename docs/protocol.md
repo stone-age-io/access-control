@@ -17,7 +17,9 @@ construction and parsing live in one place,
 live in [`internal/policykv`](../internal/policykv/wire.go) (policy, downward)
 and [`internal/statuskv`](../internal/statuskv/wire.go) (status, upward). Bucket
 and stream names and the app token are in the
-[Configuration Reference](configuration.md).
+[Configuration Reference](configuration.md). What each side runs on its end of
+this contract is in [Central Service (accessd)](accessd.md) and
+[Edge Controller (access-controller)](controller.md).
 
 ---
 
@@ -950,6 +952,8 @@ separate queue.
 
 ## 13. Where to Go Next
 
+- What the central service runs and owns: [Central Service (accessd)](accessd.md)
+- What runs on each box, offline behaviour and its status page: [Edge Controller (access-controller)](controller.md)
 - Bucket, stream and subject config keys: [Configuration Reference](configuration.md)
 - Who may send commands and acknowledge alarms: [Operators & Authorization](operators.md)
 - Boards, drivers and OSDP readers: [Hardware & Readers](hardware.md)
