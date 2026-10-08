@@ -13,11 +13,13 @@
 >
 > What you get: three sites (`KC-DC1`, `KC-OFFICE`, `SGF-XD2`), four controllers
 > across both board models, ten portals including a maglock and a vehicle gate,
-> four areas with scheduled arming, eight aux inputs spanning all three point
-> types, four aux outputs, a holiday calendar, eight roles, six access groups
-> (including the arm-only cleaning crew), fifteen cardholders with badge logins,
-> three visitor passes in three different states, and ~240 backdated events
-> carrying every decision reason code plus three unacknowledged alarms.
+> four areas (two with scheduled overnight arming), eight aux inputs spanning the
+> `monitor`/`intrusion`/`tamper_24h` point types (no `fire` input), four aux
+> outputs, a holiday calendar, eight roles, six access groups (including the
+> arm-only cleaning crew), fifteen cardholders — thirteen with badge logins, three
+> of them visitors in three different pass states — and ~240 backdated events
+> (`--events` to change) guaranteed to carry eight distinct decision reason codes,
+> plus three unacknowledged alarms.
 >
 > The two files below still work and are kept for now. `seed.ps1` creates a
 > **different** company (`dc`, `east-office`) so the two do not collide, but
@@ -26,13 +28,14 @@
 | File | What it is |
 |---|---|
 | [`rules/`](rules) | **Start here for live activity.** rule-router scheduler rules for the `demo-seed` estate. Publishes to the *reader* subject, so running `access-controller` processes make the decisions — nothing about a reason code is fabricated. Needs four controllers up; see [`rules/README.md`](rules/README.md). |
+| [`telegraf/`](telegraf) | A Telegraf config that subscribes to the `acc.>` event subtree while `rules/` drives the estate and writes each event to VictoriaMetrics as a time series — "which door, which site, which box" as long-term, queryable history. Storage only; it decides nothing. |
 | [`seed.ps1`](seed.ps1) | Superseded by `accessd demo-seed`. Idempotent PowerShell seed driving the REST API — sites, controllers, portals, an armed area, roles, people, credentials, badge logins, visitor passes, and a backfill of recent events plus unacknowledged alarms. |
 | [`access-demo.yaml`](access-demo.yaml) | The older simulator, for `seed.ps1`'s company and for a deployment with **no controller running**: it injects finished `evt.tap` events into the audit subtree. Still the right tool when you want a moving event feed and nothing else. |
 
 > Point `rule-router --rules` at `demo/rules`, not at `demo/` — the latter loads
 > `access-demo.yaml` too, and the two target different companies.
 
-`seed.ps1` and `access-demo.yaml` are **dev/demo tooling**, not part of either
+Everything in this directory is **dev/demo tooling**, not part of either
 binary. Nothing here ships to a customer install, and the passwords below are
 deliberately weak and well-known.
 
@@ -66,7 +69,7 @@ should report `created=0 failed=0`.
 | Sites | `hq` (from the fixture), `dc` Distribution Center, `east-office` East Coast Office |
 | Intrusion | area `dc-warehouse`, armed, with a motion point and a 24h glassbreak point |
 | Automation | `east-lobby` auto-unlocks during office hours; `dc-main-entrance` is `disarm_on_grant` |
-| People | 13 employees + contractors across 6 roles, one suspended |
+| People | 13 employees + contractors across 7 roles, one suspended |
 | No-inbox cards | "Loading Dock Spare Card" and "Fire Dept Lockbox" — cardholders with no email, which cannot sign in by any method |
 | Visitors | three passes, one live, one expired, one revoked |
 | Area rights | `ag-warehouse` grants arm **and** disarm on `dc-warehouse`; `ag-cleaning` grants **arm only** |

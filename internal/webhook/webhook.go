@@ -26,7 +26,7 @@
 // single configured destination whose whole purpose is to receive the feed, and
 // re-filtering it through per-portal email checkboxes would make it useless for the
 // "mirror everything into our NOC" case that motivates it. Configuring the URL is
-// the opt-in, and it is gated behind the `operators` capability.
+// the opt-in, and it is deploy-time config (`accessd.webhookURL`), not a record.
 //
 // # Outbound requests are an SSRF surface
 //

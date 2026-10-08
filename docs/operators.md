@@ -47,9 +47,9 @@ are gated, each by one capability:
 | Capability | Grants |
 |---|---|
 | `enroll` | write **people** — cardholders, credentials |
-| `policy` | write **access logic** — roles, access_groups, schedules, holidays |
-| `topology` | write **hardware** — locations, controllers, portals, aux_input, aux_output |
-| `command` | issue **commands** — grant, posture, aux-output drive, area arm/disarm |
+| `policy` | write **access logic** — roles, access_groups, schedules, holidays, holiday_calendars |
+| `topology` | write **hardware** — locations, controllers, portals, aux_input, aux_output, areas |
+| `command` | issue **commands** — grant, posture, aux-output drive, area arm/disarm, alarm ack |
 | `operators` | manage **operator accounts**, read the **audit log**, and **hard-delete** structural records |
 
 The five names are constants in [`internal/authz`](../internal/authz/authz.go)
@@ -108,7 +108,9 @@ roles — so it never reaches a leaf node.
 Two enforcement points share `users.permissions`:
 
 **1. Collection CRUD** — PocketBase collection rules (the real boundary), set by
-migration [`1750000016`](../pbmigrations/1750000016_operator_permissions.go).
+migration [`1750000016`](../pbmigrations/1750000016_operator_permissions.go) (and, for the
+collections they add, [`1750000018`](../pbmigrations/1750000018_holiday_calendars.go)
+`holiday_calendars` and [`1750000019`](../pbmigrations/1750000019_areas_and_points.go) `areas`).
 List/View are open to any authenticated operator
 (`@request.auth.collectionName = "users"`, set by migration
 [`1750000027`](../pbmigrations/1750000027_operator_read_floor.go)) except where
@@ -118,20 +120,25 @@ noted; the table shows the **write** rules:
 |---|---|---|
 | `cardholders`, `credentials` | `enroll` | `operators` |
 | `schedules`, `access_groups`, `roles` | `policy` | `operators` |
-| `holidays` | `policy` | `policy` |
+| `holidays`, `holiday_calendars` | `policy` | `policy` |
 | `locations`, `controllers`, `portals`, `aux_input`, `aux_output`, `areas` | `topology` | `operators` |
 | `users` | `operators` (create) · self-or-`operators` (update) | `operators` |
 | `audit_logs` | — (superuser-only; hook-written) | — |
 | `events`, `point_status` | — (machine-written; accessd's `app.Save` bypasses rules) | — |
 
 `users` List/View is **self or `operators`** (an operator without `operators` sees
-only their own account), and `audit_logs` List/View needs `operators`.
+only their own account), and `audit_logs` List/View needs `operators`. Two auth
+collections also carry a **ManageRule** — the right to change another record's auth
+fields (password, email) without the proof PocketBase otherwise demands: `users` →
+`operators`, and `cardholders` →
+`@request.auth.collectionName = "users" && @request.auth.permissions ~ "enroll"` (which is
+what lets the cardholder form reset a locked-out holder's password).
 
 **Hard-delete is a trusted action.** Removing a person or a structural
 topology/policy record requires `operators` — for everyday revocation, *deactivate*
 via the existing status / `valid_from` / `valid_until` fields instead of deleting.
-`holidays` is the one exception (its delete stays at `policy`, being low-value
-access logic).
+`holidays` and `holiday_calendars` are the exception (their delete stays at `policy`,
+being low-value access logic).
 
 > The rule expression is `@request.auth.permissions ~ "x"` (JSON LIKE), **not**
 > `?=`. A multi-select referenced through `@request.auth` is bound as its
@@ -149,9 +156,9 @@ so they call `authz.RequireCapability` per handler:
 | `POST /api/portals/{id}/grant` | `command` | momentary strike pulse → `cmd.grant` |
 | `POST /api/portals/{id}/posture` | `command` | posture override / clear → `cmd.posture` |
 | `POST /api/aux-outputs/{id}/output` | `command` | drive an aux output → `cmd.output` |
-| `POST /api/events/{id}/ack` | `command` | acknowledge an alarm/fire (sets ack fields) |
+| `POST /api/events/{id}/ack` | `command` | acknowledge an alarm/fire (sets ack fields; also stops [`internal/repage`](../internal/repage)'s reminder emails) |
 | `POST /api/areas/{id}/arm` · `/disarm` · `/arm-clear` | `command` | set/clear an area's durable `arm_override` |
-| `GET /api/models` | any operator | enum/options metadata for the UI |
+| `GET /api/models` | any operator | hardware-model catalogue (relay/input counts and labels per controller model) for the I/O map and index pickers |
 | `POST /api/simulate` | any operator | access simulator — a decision oracle; operator-only |
 | `POST /api/badge/visitors` | `enroll` | mint a visitor: cardholder + time-bound credential, in one transaction |
 | `POST /api/badge/visitors/{id}/revoke` | `enroll` | end a visit: revoke the pass, keep the person |
@@ -171,8 +178,9 @@ grants in person but not remotely, a `badge_login` that was never ticked. The ba
 reduces all of that to one sentence and one list, so this route returns **the holder's own
 `/me` and `/live` payloads** — the same Go builders serve both — plus the three
 operator-only facts a badge cannot show about itself (`badgeLogin`, `passwordSet`,
-`status`). The console renders it with the badge's own Vue components, so if the preview
-looks wrong, it *is* wrong.
+`status`). The console opens it from **View their badge** on the cardholder page (shown to
+`enroll` holders) and renders it with the badge's own Vue components — down to the same
+bottom navigation bar — so if the preview looks wrong, it *is* wrong.
 
 **It is a read, and mints nothing.** PocketBase can issue a session for another record
 (`NewStaticAuthToken`), which would have let an operator press the holder's buttons. That
@@ -201,6 +209,10 @@ by capability — see [Non-operator auth tiers](#non-operator-auth-tiers):
 | `GET /api/badge/live` | a badge holder | their own doors/controls placed on a site's floor plan |
 | `POST /api/badge/password` | a badge holder | set or change their own password |
 
+All of these except the operator-only preview are rate-limited by default (migrations
+`1750000032`/`1750000039`/`1750000041`), as are the `cardholders` sign-in endpoints; the
+numbers are in [`configuration.md`](configuration.md#rate-limits-and-trustedproxy-accessd).
+
 `/api/badge/me` is the **only** one an operator token may call, resolving through
 `cardholders.operator` (migration `1750000040`) so one human who holds accounts in both
 tiers can see their own badge from the console's profile menu without a second sign-in.
@@ -209,13 +221,14 @@ Everything that *actuates* names `cardholders` alone: an operator opening a door
 operator action, rather than through a second path that would leave the audit trail
 ambiguous about which authority they used.
 
-The holder's Access tab presents these as an **adaptive** switcher — plan, doors, areas,
-controls, on-site — where a segment appears only if that badge has something in it, and a
-badge with one segment gets no switcher at all. It is deliberately not a copy of the
-operator's Live View: that has fixed segments because a site has hundreds of points and an
-operator is hunting through them, whereas a holder typically has a handful of doors and no
-areas or controls, so the common badge collapses to a plan-versus-list choice. Nor does it
-show live hardware state — an area's chip is the policy *intent* the server resolved, and
+The badge presents these as **one bottom navigation bar** — Badge (the face: photo and
+QR), then Plan, Portals, Areas, Controls, On site — that is **adaptive**: the face is always
+there, and every other screen appears only if that badge has something in it, so the common
+badge is Badge + Plan or Badge + Portals (one that grants nothing gets a single Access
+screen saying so). It is deliberately not a copy of the operator's Live View: that has
+fixed segments because a site has hundreds of points and an operator is hunting through
+them, whereas a holder typically has a handful of doors and no areas or controls. Nor
+does it show live hardware state — an area's chip is the policy *intent* the server resolved, and
 door open/closed never appears. Watching a building is the console's job; a badge is what
 you use to get into one.
 
@@ -307,8 +320,10 @@ Keeping the two tiers apart takes three deliberate choices, all easy to get wron
    break-glass account. `RequireOperatorAuth` names both.
 3. **Reads are self-scoped; writes exclude the badge tier entirely.** `cardholders` is
    read by `id = @request.auth.id || @request.auth.collectionName = "users"` — an operator
-   sees everyone, a holder sees exactly their own row — while create/update/delete name
-   only the operator collection plus a capability, with **no self clause at all**.
+   sees everyone, a holder sees exactly their own row — while create/update/delete are a
+   bare capability check (`@request.auth.permissions ~ "enroll"`, delete `"operators"`)
+   that a cardholder, having no `permissions` field, can never satisfy, with **no self
+   clause at all**.
 
    That asymmetry is the whole boundary, and it is why there is no field-level guard on
    this collection. A PocketBase rule selects which **records** may be written and says
@@ -332,6 +347,10 @@ seeing one.
 Badge-tier routes live in `internal/badgeapi` and are authorized by
 `policy.Decide` (what that person's own credential opens, right now) rather than by
 capability — so a remote unlock can never exceed the holder's physical access.
+Every badge action, allowed or denied, writes an `audit_logs` row. A **denied** remote
+unlock also emits an ordinary `evt.tap` with `allow: false` and `source: badge`, so it
+lands in `events` beside a denial at a reader; an allowed one is the existing `cmd.grant`
+(actor `badge:<cardholderId>`), recorded by the controller's own tap event.
 
 ### Issuing a badge login
 
@@ -390,7 +409,9 @@ auth rule, and carries a random password nobody has ever seen (PocketBase requir
 non-blank one; [`badgeapi.RegisterGuards`](../internal/badgeapi/guards.go) fills it). A
 cardholder with **no email** — a contractor, a hourly worker, a "Loading Dock Spare" card —
 cannot sign in by any method at all, since email is the sole identity field and the only
-route an emailed code can arrive by.
+route an emailed code can arrive by; so `bindLoginRequiresEmail` refuses to save
+`badge_login` on a record with no email (on create and on update, so clearing the address
+later is refused too).
 
 **For a staff holder, a badge login is not access.** It controls who may *see* a badge
 and use remote unlock. Their credentials work at every door they are entitled to whether
@@ -480,7 +501,10 @@ Changing a user's `permissions` is itself gated beyond the `users` update rule: 
 hook in [`internal/changelog`](../internal/changelog/changelog.go) rejects any
 update that alters `permissions` unless the actor is a superuser or holds the
 `operators` capability — so an operator who can edit their own profile (self-update
-is allowed) still cannot grant themselves new capabilities.
+is allowed) still cannot grant themselves new capabilities. `permissions` is the only
+guarded field: the rest of an operator's own row — notably the notification opt-ins
+`notify`/`notify_locations`/`notify_types` (see
+[`configuration.md`](configuration.md#notifications-accessd-only)) — stays self-editable.
 
 ## Control-plane audit log (`audit_logs`)
 
@@ -491,9 +515,11 @@ records *door* activity from JetStream into `events`) — the two are complement
 and disjoint.
 
 **What's recorded.** API-driven create / update / delete on the audited collections —
-`cardholders`, `credentials`, `holidays`, `locations`, `schedules`, `controllers`,
-`portals`, `access_groups`, `roles`, `aux_input`, `aux_output`, `users` — plus
-operator **logins** (auth events on `users`; superusers excluded).
+`cardholders`, `credentials`, `holidays`, `holiday_calendars`, `locations`, `schedules`,
+`controllers`, `portals`, `access_groups`, `roles`, `aux_input`, `aux_output`, `areas`,
+`users` — plus operator **logins** (auth events on `users`; superusers excluded, and
+badge-tier sign-ins on `cardholders` are not recorded). `TestAuditedCoversControlPlane`
+fails if a control-plane collection is added and left off this list.
 
 **What's excluded by construction.** The hooks are PocketBase `*Request` hooks,
 which fire only for **API-driven** operations. accessd's own programmatic
@@ -502,6 +528,18 @@ projections, the KV mirror — never trigger them, so machine churn is excluded
 without an allowlist dance. `events`, `point_status`, and `audit_logs` itself are
 also excluded. (`controllers` is safely audited *because* heartbeat updates take
 the programmatic path, not the API.)
+
+**Rows written outside the hooks.** The flip side of "programmatic writes are
+invisible" is that accessd's custom routes, and the entry-disarm sink, write their own
+rows — all `event_type` `update` (the visitor mint is `create`), with the route in
+`request_url`:
+
+| Source | `collection_name` | Notes |
+|---|---|---|
+| alarm ack, area arm/disarm/arm-clear (`internal/commandapi`) | `events`, `areas` | `after` is the fields written |
+| badge unlock / arm / disarm / pulse | `portals`, `areas`, `aux_output` | **every attempt, denials included**; `record_id` is the target's *code*, `after.action` names it |
+| visitor mint · revoke, invite, badge preview, holder password change | `cardholders` | `after.action`; never the credential value or a password |
+| entry-disarm (`internal/disarm`) | `areas` | no request: `actor_email: entry-disarm`, attributed to the credential + portal |
 
 Each row carries:
 
@@ -519,6 +557,7 @@ the row is written, so an audit-write failure is logged and swallowed, never
 propagated to the operator.
 
 **Retention.** When `accessd.auditRetentionDays` is positive, a daily 03:00 cron
-deletes rows older than that many days, in bounded batches. The default is **365**
-(`0` normalizes to 365 in config); set a **negative** value to disable pruning and
-keep audit history forever. See [`configuration.md`](configuration.md#accessd).
+deletes rows older than that many days — at most 1000 per run, which is ample for a
+change log (unlike the high-volume `events` prune, it does not drain a backlog). The
+default is **365** (`0` normalizes to 365 in config); set a **negative** value to
+disable pruning and keep audit history forever. See [`configuration.md`](configuration.md#accessd).

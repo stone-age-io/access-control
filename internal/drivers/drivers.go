@@ -1,9 +1,10 @@
 // Package drivers is the hardware-abstraction boundary for the edge controller:
 // the tap loop and the decision core depend only on these interfaces. It ships
-// mock implementations (this package) and a real GPIO lock/door-input backend
-// (internal/drivers/gpio, keyed by a model profile in internal/drivers/hardware).
-// The reader stays simulated over NATS — a real OSDP/RS485 ReaderDriver slots in
-// behind ReaderDriver later without touching the loop or the decision core.
+// mock implementations (this package) and two real lock/door-input backends —
+// native GPIO (internal/drivers/gpio) and MCP23017 over I2C (internal/drivers/i2c)
+// — chosen by a model profile in internal/drivers/hardware. Behind ReaderDriver
+// sit the simulated NATS reader and a real OSDP reader on RS485
+// (internal/drivers/osdp), selected by controller.reader (nats/osdp/both).
 package drivers
 
 import (

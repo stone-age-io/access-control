@@ -524,7 +524,7 @@ overlapping stream subjects (err 10065). Leading with `acc` keeps our subject sp
 
 - `acc.{location}.{type}.{thing}.tap` — credential presentation (the `nats` reader subscribes here; the `osdp` reader reads RS485 instead; under `both`, NATS for every portal and RS485 for the reader portals)
 - `acc.{location}.{type}.{thing}.evt.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS. An **area intrusion alarm** reuses this as `acc.{location}.area.{areacode}.evt.alarm` (type token `area`, body `{type:"intrusion",point,ts}`) — captured by the existing 6-token wildcard, no new stream subject.
-- `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.unlock` — control-plane commands (core NATS, fire-and-forget). **There is no `cmd.arm`**: arm/disarm is a *durable record write* (`areas.arm_override` → mirror → KV → controllers converge), so a reboot can't silently disarm.
+- `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.grant` / `.cmd.output` — control-plane commands (core NATS, fire-and-forget). **There is no `cmd.arm`**: arm/disarm is a *durable record write* (`areas.arm_override` → mirror → KV → controllers converge), so a reboot can't silently disarm.
 - `acc.{location}.ctrl.{code}.heartbeat` — controller liveness. A controller is addressed under the reserved
   `ctrl` namespace (not a portal type); the heartbeat sits **outside** the `.evt` subtree (5 tokens, no `evt`) on
   purpose, so ACC_EVENTS never captures it — accessd updates the `controllers` record directly instead.

@@ -79,6 +79,14 @@ events:
   stream: "ACC_EVENTS"
 
 # ----------------------------------------------------------------------------
+# Status KV — the upward device shadow (door/posture/aux/area state). accessd
+# creates it and watches it into point_status; controllers write it. Must match
+# every controller's status.bucket.
+# ----------------------------------------------------------------------------
+status:
+  bucket: "ACC_STATUS"
+
+# ----------------------------------------------------------------------------
 # Subjects — the app-discriminator segment every NATS subject leads with
 # ({app}.{location}.{type}.{thing}.tap/.cmd/.evt …). accessd and EVERY
 # controller must use the same app token. Change it only to isolate a deployment
@@ -110,6 +118,11 @@ accessd:
   # Defaults to 0 = keep forever (opt-in); JetStream stays the system of record,
   # so a prune only shrinks the read model. Set a positive day count to trim it.
   eventRetentionDays: 0
+  # Outbound webhook sink: when set, every pageable event (forced/held/no_entry/
+  # intrusion/fire/controller offline) is POSTed here as JSON — feed PagerDuty,
+  # Slack, ntfy, an ITSM. Empty = inert. Config rather than a UI field on purpose
+  # (an outbound POST from inside the network); redirects are never followed.
+  webhookURL: ""
 
 # ----------------------------------------------------------------------------
 # Branding — optional operator overlay. Point `dir` at a host directory holding

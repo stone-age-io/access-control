@@ -11,12 +11,38 @@ system of record (PocketBase) and mirrors policy to NATS KV one key per record;
 edge controllers (`access-controller`) watch that keyspace and decide locally.
 
 > v1 status: the reader is selectable per controller (`controller.reader`) — a
-> **simulated NATS reader** (default; taps arrive over NATS, for dev) or a real
-> **OSDP reader** on the model's RS485 bus (pure-Go, no cgo, clear-text in v1;
-> Secure Channel is a fast-follow). The **lock and door inputs have real drivers**
-> alongside the mocks: native GPIO (`internal/drivers/gpio`, KinCony Server-Mini /
-> CM4) and MCP23017 over I2C (`internal/drivers/i2c`, KinCony Pi5R8 / CM5). Door
-> monitoring (forced / held-open) and controller heartbeat/health are implemented.
+> **simulated NATS reader** (`nats`, default; taps arrive over NATS, for dev), a real
+> **OSDP reader** on the model's RS485 bus (`osdp`; pure-Go, no cgo, clear-text in
+> v1; Secure Channel is a fast-follow), or `both` (NATS for every portal plus OSDP
+> for each portal with a `reader_address`). The **lock and door inputs have real
+> drivers** alongside the mocks: native GPIO (`internal/drivers/gpio`, KinCony
+> Server-Mini / CM4) and MCP23017 over I2C (`internal/drivers/i2c`, KinCony Pi5R8 /
+> CM5). Door monitoring (forced / held-open / granted-but-no-entry) and controller
+> heartbeat/health are implemented.
+
+## What it does
+
+- **Doors decided at the edge.** user → roles → access groups → portals, areas and
+  aux outputs under one schedule (holiday calendars observed); deny-overrides and
+  fail-closed. Postures (secure / unlocked / free access / lockdown / disabled),
+  standing or scheduled. An optional offline cache lets a controller rebooted with
+  NATS down decide on last-known policy.
+- **Intrusion-lite areas.** Arm/disarm as separate rights, scheduled auto-arm,
+  entry-disarm on a valid badge, and intrusion alarms from motion/tamper inputs or a
+  forced member door. A fire-alarm contact is an aux input that can suppress alarm
+  noise at its site; hardware owns egress.
+- **One event stream.** Every tap, alarm, arm transition, and controller
+  online/offline flip is a JetStream event, projected into the console's Events
+  timeline and Alarm Console (acknowledge, deep-link).
+- **Notifications.** Opt-in alarm/fire/offline email (per source *and* per operator,
+  by type and location), a bounded re-page for alarms nobody acknowledges, and a
+  webhook that POSTs each pageable event as JSON to PagerDuty, Slack, ntfy or an
+  ITSM queue.
+- **A badge for the people it is about.** Cardholders and visitors sign in to see
+  their own pass and, where an operator opts in, unlock/arm/pulse remotely — always
+  authorized by the same decision function as a physical tap.
+- **An auditable control plane.** Operator capabilities, a change log of every
+  policy edit, and a simulator that answers "would this card open that door".
 
 ## Something to look at
 
@@ -30,10 +56,11 @@ decision function runs and not much else. One command fills it:
 
 Northwind Traders across three sites: four controllers spanning both board models,
 ten portals (including a maglock on a freezer door and a vehicle gate), four areas
-with scheduled overnight arming, aux inputs covering all three point types, a
-holiday calendar, eight roles, six access groups, fifteen cardholders with badge
-logins, three visitor passes in three different states, and a backdated event
-history carrying **every decision reason code** plus three unacknowledged alarms.
+(two arming themselves overnight on a schedule), aux inputs covering the monitor,
+intrusion and 24h-tamper point types, a holiday calendar, eight roles, six access
+groups, fifteen cardholders (thirteen with badge logins, three of them visitors in
+three different pass states), and a backdated event history guaranteed to carry
+**eight distinct decision reason codes** plus three unacknowledged alarms.
 
 Every badge login is `demo1234`. Sign in at `/login?as=badge` as
 `elena@northwind.example` (warehouse — can arm *and* disarm) and
@@ -53,7 +80,7 @@ production, and it creates people holding working credentials on real doors.
 
 ### Making it move
 
-[`demo/rules/`](demo/rules) holds [rule-router](https://github.com/stone-age-io)
+[`demo/rules/`](demo/rules) holds [rule-router](https://github.com/skeeeon/rule-router)
 scheduler rules that keep the estate busy: badge taps at all ten portals,
 operator door-pops, a nightly gate lockdown, yard lighting, alarms and a fire
 drill. They publish to the **reader** subject, so running controllers decide each
@@ -71,24 +98,28 @@ returns.
   sign-in, capabilities, collection-rule matrix, and the `audit_logs` change log.
 - [`docs/hardware.md`](docs/hardware.md) — physical I/O: supported boards, pin
   maps, relay/input polarity, transports, and how to add a board.
-- [`demo/README.md`](demo/README.md) — dev/demo tooling: an idempotent seed script for a
-  believable multi-site company, and rule-router rules that keep the event feed live.
+- [`docs/plan-events.md`](docs/plan-events.md) — the design record for the event,
+  notification, webhook, and fire-input work: why it was scoped the way it was.
+- [`demo/README.md`](demo/README.md) — dev/demo tooling around `accessd demo-seed`:
+  rule-router rules that keep the event feed live, a Telegraf config for long-term
+  event storage, and the older PowerShell seed + simulator.
 
 ## Layout
 
 ```
-cmd/accessd/            central: PocketBase + KV mirror publisher + audit consumer + controller-health monitor
+cmd/accessd/            central: PocketBase + KV mirror + audit consumer + health monitor + notification/disarm/webhook sinks
 cmd/access-controller/  edge: policy watcher + pure decision + drivers + door monitoring + heartbeat + optional /status page
-internal/policy/        the pure core: Policy types, Decide(), windowOpen()
-internal/controller/    PolicyStore (KV watch → maps), tap loop, door state machine, portal/lock arming, commands, heartbeat
-internal/drivers/       ReaderDriver / LockDriver / DoorInput / FAIInput interfaces + mocks (MockHardware)
+internal/policy/        the pure core: Policy types, Decide() + DecideArea()/DecideOutput(), windowOpen()
+internal/controller/    PolicyStore (KV watch → maps) + offline policy cache, tap loop, door state machine,
+                        portal/aux/area managers, commands, heartbeat
+internal/drivers/       ReaderDriver / LockDriver / DoorInput interfaces + mocks (MockHardware)
 internal/drivers/hardware/  per-model hardware Profile: logical relay/input index → physical line + transport
 internal/drivers/gpio/  native GPIO lock + door-input backend (go-gpiocdev, no cgo; Linux only)
 internal/drivers/i2c/   MCP23017 lock + door-input backend over I2C (periph.io, no cgo; polled inputs)
 internal/drivers/osdp/  OSDP reader: RS485 CP engine (pure-Go, no cgo) + wire codec (osdp/wire); controller.reader: osdp
 internal/diag/          opt-in, read-only local /status page of an access-controller's live state (field troubleshooting)
-internal/health/        accessd-side heartbeat subscriber → controllers.last_seen/status
-internal/authz/         operator capability checks for accessd's custom HTTP routes (commandapi, modelsapi)
+internal/health/        accessd-side heartbeat subscriber → controllers.last_seen/status + online/offline events
+internal/authz/         operator auth + capability checks for accessd's custom HTTP routes
 internal/commandapi/    UI→NATS command bridge (grant/posture/aux output), gated by the `command` capability
 internal/modelsapi/     GET /api/models — enum/options metadata for the UI
 internal/simulateapi/   POST /api/simulate — the access simulator; a decision oracle, so operator-only
@@ -99,25 +130,33 @@ internal/policysnapshot/ point-in-time snapshot of ACC_POLICY, shared by the sim
 internal/mirror/        PocketBase record hooks → one ACC_POLICY KV key per record (+ boot reconcile/prune)
 internal/policykv/      the wire contract: KV key scheme + JSON shapes shared by mirror and PolicyStore
 internal/subjects/      every NATS subject is built and parsed here — never hand-formatted elsewhere
-internal/notify/        alarm/fire email sink (a second ACC_EVENTS durable); inert until opted into
+internal/notify/        alarm/fire/offline email sink (a second ACC_EVENTS durable); inert until opted into
+internal/repage/        re-sends an urgent alarm still unacknowledged after 15 min, at most twice
+internal/webhook/       POSTs each pageable event as JSON to `accessd.webhookURL` (another ACC_EVENTS durable)
 internal/disarm/        entry-disarm sink: a valid grant at a `disarm_on_grant` portal disarms its area
 internal/armrelease/    releases a one-shot disarm override once a scheduled area's base state is disarmed
-internal/status/        upward device shadow: ACC_STATUS → point_status projection
+internal/statuskv/      the upward wire contract: ACC_STATUS key scheme + JSON shapes (the reverse of policykv)
+internal/status/        upward device shadow: ACC_STATUS → point_status projection (+ area arm-transition events)
 internal/changelog/     control-plane audit log: API-driven policy edits + logins → audit_logs collection
 internal/audit/         JetStream consumer → PocketBase events collection
 internal/natsx/         NATS connection + KV helpers
+internal/demoseed/      `accessd demo-seed`: the Northwind Traders demo estate, in-process
+internal/logger/        zap wrapper
+internal/metrics/       Prometheus instrumentation (accessd :2113, controller :2114)
 internal/webui/         the compiled management UI, //go:embed-ed into accessd
 pbmigrations/           PocketBase collections (schema-in-code)
 ui/                     Vue 3 + Vite management UI source (PocketBase-backed CRUD)
-demo/                   dev-only: seed.ps1 (demo data) + access-demo.yaml (rule-router event simulator)
+demo/                   dev-only: rules/ (rule-router activity for demo-seed), telegraf/ (event → VictoriaMetrics),
+                        and the older seed.ps1 + access-demo.yaml
 ```
 
 ## Web UI
 
-`accessd` serves a Vue 3 management console (locations + a location map, schedules,
-portals, controllers, areas, aux I/O, access groups, roles, cardholders, credentials,
-visitor passes, an events timeline, an alarm console, reports, a live operational monitor,
-operator management, and the control-plane audit log) at `/`. It is
+`accessd` serves a Vue 3 management console (an overview, locations + a location map,
+schedules + holiday calendars, portals + printable door placards, controllers, areas, aux
+I/O, access groups, roles, cardholders (visitors included), credentials, CSV import, an
+events timeline, an alarm console, reports including the access simulator, a live
+operational monitor, operator management, and the control-plane audit log) at `/`. It is
 compiled into `internal/webui/public` and **`//go:embed`-ed into the accessd
 binary** — there is no `pb_public` directory to ship; the binary is
 self-contained.
@@ -130,23 +169,26 @@ see [`docs/operators.md`](docs/operators.md). A PocketBase **superuser**
 signs into the admin UI at `/_`.
 
 There is a **second, much smaller surface for the people the system is about**: a
-cardholder or visitor signs in at `/login?as=badge` and sees one page — their badge
-(photo, QR, validity) and what it grants. Where an operator has opted the door, area, or
+cardholder or visitor signs in at `/login?as=badge` and sees their badge (photo, QR,
+validity) and what it grants. Where an operator has opted the door, area, or
 relay in, they can also open it, arm/disarm it, or pulse it from their phone; every such
 action is authorized by the same pure decision function the edge runs, so a badge can
 never do remotely what it could not do in person. `cardholders` is itself the auth
 collection for this tier — one person is one record whether or not they ever sign in — and
 `docs/operators.md` covers the boundary between the two tiers.
 
-That page is built as a **phone screen, not a document**: a fixed-height shell that never
-scrolls as a whole, its long lists grouped by building and bounded, a light/dark toggle and
-an account menu in the header, and 44px-minimum tap targets throughout. The whole UI is an
+It is built as a **phone screen, not a document**: a fixed-height shell with one scroll
+region, a bottom navigation bar whose screens (badge, plan, portals, areas, controls, on
+site) appear only when the holder has something in them, a light/dark toggle and an account
+menu in the header, and 44px-minimum tap targets throughout. The whole UI is an
 **installable PWA** (`ui/public/manifest.json`), which matters most here — a badge you tap
 an icon for beats one you find a bookmark for. Its service worker caches **nothing** on
 purpose: this app's job is to say what a badge opens *right now*, and offline resilience
 belongs at the edge, where the controller decides locally.
 
-For the operator side of the same tier, **Visitors** issues and ends time-bound passes, and
+For the operator side of the same tier, a visitor is a cardholder: **New Visitor Pass**
+(`/visitors/new`) mints a time-bound pass, the visitor's Cardholder page reissues or
+revokes it, and
 `GET /api/badge/preview/{id}` renders *what a holder's own badge says* — the fastest answer
 to "my pass doesn't work", since it reuses the holder's exact payload and the badge's own
 components. It is read-only and mints no session: a badge action is recorded as the

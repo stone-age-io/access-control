@@ -11,6 +11,17 @@
 > key** (`accessd.webhookURL`), not an operator-editable record. Deploy-time
 > config removes the SSRF-shaped API surface entirely rather than guarding it, and
 > matches how the other outbound transport (SMTP) is administered.
+>
+> Three smaller deviations. An **empty** `users.notify_types` means the *default
+> set* — every urgent type, but not `no_entry` — rather than literally all (2.2),
+> so a future urgent type still reaches everyone who never narrowed. The
+> arm-transition event carries its standing/scheduled/override provenance as
+> `armSource`, not `source` (1.2): `events.source` is a select of how an event
+> *arrived*, and an out-of-range value there stalled the audit consumer. Bulk
+> notify (2.3) is a selection action on the portal list rather than a per-location
+> button. One loose end from 1.4: the badge-tier deny tap that
+> [`internal/badgeapi`](../internal/badgeapi) publishes is not counted by
+> `IncEventPublished` — that package has no metrics handle.
 
 A work plan, not a reference — delete it when the phases land. It covers three
 related gaps found reviewing the event/notification path:

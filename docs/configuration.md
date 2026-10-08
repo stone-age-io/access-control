@@ -17,7 +17,8 @@ those first, then use the tables here to look up a default or env var:
 - [NATS connection](#nats-connection) · [auth](#nats-auth-set-at-most-one) · [TLS](#nats-tls)
 - [Logging](#logging) · [Metrics](#metrics) · [Diagnostics](#diagnostics-controller-only)
 - [Resource names](#resource-names-shared) — buckets, stream, app token (must match across the fleet)
-- [accessd](#accessd) · [Branding](#branding-accessd-only) · [controller](#controller)
+- [accessd](#accessd) · [Notifications](#notifications-accessd-only) · [Rate limits](#rate-limits-and-trustedproxy-accessd) · [Branding](#branding-accessd-only)
+- [controller](#controller) · [Offline config cache](#offline-config-cache-controller-only)
 - [What gets rejected](#what-gets-rejected) — every way `Load` fails
 - [Which binary reads what](#which-binary-reads-what)
 
@@ -31,6 +32,10 @@ those first, then use the tables here to look up a default or env var:
   uppercase it, replace dots with underscores: `nats.urls` → `SA_NATS_URLS`,
   `controller.heartbeatInterval` → `SA_CONTROLLER_HEARTBEATINTERVAL`,
   `nats.tls.enable` → `SA_NATS_TLS_ENABLE`. Env wins over the file.
+- **Defaults fill only absent keys.** `setDefaults` runs *before* the file is
+  decoded, so a key written with a zero/empty value is taken literally:
+  `maxReconnects: 0` means never reconnect, `auditRetentionDays: 0` means never
+  prune, `logging.level: ""` fails validation. Omit a key to get its default.
 - **Parsing.** Durations are Go duration strings (`250ms`, `15s`, `45s`).
   `nats.urls` accepts a comma-separated list via the env var.
 
@@ -42,7 +47,7 @@ own `serve --http` flag (default `127.0.0.1:8090`).
 | Key | Default | Env var | Notes |
 |---|---|---|---|
 | `nats.urls` | `nats://localhost:4222` | `SA_NATS_URLS` | one or more; comma-separated via env. Use the `tls://` scheme for TLS. |
-| `nats.maxReconnects` | `-1` (forever) | `SA_NATS_MAXRECONNECTS` | `0` is treated as `-1`; the KV watcher re-arms on every reconnect. |
+| `nats.maxReconnects` | `-1` (forever) | `SA_NATS_MAXRECONNECTS` | an *absent* key defaults to `-1`; an explicit `0` is passed through (no reconnects). The KV watcher re-arms on every reconnect. |
 | `nats.reconnectWait` | `250ms` | `SA_NATS_RECONNECTWAIT` | backoff between reconnect attempts. |
 
 ### NATS auth (set at most one)
@@ -62,7 +67,8 @@ gitignored — never commit credentials.
 ### NATS TLS
 
 Not needed when the URL is `tls://` and the server presents a publicly-trusted
-cert. Enable for mutual TLS or a custom CA.
+cert. Enable for mutual TLS or a custom CA. The file and `insecure` keys take
+effect **only with `enable: true`** — a `caFile` set without it is ignored.
 
 | Key | Default | Env var | Notes |
 |---|---|---|---|
@@ -97,11 +103,13 @@ controller `:2114`.
 
 An **opt-in, read-only** local status page for field install and troubleshooting,
 served by `access-controller` only (accessd ignores this section). When enabled it
-serves `/status` (a self-contained, auto-refreshing HTML page — no JS, no external
-assets) and `/status.json` on `diagnostics.address`. It renders this box's live
-in-memory state: identity (incl. `subjects.app`), NATS/policy-sync health, the
-portals it bound and their door/posture state, recent decisions (with the decoded
-credential), and recent alarms.
+serves `/status` (a self-contained HTML page — inline CSS and a few lines of inline
+JS that refresh it in place, with pause/refresh controls; no external assets, so it
+works with no network), `/status.json`, and `/` (redirects to `/status`) on
+`diagnostics.address`. It renders this box's live in-memory state: identity (incl.
+`subjects.app`), NATS/policy-sync health, the portals it bound and their door/posture
+state, aux inputs/outputs, fire-input suppression state, recent decisions (with the
+decoded credential), and recent alarms.
 
 It is strictly **read-only** — all control stays on the NATS command plane. It is
 **disabled by default**, and because the page reveals topology (portal codes,
@@ -134,8 +142,8 @@ See [`protocol.md`](protocol.md) for what each carries.
 |---|---|---|---|
 | `accessd.dataDir` | `./pb_data` | `SA_ACCESSD_DATADIR` | embedded PocketBase data dir (db + uploads). Created at runtime, gitignored. The UI is `//go:embed`-ed, so there is no `pb_public`. |
 | `accessd.controllerOfflineAfter` | `45s` | `SA_ACCESSD_CONTROLLEROFFLINEAFTER` | silence before a controller shows offline. Keep it a few controller `heartbeatInterval`s so one dropped heartbeat does not flap a box offline. |
-| `accessd.auditRetentionDays` | `365` | `SA_ACCESSD_AUDITRETENTIONDAYS` | how long control-plane audit rows (`audit_logs`, written by `internal/changelog`) are kept before a daily 03:00 prune deletes them. `0` normalizes to 365; a **negative** value disables pruning (keep forever). See [`operators.md`](operators.md#control-plane-audit-log-audit_logs). |
-| `accessd.eventRetentionDays` | `0` | `SA_ACCESSD_EVENTRETENTIONDAYS` | how long door-activity rows (`events`, the rebuildable projection of the `ACC_EVENTS` JetStream stream) are kept before a daily 03:00 prune deletes them. **`0` (the default) keeps them forever** — pruning is opt-in, so an upgrade never silently deletes event history. A positive day count trims the projection; JetStream stays the system of record, so a prune only shrinks the read model. |
+| `accessd.auditRetentionDays` | `365` | `SA_ACCESSD_AUDITRETENTIONDAYS` | how long control-plane audit rows (`audit_logs`, written by `internal/changelog`) are kept before a daily 03:00 prune deletes them. Absent = 365; an explicit `0` or a **negative** value disables pruning (keep forever). See [`operators.md`](operators.md#control-plane-audit-log-audit_logs). |
+| `accessd.eventRetentionDays` | `0` | `SA_ACCESSD_EVENTRETENTIONDAYS` | how long door-activity rows (`events`, the rebuildable projection of the `ACC_EVENTS` JetStream stream) are kept before a daily 03:00 prune deletes them. **`0` (the default) — or any negative value — keeps them forever**: pruning is opt-in, so an upgrade never silently deletes event history. A positive day count trims the projection; JetStream stays the system of record, so a prune only shrinks the read model. |
 | `accessd.webhookURL` | `""` | `SA_ACCESSD_WEBHOOKURL` | when set, enables the outbound webhook sink ([`internal/webhook`](../internal/webhook)): a fourth durable on `ACC_EVENTS` that POSTs every pageable event as JSON here, so an install can feed its own PagerDuty/Slack/ntfy/ITSM instead of relying on email. Empty leaves it inert. See [Notifications](#notifications-accessd-only). |
 
 ### Notifications (accessd-only)
@@ -151,9 +159,9 @@ It is inert until **two opt-ins** line up:
 | `users.notify` | Operators → Notify | the operator is a recipient of alarm email |
 | `users.notify_locations` | Operators → Notify locations | scope the operator to specific locations (empty = all locations) |
 | `users.notify_types` | Operators → Notify types | scope the operator to specific event kinds (empty = the default set) |
-| `portals.notify_on_alarm` | Portal → Posture & timing (or bulk-select on the Portals list) | email the recipients on this door's forced/held-open alarms |
+| `portals.notify_on_alarm` | Portal → Area & intrusion → Email on alarm (or bulk-select on the Portals list) | email the recipients on this door's forced/held-open (and `no_entry`) alarms |
 | `areas.notify_on_alarm` | Area → Email on intrusion | email the recipients on this area's intrusion alarms |
-| `locations.notify_fire` | Location → Email on fire | email the recipients on this location's fire-input alarms |
+| `locations.notify_fire` | Location → Email on fire input | email the recipients on this location's fire-input alarms |
 | `controllers.notify_offline` | Controller → Notify on offline | email the recipients when this box stops reporting |
 
 A source flag without any `users.notify` operator (or vice-versa) sends nothing.
@@ -193,7 +201,9 @@ A fourth durable POSTs each pageable event as structured JSON to that URL. It sh
 the classification above — so email and webhook never disagree about what is worth
 forwarding — but deliberately **ignores the per-source and per-operator email
 opt-ins**: those decide who gets *mail*, while a webhook has one destination whose
-whole purpose is to receive the feed. Configuring the URL is the opt-in.
+whole purpose is to receive the feed. Configuring the URL is the opt-in. Like the
+email sink it is a `DeliverNew` durable (a freshly set URL is not flooded with
+history), and a failed POST is `Nak`ed for JetStream redelivery, bounded.
 
 > This is the answer to "let us customise the notification templates". Shipping the
 > structured event to a tool that already knows how to route, escalate, and
@@ -203,7 +213,7 @@ whole purpose is to receive the feed. Configuring the URL is the opt-in.
 > **Why config and not a UI field.** accessd POSTs wherever this points, from inside
 > the deployment's network — a modest SSRF surface. Deploy-time config means there is
 > no API to abuse at all, and it matches how the other outbound transport (SMTP) is
-> administered. The sink additionally never follows redirects and has a hard timeout.
+> administered. The sink additionally never follows redirects and has a hard 10s timeout.
 
 > **Entry-disarm has no config either.** The disarm sink ([`internal/disarm`](../internal/disarm)),
 > which disarms an area on a valid grant at a `disarm_on_grant` portal, is **always
@@ -270,7 +280,7 @@ directory's files under `/branding/*`; the UI's `index.html` `<link>`s
 
 | Key | Default | Env var | Notes |
 |---|---|---|---|
-| `branding.dir` | `""` (embedded defaults) | `SA_BRANDING_DIR` | host directory holding any of `theme.css`, `logo.svg`, `branding.json`. Empty = no overlay; the route still serves a silent empty `theme.css`/`{}` `branding.json`, so a stock install never 404s. Path traversal (`..`) is rejected. |
+| `branding.dir` | `""` (embedded defaults) | `SA_BRANDING_DIR` | host directory holding any of `theme.css`, `logo.svg`, `branding.json`. Empty = no overlay; the route still serves a silent empty `theme.css`/`{}` `branding.json`, so a stock install never 404s. A path that is missing or not a directory logs a warning and falls back to the same defaults (not a startup error). Path traversal (`..`) is rejected. |
 
 Overlay files (all optional):
 
@@ -313,15 +323,18 @@ returns. The optional offline cache closes that gap: it persists the last policy
 graph delivered over KV to a local file and, on boot, decides from it while the
 connection is down.
 
-When enabled, the controller also **no longer treats a missing NATS at startup as
-fatal** — it binds the KV buckets lazily and retries in the background, coming up
-on cached (or default-deny) policy and converging when NATS returns.
+A controller **never treats a missing NATS at startup as fatal**, cache or no
+cache — it connects with retry-on-failed-connect, binds the KV buckets lazily and
+retries in the background, coming up default-deny and converging when NATS
+returns. (accessd is the opposite: it fails fast when its NATS is unreachable.) The
+cache is what makes that offline boot *useful*: it comes up on last-known policy
+instead of default-deny.
 
 | Key | Default | Env var | Notes |
 |---|---|---|---|
 | `policy.cache.enabled` | `false` | `SA_POLICY_CACHE_ENABLED` | opt in to the offline cache. Off = today's stateless, default-deny-until-sync boot. |
-| `policy.cache.path` | `./data/policy-cache.json` | `SA_POLICY_CACHE_PATH` | snapshot file. Written `0600` (it holds credential values); atomic (temp + rename). |
-| `policy.cache.maxAge` | `72h` | `SA_POLICY_CACHE_MAXAGE` | staleness bound. On boot, a snapshot older than this is **refused** and the box falls back to default-deny, so a credential revoked during a long outage can't keep working indefinitely off a stale cache. Zero/unset resolves to the default (never "unlimited"); set a large value (e.g. `8760h`) to effectively disable the check. |
+| `policy.cache.path` | `./data/policy-cache.json` | `SA_POLICY_CACHE_PATH` | snapshot file. Written `0600` (it holds credential values), parent dir created `0700`; atomic (temp + rename). |
+| `policy.cache.maxAge` | `72h` | `SA_POLICY_CACHE_MAXAGE` | staleness bound. On boot, a snapshot older than this is **refused** and the box falls back to default-deny, so a credential revoked during a long outage can't keep working indefinitely off a stale cache. Set a large value (e.g. `8760h`) to effectively disable the check. |
 
 Behavior and guarantees:
 
@@ -347,7 +360,10 @@ Behavior and guarantees:
 `Load` returns an error (the binary refuses to start) only in these cases —
 everything else falls back to a default:
 
-- no NATS URL configured
+- the config file exists but can't be parsed (malformed YAML)
+- a value can't be decoded into its type — e.g. a duration key like
+  `heartbeatInterval: soon` (`failed to unmarshal config`)
+- no NATS URL configured (only possible with an explicit empty `urls` list)
 - more than one NATS auth method set
 - `nats.credsFile` set but the file does not exist
 - `nats.tls.enable` true with only one of `certFile` / `keyFile`
@@ -358,10 +374,21 @@ everything else falls back to a default:
 - `controller.driver` not `mock`/`gpio`, or `gpio` with no `controller.model`
 - `controller.reader` not `nats`/`osdp`/`both`, or `osdp`/`both` with no `controller.model`
 
+Some values pass `Load` and fail **later, at startup** instead:
+
+- `logging.encoding` other than `json`/`console`, or an unopenable
+  `logging.outputPath` (logger construction)
+- an unreadable `nats.nkeySeedFile`, or a TLS `certFile`/`keyFile` pair that won't
+  load (NATS options are built at connect)
+- `controller.model` naming no known profile, when the driver or reader needs one
+  (`unknown controller model`, listing the known ones)
+- accessd only: NATS unreachable at `serve` (the controller retries instead)
+
 ## Which binary reads what
 
 - **Both** read `nats`, `logging`, `metrics`, `policy`, `status`, `subjects`
-  (the controller writes the status bucket; accessd watches it).
+  (the controller writes the status bucket; accessd watches it). `policy.cache` is
+  controller-only.
 - **accessd** also reads `events`, `accessd`, and `branding`.
 - **access-controller** also reads `controller` and `diagnostics`.
 

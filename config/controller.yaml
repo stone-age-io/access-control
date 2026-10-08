@@ -81,7 +81,7 @@ policy:
   # Fail-secure: a missing/corrupt snapshot, or one older than maxAge, loads
   # nothing and the box stays default-deny. Live KV always wins once it syncs.
   # maxAge bounds how stale cached config may be to be trusted on an offline boot
-  # (zero/unset -> 72h default; a large value like 8760h ~ disables the check).
+  # (unset -> 72h default; a large value like 8760h ~ disables the check).
   # cache:
   #   enabled: true
   #   path: "./data/policy-cache.json"
@@ -95,6 +95,13 @@ policy:
 # ----------------------------------------------------------------------------
 subjects:
   app: "acc"
+
+# ----------------------------------------------------------------------------
+# Status KV — the upward device shadow this box writes (door/posture/aux/area
+# state). accessd creates it; must match accessd's status.bucket.
+# ----------------------------------------------------------------------------
+status:
+  bucket: "ACC_STATUS"
 
 # ----------------------------------------------------------------------------
 # Controller identity. `code` must match a `controllers` record in accessd; this
@@ -120,7 +127,7 @@ controller:
   driver: "mock"
   # Hardware model — selects the profile mapping a portal's logical relay/input
   # indices to physical lines AND the transport (GPIO vs I2C), and the RS485 serial
-  # port for the OSDP reader. Required when driver is "gpio" OR reader is "osdp";
+  # port for the OSDP reader. Required when driver is "gpio" OR reader is "osdp"/"both";
   # must match a registered model (kincony-server-mini | kincony-pi5r8) and the
   # controllers record. Relay/input wiring polarity is in the profile, not here.
   # model: "kincony-server-mini"
@@ -132,4 +139,6 @@ controller:
   #          on the Pi5R8). Requires `model`. The lock strike and DPS/REX stay on
   #          the GPIO/I2C driver above. Each portal's PD address on the bus is its
   #          `reader_address` field in policy (default 0 — the single-reader case).
+  #   both — NATS taps for every portal PLUS OSDP for portals with a physical
+  #          reader (reader_address >= 0; -1 = NATS-only). Requires `model`.
   reader: "nats"

@@ -44,8 +44,9 @@ deployment on a shared NATS account; it must be a single NATS token (no `.`, `*`
 
 `{location}`, `{type}`, and `{thing}` are each a single NATS token and the record
 **codes** (e.g. `hq`, `door`, `lobby-main`), never PocketBase ids. The mirror
-rejects a location/portal code or portal type that is not a single token or that
-collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
+rejects a location, portal, controller, aux input/output, or area code (or a portal
+type) that is not a single token or that collides with a reserved keyword
+(`acc`/`evt`/`cmd`/`tap`/`fire`); the record is logged and simply never mirrored.
 
 ## Subjects
 
@@ -53,13 +54,14 @@ collides with a reserved keyword (`acc`/`evt`/`cmd`/`tap`/`fire`).
 |---|---|---|---|
 | `acc.{location}.{type}.{thing}.tap` | → ctrl | core NATS | `{"cred":"..."}` or a bare credential string |
 | `acc.{location}.{type}.{thing}.cmd.posture` | → ctrl | core NATS | `{"posture":"…","actor":"…","reason":"…","until":"…"}` |
-| `acc.{location}.{type}.{thing}.cmd.grant` | → ctrl | core NATS | `{"seconds":N,"actor":"…","reason":"…"}` |
+| `acc.{location}.{type}.{thing}.cmd.grant` | → ctrl | core NATS | `{"seconds":N,"actor":"…","reason":"…","source"?}` |
 | `acc.{location}.auxout.{thing}.cmd.output` | → ctrl | core NATS | `{"action":"on"\|"off"\|"pulse","seconds":N,"actor":"…","reason":"…"}` |
 | `acc.{location}.evt.fire` | ↔ | core NATS → JetStream | `{"active":bool,"ts"}` |
-| `acc.{location}.{type}.{thing}.evt.tap` | ctrl → | core NATS → JetStream | `{"cred","user","allow","reason","ts","source"}` |
+| `acc.{location}.{type}.{thing}.evt.tap` | ctrl → (accessd → for a denied badge unlock) | core NATS → JetStream | `{"cred","user","allow","reason","ts","source"?}` |
 | `acc.{location}.{type}.{thing}.evt.state` | ctrl → | core NATS → JetStream | `{"posture","actor?","reason?","ts"}` |
 | `acc.{location}.{type}.{thing}.evt.alarm` | ctrl → | core NATS → JetStream | `{"type","ts"}` |
-| `acc.{location}.area.{code}.evt.state` | accessd → | core NATS → JetStream | `{"arm","previous","controller","source","ts"}` |
+| `acc.{location}.area.{code}.evt.alarm` | ctrl → | core NATS → JetStream | `{"type":"intrusion","point","ts"}` |
+| `acc.{location}.area.{code}.evt.state` | accessd → | core NATS → JetStream | `{"arm","previous","controller","armSource","ts"}` |
 | `acc.{location}.ctrl.{code}.evt.state` | accessd → | core NATS → JetStream | `{"status","lastSeen","ts"}` |
 | `acc.{location}.ctrl.{code}.heartbeat` | ctrl → accessd | core NATS (**not** JetStream) | `{"code","location","ts"}` |
 
@@ -75,12 +77,22 @@ Two event subjects are published by **accessd**, not the edge, and both are
   shadow in `ACC_STATUS`, so accessd's status projector emits from there. It is
   emitted **per participating controller** — a 3-box area reports three
   transitions, each naming its own controller — matching the shadow's granularity.
-  Scheduled auto-arm has no other trace anywhere in the system.
+  Scheduled auto-arm has no other trace anywhere in the system. `arm`/`previous` are
+  `armed`/`disarmed`; `ts` is the shadow's own `updatedAt`. It fires only when an
+  existing projection row's state *changes* — a key's first report is not a
+  transition, so a cold boot manufactures no event per area. The shadow's provenance
+  (`standing`/`scheduled`/`override`) travels as **`armSource`, not `source`**:
+  `source` is the audit projection's select over how an event *arrived*
+  (`nats`/`osdp`/`command`/`badge`), and shipping arm provenance under that key put a
+  value the select rejects into every arm event (see [Audit
+  projection](#audit-projection-events-collection)).
 - **`ctrl` — a liveness transition.** Heartbeats stay off the stream (they are a
   flood); an online↔offline flip is one event per outage and is audited. `ctrl` is
   the reserved controller token, the same one the heartbeat uses — the heartbeat
   sits outside `.evt` at 5 tokens so the stream cannot capture it, while this sits
-  inside at 6 so it can.
+  inside at 6 so it can. `status` is `online`/`offline`; `lastSeen` is the
+  controller record's `last_seen` in PocketBase's datetime format
+  (`2006-01-02 15:04:05.000Z`), not RFC 3339.
 
 Both fit the existing `acc.*.*.*.evt.>` stream subject; **no stream subject
 changed** for either.
@@ -91,9 +103,13 @@ controller at that location — including the publisher, harmlessly and
 idempotently — subscribes and applies it. That is why it is location-scoped while
 the contact is bound to one box.
 
-Controllers subscribe per location with wildcards: taps via
-`acc.{location}.*.*.tap` and commands via `acc.{location}.*.*.cmd.posture`,
-`acc.{location}.*.*.cmd.grant`, and `acc.{location}.*.*.cmd.output` (aux outputs).
+The NATS reader subscribes to the **exact** `.tap` subject of each portal it has
+armed (the portal's own location/type/code), not a location wildcard, so it hears
+only portals this box drives. Commands are subscribed per location with wildcards —
+`acc.{location}.*.*.cmd.posture`, `acc.{location}.*.*.cmd.grant`, and
+`acc.{location}.*.*.cmd.output` (aux outputs) — so every controller at a location
+hears every command there and silently ignores those for portals/outputs it does not
+drive.
 The audit surface is the `acc.*.…evt` subtree,
 captured by `ACC_EVENTS` and projected into the `events` collection via **two
 stream subjects of different fixed arity** (JetStream forbids overlapping subjects,
@@ -129,18 +145,29 @@ controller `offline` once it has been silent longer than
   ignored** — timed reversion must come from an external scheduler publishing a
   follow-up command. `free_access` opens on any tap without consulting the
   credential (strike pulses, door stays closed); `unlocked` holds the strike open.
+  Each set or clear emits one `evt.state` carrying the now-effective posture and the
+  command's `actor`/`reason`. That is the **only** source of `evt.state` for a
+  portal: a scheduled-posture window boundary or a standing-posture edit emits no
+  event (the status shadow's `source` reflects it instead).
 - **grant** — a momentary strike pulse (the same physical effect as a credential
   grant, operator-initiated), distinct from a standing posture change.
   `seconds <= 0` (or omitted) falls back to the portal's configured `pulseSeconds`.
-  Emits an `evt.tap` with `allow=true`, `reason=allow_command_grant`, and `user`
-  set to the issuing actor, so the open is attributable in the audit trail.
+  Emits an `evt.tap` with `allow=true`, `reason=allow_command_grant`, empty `cred`,
+  and `user` set to the issuing actor, so the open is attributable in the audit
+  trail. The optional `source` names the remote surface that sent it and is copied
+  onto that event: the badge tier sends `badge`; absent/empty (the operator route,
+  and any older publisher) becomes `command`. The command's own `reason` is only
+  logged.
 - **output** — drives a named auxiliary output relay (`auxout` type). `on`/`off`
   set the standing held state; `pulse` energizes momentarily (`seconds<=0` falls
-  back to the aux output's configured `pulseSeconds`). Aux outputs are first-class
-  Things bound to a controller, addressed like portals; their live state flows up
-  the status channel (`auxout.{code}`).
+  back to the aux output's configured `pulseSeconds`); any other action is ignored.
+  Aux outputs are first-class Things bound to a controller, addressed like portals;
+  their live state flows up the status channel (`auxout.{code}`). It emits **no**
+  event — an output command leaves no `events` row (for `on`/`off`, the shadow's
+  `energized` reflects it; a `pulse` is momentary and not reflected).
 - **fire** — toggles a location's fire-alarm-input state. While active, the
-  controller **suppresses alarm emission** for that location (forced/held-open
+  controller **suppresses alarm emission** for that location if it opts in via
+  `faiSuppress` (forced/held-open
   events would be false alarms during evacuation). It never changes posture and
   never unlocks — hardware owns egress. It is location-scoped (not per-portal) and
   lives on the `evt` namespace, not `cmd`: it is both a control input the
@@ -241,7 +268,7 @@ write, not a fire-and-forget command.
 `disarmOnGrant` is an *entry* door: a valid credential grant there durably disarms
 its area. Because arm-state is durable and central (and an area spans controllers),
 this can't be a local edge action — so the edge just emits the `evt.tap` it already
-emits, and accessd's **disarm sink** (`internal/disarm`, a third independent durable
+emits, and accessd's **disarm sink** (`internal/disarm`, a third independent durable, `acc-disarm`,
 on ACC_EVENTS alongside the audit and notify consumers, `DeliverNew`, filter
 `acc.*.*.*.evt.tap`) observes the grant and writes the same durable `armOverride:
 disarmed` the manual disarm route writes; the mirror then converges every peer
@@ -276,9 +303,11 @@ make it safe on the accessd side rather than the edge side:
   mirrored** to KV — the decision happens before publishing, so the edge never needs
   to know the flag exists.
 
-The published `actor` is `badge:<cardholderId>` rather than an operator email, so the
-audit trail attributes the person. Note the grant carries no `cred`, so — like an
-operator door-pop — a badge remote unlock **cannot** trigger entry-disarm.
+The published body is `{"seconds":0,"actor":"badge:<cardholderId>","reason":"remote_unlock","source":"badge"}`:
+`actor` names the person rather than an operator email, and `source: badge` makes the
+controller's resulting `evt.tap` say so (an operator grant's says `command`). Note the
+grant carries no `cred`, so — like an operator door-pop — a badge remote unlock
+**cannot** trigger entry-disarm.
 
 A badge action never publishes to `.tap`. `Tap.Source` exists so a physical read is
 distinguishable from a synthesized one; a phone-initiated open is a command, and
@@ -292,7 +321,8 @@ writes `areas.arm_override` — a **durable record write**, exactly as the opera
 does, because arm-state must survive a reboot and there is deliberately no `cmd.arm`
 subject. `POST /api/badge/outputs/{id}/pulse` is authorized by `policy.DecideOutput`,
 gated by `aux_output.allow_remote`, and publishes the **existing** `cmd.output` with
-`action: "pulse"` and `seconds: 0` (the output's own configured duration). The badge
+`action: "pulse"`, `seconds: 0` (the output's own configured duration),
+`actor: "badge:<cardholderId>"`, and `reason: "remote_output"`. The badge
 surface offers no `on`/`off`: a momentary act is self-limiting, where energizing a relay
 from a phone and walking away is not.
 
@@ -411,7 +441,15 @@ floor-plan image data ever leaves accessd.
 the controller. `days` are ISO weekdays (1=Mon … 7=Sun); `start`/`end` are local
 wall-clock `HH:MM` (`24:00` allowed as end-of-day); `end <= start` means the
 window crosses midnight. `user.{pbid}` and `cred.{value}.user` are the only places
-a PocketBase id appears — the cardholder id is the credential→user join key.
+a PocketBase id is a *reference* — the cardholder id is the credential→user join key.
+(`holiday.{pbid}` is also keyed by id, since a holiday has no natural code, but
+nothing references it.) A credential `value` is a KV key segment, so it must match
+`policykv.CredentialValuePattern` — the NATS KV key charset `-/_=.a-zA-Z0-9`, not
+ending in `.`; unlike a code it may contain `.`, since it never appears in a
+subject. The same pattern guards the `credentials.value` field and the mirror, so
+an out-of-charset value is rejected at save rather than silently never mirrored.
+A missing `posture` mirrors as `secure`, and a missing user/credential `status` as
+`active`.
 
 `observeHolidays` (default true; stored inverted as `schedules.ignore_holidays` so
 the safe default holds for any record) closes every window of that schedule on a
@@ -436,6 +474,9 @@ controller adopts `autoPosture` (any posture, e.g. `unlocked` for auto-unlock or
 command override still beats both. The two are written together or not at all
 (the mirror drops a half-configured pair). Like the hardware fields, `autoPosture`/
 `autoSchedule` are resolved by the controller, never by the pure `policy.Decide`.
+An area's `autoArm` + `autoSchedule` follow the same both-or-neither rule; `arm`
+(standing) and `armOverride` take `armed`/`disarmed`, empty meaning disarmed and
+no override respectively.
 
 A portal's hardware binding (the `?`-marked fields, omitted when unset) is **central
 state**, carried in policy so a box is stateless and swappable: `controller` is the
@@ -490,14 +531,17 @@ rows whose KV key is gone — so a deleted shadow key removes the projection row
 | `portal.{code}` | `{"code","location","controller","door":"open"\|"closed"\|"unknown","posture","source":"standing"\|"scheduled"\|"override","held","updatedAt"}` |
 | `auxin.{code}` | `{"code","location","controller","active","updatedAt"}` |
 | `auxout.{code}` | `{"code","location","controller","energized","updatedAt"}` |
-| `area.{controller}.{code}` | `{"code","location","controller","arm":"armed"\|"disarmed","source","peers":["<controller code>"],"updatedAt"}` |
+| `area.{controller}.{code}` | `{"code","location","controller","arm":"armed"\|"disarmed","source":"standing"\|"scheduled"\|"override","peers":["<controller code>"],"updatedAt"}` |
 
 The area key is **compound** (one shadow per participating controller for the same
 area) — `code`/`controller` come from the value, not the key. `peers` is the full
-participant set (every controller with a member input in the area), so the console
+participant set (every controller with a member aux input **or portal** in the area), so the console
 has a **denominator**: the area is "armed" only when *every* peer reports armed,
 "partial/arming" if a peer disagrees or hasn't reported (e.g. it was offline at arm
 time and converges on reconnect), and "disarmed" when all peers report disarmed.
+The area shadow's `source` is the arm-state's provenance (`armOverride` / scheduled
+`autoArm` / standing `arm`), the same three words as posture; it reaches the event
+stream as the arm-transition event's `armSource`.
 
 `door` is `unknown` on a controller without a DPS input wired (e.g. the mock
 driver) or before the first edge. `posture` is the current **effective** posture
@@ -519,7 +563,8 @@ contract — **deny-overrides come first**:
 2. Posture gate: `disabled` → `deny_point_disabled`; `lockdown` → `deny_lockdown`
    (beats a valid credential); `unlocked` → `allow_posture_unlocked` (strike held,
    credential not consulted); `free_access` → `allow_posture_free_access` (any tap
-   opens, credential not consulted); `secure` → continue
+   opens, credential not consulted); `secure` → continue; any other (unknown or
+   empty) posture fails closed as `deny_point_disabled`
 3. Credential/user: unknown credential → `deny_unknown_credential`; non-active
    credential → `deny_revoked`; before `validFrom` → `deny_not_yet_valid`; after
    `validUntil` → `deny_expired`; unknown/non-active user → `deny_revoked`
@@ -542,6 +587,12 @@ Reason codes are **stable strings** — they flow verbatim into `tap` events and
 the `events` collection, so downstream consumers and dashboards depend on them.
 (The `*_point` reason codes keep their historical spelling even though the entity
 is now called a portal.)
+
+A **denied badge remote unlock** (below) is the one tap event whose `reason` can
+fall outside this set: besides any `policy.Decide` code, accessd emits
+`remote_unlock_not_allowed` (the portal's `allow_remote_unlock` is off — checked
+before the graph is consulted) and `no_credential` (the holder has no credential to
+decide with).
 
 ### Non-portal targets
 
@@ -587,13 +638,20 @@ collection is a rebuildable projection behind the UI timeline. The durable
 consumer (`acc-audit`) delivers from the start of the stream and is
 **at-least-once, made idempotent**: each row carries the message's JetStream
 stream sequence (`stream_seq`, unique-indexed), and a redelivery whose row
-already landed is acked and skipped. Each event subject maps to a row:
+already landed is acked and skipped. A message that will not project is
+**not** retried forever: each failure is redelivered with a growing delay
+(`NakWithDelay`, 1s → 2min, about six minutes in total) and after nine deliveries
+it is `Term`ed — the event stays in JetStream and only its row is missing until a
+rebuild, where an immediate-redelivery loop would fill the log with one event. A
+subject that does not parse as an event is acked and skipped; a body that is not
+JSON is kept as `payload: {"raw": "<body>"}`. Each event subject maps to a row:
 
 | Column | Source |
 |---|---|
 | `location`, `type`, `portal`, `kind` | parsed from the subject (`kind` ∈ `tap`/`state`/`alarm`/`fire`) |
-| `credential`, `user`, `allow`, `reason`, `ts` | corresponding body fields |
-| `source` | tap body field — **what produced the tap**: `nats`/`osdp` (a reader) or `command`/`badge` (a remote act that never reached a reader). Empty on non-tap and legacy rows |
+| `credential`, `user`, `allow`, `reason`, `ts` | corresponding body fields (`cred` → `credential`). `user` is the cardholder id for a credential decision, the issuing actor for a command grant (an operator email or `badge:<cardholderId>`) |
+| `user_name` | the cardholder's `name`, resolved from `user` **at projection time** — a snapshot, so a later rename or delete does not rewrite who the event was about. Empty when `user` is not a cardholder id (no user, a command actor, legacy rows); the UI falls back to `user` |
+| `source` | tap body field — **what produced the tap**: `nats`/`osdp` (a reader) or `command`/`badge` (a remote act that never reached a reader). Empty on non-tap and legacy rows. `source` is a select: the consumer writes a value only if the collection's field accepts it, otherwise it stays in `payload` alone — an out-of-range value would fail the whole row. Adding a value is a migration |
 | `acknowledged`, `ack_by`, `ack_at` | operator acknowledgement (set via `POST /api/events/{id}/ack`, the `command` capability) |
 | `stream_seq` | the message's JetStream stream sequence (idempotency key; 0 on rows projected before it existed) |
 | `repage_count` | reminders sent for an unacknowledged alarm ([`internal/repage`](../internal/repage)); on the row so the cap survives a restart |
@@ -605,7 +663,7 @@ The `(type, kind)` pair is what distinguishes the newer event shapes; **no new
 | `type` | `kind` | Meaning |
 |---|---|---|
 | portal kind | `tap` | a decision (a card read, an operator grant, or a badge remote unlock — see `source`) |
-| portal kind | `state` | a posture change |
+| portal kind | `state` | a posture command (set or clear) |
 | portal kind | `alarm` | `forced` / `held` / `held_clear` / `no_entry` |
 | `area` | `alarm` | an intrusion trip |
 | `area` | `state` | an arm/disarm transition |
@@ -629,7 +687,9 @@ a redelivery or stream replay no longer resurrects an already-acknowledged row
 unique index).
 
 **Notification sink.** A *second, independent* durable consumer (`acc-notify`,
-[`internal/notify`](../internal/notify)) on `ACC_EVENTS` emails on `alarm`/`fire`.
+[`internal/notify`](../internal/notify)) on `ACC_EVENTS` emails on `alarm`/`fire`
+and controller liveness transitions (filter `acc.*.*.*.evt.alarm`, `acc.*.evt.fire`,
+`acc.*.ctrl.*.evt.state` — not portal/area `evt.state`).
 It is parallel to `acc-audit`, not coupled to it (the audit consumer is an
 at-least-once projection; coupling alerting there would double-send on redelivery).
 It diverges in one way: **`DeliverNew`, not `DeliverAll`** — alerting is not a
