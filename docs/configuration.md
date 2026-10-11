@@ -67,6 +67,14 @@ dev box). A `.creds` file is the recommended choice for a backend service.
 > **Never commit credentials**
 > `*.creds` is gitignored. Keep credentials out of any file you commit.
 
+> [!NOTE]
+> **Service discovery needs `$SRV.>`**
+> Both binaries register for NATS service discovery
+> ([Wire Protocol](protocol.md#service-discovery)). Give each binary's
+> credential subscribe on `$SRV.>` and a way to reply: publish on `_INBOX.>`,
+> or `allow_responses: true`. Without them, discovery is refused for that
+> process and nothing else changes. nats.go prints the refusal to stderr.
+
 ### TLS
 
 You do not need this section when the URL is `tls://` and the server presents a

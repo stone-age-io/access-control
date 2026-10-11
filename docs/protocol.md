@@ -151,6 +151,27 @@ heartbeat on start, then every `controller.heartbeatInterval` (default 15s).
 accessd marks a controller `offline` once it has been silent longer than
 `accessd.controllerOfflineAfter` (default 45s).
 
+### Service discovery
+
+Both binaries register as NATS micro services, so `nats micro ls` (or any
+`$SRV` client) lists every running `accessd` and controller with its version.
+
+| Service | Metadata |
+| :--- | :--- |
+| `access-controller` | `code`, `location` (the controller's own) |
+| `accessd` | `host` (left out if the hostname cannot be read) |
+
+- **Identity, not an API.** Neither registers an endpoint. `$SRV.PING`,
+  `$SRV.INFO` and `$SRV.STATS` answer with name, version, metadata and start
+  time, and nothing else. Nothing can be read or controlled through them.
+- The `$SRV` subjects belong to the NATS micro protocol, and the micro library
+  builds them. They are outside `acc.>`, and `internal/subjects` does not
+  build them.
+- `version` is the module version Go stamps at build (a tag, or a
+  pseudo-version). A value that is not semver reports as `0.0.0-dev`.
+- Each credential needs subscribe on `$SRV.>` and a way to reply. Without them
+  discovery is refused and nothing else changes. Registration is never fatal.
+
 ### Command Details
 
 - **posture** installs a runtime posture override for the portal. Valid

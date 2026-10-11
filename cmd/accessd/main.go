@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nats-io/nats.go/micro"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -130,6 +131,7 @@ func main() {
 		pub         *mirror.Publisher
 		releaser    *armrelease.Releaser
 		badgeSweep  *badgesweep.Sweeper
+		discovery   micro.Service
 	)
 
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -360,6 +362,14 @@ func main() {
 			return err
 		}
 
+		// Service discovery: identity only (no endpoints), never fatal. Registered
+		// once everything else is up; stopped first in OnTerminate.
+		meta := map[string]string{}
+		if host, err := os.Hostname(); err == nil {
+			meta["host"] = host
+		}
+		discovery = nc.RegisterService(natsx.ServiceAccessd, "stone-access system of record", meta)
+
 		log.Info("accessd serving",
 			"policyBucket", cfg.Policy.Bucket,
 			"statusBucket", cfg.Status.Bucket,
@@ -371,6 +381,9 @@ func main() {
 
 	pb.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		log.Info("accessd terminating")
+		if discovery != nil {
+			_ = discovery.Stop() // before nc.Close below
+		}
 		if badgeSweep != nil {
 			badgeSweep.Stop()
 		}

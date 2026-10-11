@@ -260,6 +260,15 @@ func main() {
 	hb.Start(ctx)
 	defer hb.Stop()
 
+	// Service discovery: identity only (no endpoints), never fatal, and fine while
+	// NATS is still unreachable. Stopped before the deferred nc.Close.
+	if svc := nc.RegisterService(natsx.ServiceController, "stone-access edge controller", map[string]string{
+		"code":     cfg.Controller.Code,
+		"location": cfg.Controller.Location,
+	}); svc != nil {
+		defer func() { _ = svc.Stop() }()
+	}
+
 	// Optional read-only diagnostics page for field install/troubleshooting.
 	// Off by default; serves /status + /status.json on its own (localhost-by
 	// -default) address. Strictly read-only — control stays on the command plane.

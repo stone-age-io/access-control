@@ -543,6 +543,16 @@ pattern is fixed-arity, no trailing `>`, so it can't expand to overlap the porta
 controller must share the same `subjects.app`** (a mismatch silently severs policy/commands/events).
 `docs/protocol.md` is the full wire reference (subjects, message shapes, KV key scheme, decision reason codes).
 
+**Service discovery is identity, not an API.** Both binaries register as NATS micro services
+(`natsx.RegisterService`) with **no endpoints**: `access-controller` with `code`/`location` metadata, `accessd`
+with `host`. So `$SRV.PING`/`INFO`/`STATS` (what `nats micro ls` reads) expose only name, version, that metadata
+and start time, with no way to call, read or control anything else. The `$SRV` subjects belong to the micro
+protocol and the library builds them — the one exception to `internal/subjects`, on purpose. The version is the
+module version `go build` stamps from the checkout (no ldflags), or `0.0.0-dev` when not semver. A credential
+needs `$SRV.>` subscribe and a way to reply (`_INBOX.>` publish or `allow_responses`). Registration is **never
+fatal and never blocks**: a failure is a warning, a refused `$SRV.>` costs discovery only (nats.go prints it to
+stderr), its subscriptions wait in the client through a cold boot without NATS, and micro adds no timer.
+
 Commands (`internal/controller/commands.go`) install **runtime posture overrides** that are operational state,
 never written back to PocketBase. `posture: "clear"` reverts to the effective posture (scheduled if open, else
 standing). The controller grows **no policy ticker** — `until` (timed reversion) comes from outside (an external
