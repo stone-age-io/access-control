@@ -88,6 +88,11 @@ cd ui && npm run build                           # UI has no test suite; the typ
 CI (`.github/workflows/ci.yml`) also gates **gofmt** (two apostrophes inside a Go doc comment get rewritten into a
 typographic quote, so reword rather than accept it), `go mod tidy -diff`, vet per release OS, and **a committed console
 that matches a fresh `npm run build`** — a frontend change without its rebuilt `internal/webui/public` goes red.
+That comparison holds across platforms only because `.gitattributes` checks out `ui/` (and the output) with LF:
+plugin-vue hashes a component's raw source, CRs included, into its scope id, and vite copies `index.html` and
+`public/` with their line endings, so a CRLF Windows checkout built a different console. A CRLF `index.html` also came
+out with mixed endings, which git classes as binary and so never normalizes on commit. If an existing checkout
+predates that rule, re-check out `ui/` and `internal/webui/public` before building.
 
 ## Release
 
