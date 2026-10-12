@@ -1,0 +1,140 @@
+# Release configuration. Ported from the platform's, with two differences that
+# matter for this repo.
+#
+# TWO binaries, one archive each. accessd runs once per deployment and
+# access-controller once per edge box; they share nothing but NATS, so they are
+# downloaded separately. Both ship for the same targets: linux/arm64 is the
+# controller's hardware (KinCony CM4 and CM5), and the rest let either binary run
+# on a server or on a laptop for the demo, where the controller uses its mock
+# driver and NATS reader.
+#
+# NO `before` hooks. The platform builds its console inside goreleaser because it
+# tracks only a placeholder page. This repo commits the built console
+# (internal/webui/public) and embeds that, and the release workflow rebuilds it
+# from ui/ first and fails if the result differs. So the binary carries exactly
+# the console the tag's source builds, a local `goreleaser release --snapshot`
+# needs no Node, and the checkout stays clean, which the version stamp below
+# depends on.
+version: 2
+
+project_name: stone-access
+
+builds:
+  - id: accessd
+    main: ./cmd/accessd
+    binary: accessd
+    env:
+      # PocketBase's SQLite driver is modernc.org/sqlite, a pure-Go translation,
+      # and the GPIO, I2C and OSDP drivers are pure Go too. No C toolchain, so
+      # every target below cross-compiles from one runner.
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    # No -X. `go build` stamps the module version from the checkout's tag into
+    # the build info, and that is what --version and NATS service discovery read
+    # (internal/version), so a release and a plain `go build` of the same tag
+    # report the same thing. Written out because goreleaser's default ldflags
+    # add -X main.version and friends, which name nothing here.
+    ldflags: [-s -w]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      # Windows on arm64 is not a deployment target for either binary.
+      - goos: windows
+        goarch: arm64
+
+  - id: access-controller
+    main: ./cmd/access-controller
+    binary: access-controller
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  # Each archive carries its binary's annotated example config at the path the
+  # binary loads by default, so `./accessd serve` run from the extracted
+  # directory finds it. It points at nats.example.com and names a creds file,
+  # so it is edited before the first run (README, "Point the configs at your
+  # NATS first"). Every doc travels in both archives: they are small, and a
+  # field install is often somewhere without a browser on the wiki.
+  - id: accessd
+    ids: [accessd]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - config/accessd.yaml
+      - branding.example/*
+      - docs/*.md
+    name_template: >-
+      accessd_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+  - id: access-controller
+    ids: [access-controller]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - config/controller.yaml
+      - docs/*.md
+    name_template: >-
+      access-controller_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+# The release body is NOT built here. goreleaser's changelog is a list of commit
+# subjects, and this repo's reasoning lives in CHANGELOG.md as paragraphs, with
+# upgrade notes that exist nowhere in the commit log. scripts/release-notes.sh
+# assembles the whole body (install prose + the changelog section for the tag)
+# and the release workflow passes it with --release-notes, which makes
+# everything below inert on a real release.
+#
+# DO NOT set `disable: true` here. It looks like the tidy way to say "the body
+# comes from elsewhere", and it silently breaks --release-notes: reading that
+# file is a step INSIDE the changelog pipe, so disabling the pipe skips the read
+# and publishes an empty body. The platform shipped v0.5.0 that way. The
+# settings below are the fallback for someone running goreleaser without the
+# flag.
+#
+# There is no release.header / release.footer for the adjacent reason:
+# goreleaser does not apply them to a --release-notes body, so they would be
+# prose that renders on a manual run and vanishes on a real one.
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+
+release:
+  github:
+    owner: stone-age-io
+    name: access-control
+  # A tag with a prerelease suffix (v0.1.1-rc1) is published as a GitHub
+  # prerelease. The default is false, which would mark a release candidate as
+  # "Latest" on the repository front page. It pairs with release-notes.sh, which
+  # reads `## [Unreleased]` for exactly those tags.
+  prerelease: auto

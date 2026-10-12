@@ -1,0 +1,100 @@
+# Build hygiene on every push to main and every pull request, plus one check
+# specific to this repo: the committed console is the one ui/ builds.
+#
+# accessd embeds internal/webui/public, which is BUILT output committed beside
+# its source so a fresh clone builds without Node. Nothing enforced the rule that
+# goes with that ("rebuild and commit it whenever the frontend changes"), so a
+# frontend change committed without its build shipped the previous console, with
+# every Go test green. Rebuilding here and diffing is the guard. The build is
+# deterministic: a clean LF clone rebuilt byte-identical to what a Windows
+# checkout committed.
+#
+# One job with sequential steps, on purpose: the Go build embeds the console, so
+# the stages are ordered anyway, and parallel jobs would mean shipping the build
+# between them as an artifact.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ---------------------------------------------------------------- frontend
+      - uses: actions/setup-node@v7
+        with:
+          # Pinned rather than lts/*, so a Node release cannot change the build
+          # without a commit saying so.
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ui
+        run: npm ci
+
+      # vue-tsc, then vite build into ../internal/webui/public. The UI has no
+      # test suite, so the typecheck here is its only gate.
+      - name: Build the console
+        working-directory: ui
+        run: npm run build
+
+      - name: The committed console is the one ui/ builds
+        run: |
+          changed="$(git status --porcelain -- internal/webui/public)"
+          if [ -n "$changed" ]; then
+            echo "::error::internal/webui/public is stale. Run 'npm run build' in ui/ and commit the result."
+            echo "$changed"
+            exit 1
+          fi
+          echo "ok  internal/webui/public matches a fresh build"
+
+      # -------------------------------------------------------------------- go
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Apostrophe pairs in a doc comment are a trap here: gofmt rewrites two
+      # single quotes into a typographic double quote, which changes what an
+      # SQL example says. Reword the comment rather than accept the rewrite.
+      - name: Formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would rewrite these files:"; echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Module hygiene
+        run: go mod tidy -diff
+
+      # The GPIO driver and the OSDP serial transport have Linux-only files, so
+      # vetting on Linux alone never type-checks the stubs that windows and
+      # darwin builds compile.
+      - name: Vet every release OS
+        run: |
+          for goos in linux windows darwin; do
+            echo "==> $goos"
+            GOOS=$goos go vet ./...
+          done
+
+      # -count=1 defeats the test cache: a cached PASS is a memory of a result
+      # from a commit that may not be this one.
+      - name: Test
+        run: go test -count=1 ./...
+
+      # The controller's hardware target. The release cross-compiles every
+      # target anyway; this catches an arm64 break before a tag does.
+      - name: Build
+        run: |
+          go build ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/access-controller

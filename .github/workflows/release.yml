@@ -1,0 +1,102 @@
+# Cuts a release when a v* tag is pushed: both binaries cross-compiled by
+# goreleaser, checksums, and a GitHub release whose body comes from CHANGELOG.md.
+#
+# No container image, unlike the platform's release. accessd needs a NATS server
+# it does not run itself, and the controller is installed on a box beside the
+# doors, so an image would be a second definition of the artifact that nobody
+# has asked for yet.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # create the GitHub release, and read it back to verify
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # goreleaser derives the version from tags, and a shallow clone has
+          # none. `go build` reads the same tag for the version it stamps.
+          fetch-depth: 0
+
+      # The binaries embed the COMMITTED console (see the top of
+      # .goreleaser.yaml). A tag can be pushed on a commit whose CI never ran or
+      # failed, so the release proves for itself that the console it ships is the
+      # one ui/ builds at this tag.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: The committed console is the one ui/ builds
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+          changed="$(git status --porcelain -- ../internal/webui/public)"
+          if [ -n "$changed" ]; then
+            echo "::error::internal/webui/public is stale at this tag. Rebuild it, commit, and tag again."
+            echo "$changed"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      # --version and NATS service discovery both read the version `go build`
+      # stamps from the checkout, and a dirty or untagged checkout stamps a
+      # pseudo-version instead. goreleaser builds in this same checkout, so one
+      # plain build proves the stamp before anything is published.
+      - name: The checkout stamps the tag
+        run: |
+          go build -o "$RUNNER_TEMP/access-controller" ./cmd/access-controller
+          got="$("$RUNNER_TEMP/access-controller" -version)"
+          echo "$got"
+          if [ "$got" != "access-controller version $GITHUB_REF_NAME" ]; then
+            echo "::error::expected 'access-controller version $GITHUB_REF_NAME'"
+            exit 1
+          fi
+
+      # The script refuses to print an empty section, so a tag pushed before
+      # `## [Unreleased]` was promoted fails HERE, before any artifact is built
+      # or published. `bash` rather than `./`, so a Windows checkout that dropped
+      # the executable bit cannot break the release.
+      - name: Build release notes from CHANGELOG.md
+        run: bash scripts/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          # Pinned to the v2 line, so GoReleaser 3 does not arrive mid-release
+          # with no commit asking for it.
+          version: '~> v2'
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # goreleaser reports success whether or not it used the notes file, so
+      # this asserts the published body rather than trusting the exit code. The
+      # platform's v0.5.0 shipped with an EMPTY body and nothing in its run went
+      # red.
+      - name: Verify the release body came from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)
+          if ! grep -qF "## stone-access $GITHUB_REF_NAME" <<<"$body"; then
+            echo "::error::release body is not the one scripts/release-notes.sh built"
+            echo "first 20 lines of what was published:"
+            head -20 <<<"$body"
+            exit 1
+          fi
+          echo "release body OK ($(wc -l <<<"$body") lines)"

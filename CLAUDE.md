@@ -85,6 +85,26 @@ go test ./internal/policy -run TestDecide        # single package / test
 cd ui && npm run build                           # UI has no test suite; the typecheck in build is the gate
 ```
 
+CI (`.github/workflows/ci.yml`) also gates **gofmt** (two apostrophes inside a Go doc comment get rewritten into a
+typographic quote, so reword rather than accept it), `go mod tidy -diff`, vet per release OS, and **a committed console
+that matches a fresh `npm run build`** — a frontend change without its rebuilt `internal/webui/public` goes red.
+
+## Release
+
+Tag-driven, ported from the platform: pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which cuts both binaries
+with goreleaser. Before tagging, promote `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] - date`, open a fresh empty
+`[Unreleased]`, and update the compare links at the bottom. `scripts/release-notes.sh` builds the release body from that
+section and **refuses an empty one**, so a forgotten promotion fails before anything publishes (an `-rcN` tag reads
+`[Unreleased]` and ships as a prerelease). Entries are paragraphs for an integrator, not commit subjects: the upgrade
+note is the part that exists nowhere else.
+
+- **No ldflags.** The version is what `go build` stamps from the checkout's tag (`internal/version`), and `--version`
+  and service discovery both read it. A dirty tree stamps `+dirty`, so the release builds the controller once and checks
+  its `-version` against the tag before goreleaser publishes anything.
+- **The committed console is what ships.** goreleaser has no `before` hooks (the platform's builds its console there,
+  because it tracks only a placeholder page). The release rebuilds `ui/` and fails if `internal/webui/public` differs,
+  since a tag can land on a commit CI never passed.
+
 ## Architecture
 
 ### The decision is a pure function

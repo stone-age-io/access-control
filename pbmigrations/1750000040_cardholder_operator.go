@@ -39,8 +39,8 @@ import (
 // authority link must be an explicit, separately-gated write, never a coincidence of
 // two strings.
 //
-// The unique index is PARTIAL (`WHERE operator != ''`), the same shape PocketBase uses
-// for optional email: two cardholders must not claim one operator, but the
+// The unique index is PARTIAL (it skips rows whose operator is empty), the same shape
+// PocketBase uses for optional email: two cardholders must not claim one operator, but the
 // overwhelming majority of cardholders have no operator account and must not collide
 // on empty.
 func init() {

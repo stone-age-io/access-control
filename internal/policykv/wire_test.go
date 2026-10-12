@@ -7,9 +7,9 @@ import "testing"
 // REX/aux contact defaults normally-open, so only the non-default value inverts.
 func TestPortalSenseDerivation(t *testing.T) {
 	cases := []struct {
-		name                       string
-		p                          Portal
-		wantDPS, wantREX, wantMag  bool
+		name                      string
+		p                         Portal
+		wantDPS, wantREX, wantMag bool
 	}{
 		{"defaults (empty) do not invert", Portal{}, false, false, false},
 		{"dps normally-open inverts", Portal{DpsContact: "no"}, true, false, false},

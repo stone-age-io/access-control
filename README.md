@@ -139,6 +139,15 @@ access group changes what the next tap returns. See [Demo Data](demo/README.md).
 > `SA_CONFIG`/`-config` at your own file. See
 > [Configuration Reference](docs/configuration.md).
 
+### From a Release
+
+[Releases](https://github.com/stone-age-io/access-control/releases) carry
+both binaries for Linux and macOS on amd64 and arm64, and Windows on amd64
+(`linux_arm64` is the controller build for the KinCony boards). Each archive holds its
+example config at the path the binary loads by default, plus the docs. What
+changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+`./accessd --version` and `./access-controller -version` report the build.
+
 ### accessd
 
 The UI is `//go:embed`-ed into `accessd` at Go compile time, so build the UI
