@@ -64,10 +64,15 @@ func TestCardholderWireCarriesNoAuthFields(t *testing.T) {
 	app := newApp(t)
 	alice := find(t, app, "cardholders", "external_id", "alice")
 
-	// Sanity: the fixture gives Alice a password and a badge login, so if any auth
-	// field COULD leak, this record is one that would show it.
+	// Give Alice a badge login (the fixture seeds none, since it runs on every new
+	// install), so if any auth field COULD leak, this record is one that would show it.
+	alice.Set("badge_login", true)
+	alice.Set("password_set", true)
+	if err := app.Save(alice); err != nil {
+		t.Fatalf("enable alice's badge login: %v", err)
+	}
 	if !alice.GetBool("badge_login") || alice.Email() == "" {
-		t.Fatal("fixture cardholder has no badge login or email; this test would prove nothing")
+		t.Fatal("cardholder has no badge login or email; this test would prove nothing")
 	}
 
 	_, val, err := keyAndValue(app, alice)
