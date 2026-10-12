@@ -12,6 +12,14 @@ record for that period, and this file starts where the versioned releases do.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The repository clones on Windows.** The console's aux I/O views lived in
+  `ui/src/views/aux/`, and `aux` is a reserved device name on Windows, so a
+  fresh `git clone` failed with `invalid path` unless `core.protectNTFS` was
+  turned off. The directory is `ui/src/views/aux_io/` now. Routes and the
+  built console are unchanged in behaviour.
+
 ## [0.1.0] - 2026-10-12
 
 First tagged release. The system has been in development since June; this tag
