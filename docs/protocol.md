@@ -952,8 +952,11 @@ kinds of event page an operator. An **empty selection means the default set**
 (`forced`, `held`, `intrusion`, `fire`, `controller_offline`), not literally
 everything. So an operator who never narrows keeps receiving future urgent
 types, while `no_entry` stays off until chosen. `held_clear` is never emailed
-(a clear, not a raise), and a controller coming back *online* is not paged. A
-controller's source opt-in is `controllers.notify_offline`.
+(a clear, not a raise), and neither is a fire input clearing: the controller
+publishes `evt.fire` on both edges, and only `{"active":true}` pages. A body
+without `active: true` counts as a clear, which is how every controller reads
+it. A controller coming back *online* is not paged. A controller's source
+opt-in is `controllers.notify_offline`.
 
 Each message carries a **deep link** to the exact event,
 `{AppURL}/alarms?seq={stream_seq}`. It is keyed by the JetStream stream
@@ -967,7 +970,8 @@ omitted.
 
 [`internal/repage`](../internal/repage) re-sends a notification for an alarm
 still unacknowledged after 15 minutes, at most twice, and only for the urgent
-types (never `held`/`no_entry`). It reuses the *same* SendFunc, so a reminder
+types (never `held`/`no_entry` or a fire clear). It classifies a row with the
+sink's own rule and reuses the *same* SendFunc, so a reminder
 can never reach anyone the original page could not. It is a projection reader,
 not a durable: "still unacknowledged N minutes later" is a question about
 accumulated state, not a message arriving.

@@ -37,14 +37,30 @@ func TestProcessAlarmSends(t *testing.T) {
 	}
 }
 
-func TestProcessFireSends(t *testing.T) {
-	n, sent := newNotifier(t)
-	status, err := n.process("acc.hq.evt.fire", []byte(`{"active":true,"ts":"2026-01-05T14:00:00Z"}`), 0)
-	if err != nil || status != "ok" {
-		t.Fatalf("process = (%q,%v), want (ok,nil)", status, err)
-	}
-	if len(*sent) != 1 {
-		t.Fatalf("sent %d messages, want 1", len(*sent))
+// The controller publishes evt.fire on both edges. Only the assert is a page: the
+// clear is the evacuation ending, and was once emailed as "FIRE input active".
+func TestProcessFire(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		body       string
+		wantStatus string
+		wantSent   int
+	}{
+		{"active", `{"active":true,"ts":"2026-01-05T14:00:00Z"}`, "ok", 1},
+		{"cleared", `{"active":false,"ts":"2026-01-05T14:20:00Z"}`, "skip", 0},
+		{"no active field", `{"ts":"2026-01-05T14:00:00Z"}`, "skip", 0}, // every controller reads this as a clear
+	} {
+		n, sent := newNotifier(t)
+		status, err := n.process("acc.hq.evt.fire", []byte(tc.body), 0)
+		if err != nil || status != tc.wantStatus {
+			t.Errorf("%s: process = (%q,%v), want (%q,nil)", tc.name, status, err, tc.wantStatus)
+		}
+		if len(*sent) != tc.wantSent {
+			t.Errorf("%s: sent %d messages, want %d", tc.name, len(*sent), tc.wantSent)
+		}
+		if tc.wantSent == 1 && !strings.Contains((*sent)[0].Subject, "FIRE input active") {
+			t.Errorf("%s: subject = %q, want the fire-active subject", tc.name, (*sent)[0].Subject)
+		}
 	}
 }
 
@@ -129,7 +145,9 @@ func TestNotifyType(t *testing.T) {
 		{"held", Event{Kind: "alarm", AlarmType: "held"}, TypeHeld},
 		{"no_entry", Event{Kind: "alarm", AlarmType: "no_entry"}, TypeNoEntry},
 		{"intrusion", Event{Kind: "alarm", AlarmType: "intrusion"}, TypeIntrusion},
-		{"fire", Event{Kind: "fire"}, TypeFire},
+		{"fire", Event{Kind: "fire", Body: map[string]any{"active": true}}, TypeFire},
+		{"fire clear", Event{Kind: "fire", Body: map[string]any{"active": false}}, ""},
+		{"fire no body", Event{Kind: "fire"}, ""},
 		{"ctrl offline", Event{Kind: "state", Type: "ctrl", AlarmType: "offline"}, TypeControllerOffline},
 		{"ctrl online", Event{Kind: "state", Type: "ctrl", AlarmType: "online"}, ""},
 		{"held_clear", Event{Kind: "alarm", AlarmType: "held_clear"}, ""},

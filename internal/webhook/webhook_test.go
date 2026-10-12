@@ -83,6 +83,7 @@ func TestProcessSkipsNonPageable(t *testing.T) {
 	s, got := newSink(t)
 	for _, tc := range []struct{ subject, body string }{
 		{"acc.hq.door.lobby-main.evt.alarm", `{"type":"held_clear"}`},
+		{"acc.hq.evt.fire", `{"active":false}`}, // a fire input clearing
 		{"acc.hq.door.lobby-main.evt.tap", `{"allow":true}`},
 		{"acc.hq.area.zone1.evt.state", `{"arm":"armed"}`},
 		{"acc.hq.evt", `{}`}, // unparseable subject

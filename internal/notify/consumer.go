@@ -68,6 +68,7 @@ type Message struct {
 //   - intrusion alarm: Type is the literal "area", Thing the area code, AlarmType
 //     "intrusion".
 //   - fire: Kind is "fire", Type/Thing/AlarmType empty (the source is the Location).
+//     Body["active"] says whether the input asserted or cleared.
 //   - controller liveness: Kind is "state", Type the literal "ctrl", Thing the
 //     controller code, AlarmType the new status (online/offline).
 type Event struct {
@@ -101,13 +102,19 @@ const (
 )
 
 // NotifyType maps an Event onto the token an operator's notify_types selection uses.
-// Empty means "not a pageable type" — held_clear (a clear, not a raise) and a
-// controller coming back ONLINE both land here: neither is something to wake for,
-// and the sink drops them before resolving recipients.
+// Empty means "not a pageable type" — held_clear (a clear, not a raise), a fire
+// input clearing, and a controller coming back ONLINE all land here: none is
+// something to wake for, and the sink drops them before resolving recipients.
 func (e Event) NotifyType() string {
 	switch {
 	case e.Kind == "fire":
-		return TypeFire
+		// The controller publishes evt.fire on BOTH edges, so the subject alone does
+		// not say "fire". Read active the way every controller's onFire does: a body
+		// that does not carry active:true is one they all treat as a clear.
+		if active, _ := e.Body["active"].(bool); active {
+			return TypeFire
+		}
+		return ""
 	case e.Kind == "state" && e.Type == "ctrl":
 		if e.AlarmType == "offline" {
 			return TypeControllerOffline
@@ -243,10 +250,10 @@ func (n *Notifier) process(subject string, data []byte, seq uint64) (string, err
 	if kind == "state" {
 		ev.AlarmType = str(body["status"])
 	}
-	// Drop non-pageable events (a held_clear, a box coming back online, a portal or
-	// area posture/arm change) before touching the database. The consumer filter is
-	// deliberately coarse — it pins subjects, not body discriminators — so this is
-	// where the fine-grained decision lives.
+	// Drop non-pageable events (a held_clear, a fire clear, a box coming back online,
+	// a portal or area posture/arm change) before touching the database. The consumer
+	// filter is deliberately coarse — it pins subjects, not body discriminators — so
+	// this is where the fine-grained decision lives.
 	if ev.NotifyType() == "" {
 		return "skip", nil
 	}

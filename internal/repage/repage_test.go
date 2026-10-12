@@ -125,6 +125,40 @@ func TestSweepSkipsNonUrgentTypes(t *testing.T) {
 	}
 }
 
+// A fire row is re-paged only for the assert. The controller publishes evt.fire on
+// both edges and the audit projection stores both as kind "fire", so the clear sits
+// in events unacknowledged beside the raise; it must not page "FIRE input active".
+func TestSweepRepagesFireOnlyWhenActive(t *testing.T) {
+	for _, tc := range []struct {
+		active bool
+		want   int
+	}{
+		{true, 1},
+		{false, 0},
+	} {
+		s, app, got := newSweeper(t)
+		col, err := app.FindCollectionByNameOrId("events")
+		if err != nil {
+			t.Fatalf("events collection: %v", err)
+		}
+		ts, _ := types.ParseDateTime(now.Add(-(repageAfter + time.Minute)))
+		rec := core.NewRecord(col)
+		rec.Set("location", "hq")
+		rec.Set("kind", "fire")
+		rec.Set("ts", ts)
+		rec.Set("payload", map[string]any{"active": tc.active, "ts": ts.String()})
+		if err := app.Save(rec); err != nil {
+			t.Fatalf("save event: %v", err)
+		}
+
+		s.sweep(now)
+
+		if len(*got) != tc.want {
+			t.Errorf("active=%v: re-pages = %d, want %d", tc.active, len(*got), tc.want)
+		}
+	}
+}
+
 // Reminders are bounded: a permanently unacknowledged alarm stops nagging.
 func TestSweepStopsAtMaxRepages(t *testing.T) {
 	s, app, got := newSweeper(t)
