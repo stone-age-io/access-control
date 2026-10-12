@@ -669,6 +669,16 @@ func TestFixtureSeeded(t *testing.T) {
 		t.Errorf("cardholder status = %q, want active", got)
 	}
 
+	// The fixture runs on every new install, production included, so nothing it
+	// seeds may sign in: alice keeps her card but not a login, and there is no
+	// operator until `accessd operator upsert` makes one.
+	if holder.GetBool("badge_login") || holder.ValidatePassword("changeme123") {
+		t.Error("fixture cardholder alice can sign in; a fresh install must seed no login")
+	}
+	if _, err := app.FindAuthRecordByEmail("users", "admin@local.dev"); err == nil {
+		t.Error("a fresh install seeded the operator admin@local.dev")
+	}
+
 	// access group lobby-group binds schedule business-hours and contains lobby-main.
 	group, err := app.FindFirstRecordByData("access_groups", "code", "lobby-group")
 	if err != nil {

@@ -353,8 +353,8 @@ Write-Host "`n== Operator's own badge =="
 #
 # The relation lives on the CARDHOLDER because the users collection is self-writable (an
 # operator changes their own password there), so the mirror-image field would let any
-# operator repoint it and inherit someone else's badge. Uses the fixture's admin account,
-# which is the only operator a fresh install has.
+# operator repoint it and inherit someone else's badge. A fresh install has no operator,
+# so this links admin@local.dev only if `accessd operator upsert` already made it.
 $adminId = Get-Id users email 'admin@local.dev'
 if ($adminId -and $ID['ch:sarah.chen@stoneage.example']) {
   Set-Rec cardholders $ID['ch:sarah.chen@stoneage.example'] @{ operator=$adminId } 'Sarah Chen      operator=admin@local.dev'
@@ -407,7 +407,7 @@ Write-Host "Badge sign-in (http://127.0.0.1:8090/login?as=badge):"
 Write-Host ("  staff    sarah.chen@stoneage.example  /  {0}" -f $DEMO_BADGE_PW)
 Write-Host ("           marcus.johnson, priya.patel, emily.rodriguez  (same password)")
 Write-Host  "  visitor  dana.whitfield@acme.example   -> emailed one-time code (needs SMTP)"
-Write-Host  "  fixture  alice@example.com            /  changeme123"
 Write-Host ""
-Write-Host "Operator console (http://127.0.0.1:8090/login):  admin@local.dev / changeme123"
-Write-Host "  That account is linked to Sarah Chen's cardholder, so 'My badge' in the profile menu works."
+Write-Host "Operator console (http://127.0.0.1:8090/login): the operator you made with"
+Write-Host "  ./accessd operator upsert <email> <pass>. If that is admin@local.dev, it is linked"
+Write-Host "  to Sarah Chen's cardholder, so 'My badge' in the profile menu works."

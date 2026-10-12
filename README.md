@@ -94,7 +94,8 @@ three of them visitors in three different pass states), and a backdated event
 history that always carries **eight distinct decision reason codes** plus three
 unacknowledged alarms.
 
-Every badge login is `demo1234`. Sign in at `/login?as=badge` as
+Every demo login is `demo1234`, including the console operator
+`admin@local.dev` that the seed creates. Sign in at `/login?as=badge` as
 `elena@northwind.example` (warehouse: can arm *and* disarm) and
 `priya@northwind.example` (cleaning: can arm, **cannot** disarm) to see why arm
 and disarm are two rights rather than one checkbox.
@@ -153,9 +154,16 @@ cd .. && go build ./cmd/accessd
 The committed `internal/webui/public` means a fresh checkout embeds a working UI
 without npm. Rebuild and commit it whenever the frontend changes.
 
-Create the PocketBase admin login for `/_` (a superuser) with
-`./accessd superuser upsert <email> <pass>`. The console at `/` signs in
-operators from the `users` collection instead; see
+A new install has no console operator. Create the first one, with every
+capability, before you sign in at `/`:
+
+```
+./accessd migrate up
+./accessd operator upsert you@example.com 'a-long-password'
+```
+
+The PocketBase admin at `/_` is a separate login (a superuser), created with
+`./accessd superuser upsert <email> <pass>`. See
 [Operators & Authorization](docs/operators.md#1-sign-in).
 
 ### access-controller
@@ -202,7 +210,8 @@ read-only view of one box for field troubleshooting, and it changes nothing.
 
 ### Operators
 
-Operators sign in against the built-in `users` auth collection. Their abilities
+Operators sign in against the built-in `users` auth collection, and
+`accessd operator upsert <email> <pass>` creates the first one. Their abilities
 are an orthogonal set of capabilities (`enroll`, `policy`, `topology`,
 `command`, `operators`) that gate writes and commands. Reads stay open to any
 authenticated operator. A PocketBase **superuser**

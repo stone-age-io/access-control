@@ -68,7 +68,8 @@ described in the [Configuration Reference](configuration.md#1-how-config-loads).
 | `serve` | PocketBase | Applies pending migrations, then starts the HTTP server and everything in §3. Listens on `127.0.0.1:8090` unless you pass `--http` |
 | `migrate` | PocketBase `migratecmd` | `up`, `down [n]`, `create <name>`, `collections`, `history-sync` over the Go migrations in `pbmigrations` |
 | `superuser` | PocketBase | `upsert`, `create`, `update`, `delete`, `otp`, `ips` for the break-glass `_superusers` account. For example `./accessd superuser upsert <email> <pass>` |
-| `demo-seed` | accessd | Seeds the Northwind Traders demo estate. Refuses to run without `--confirm`; `--events` (default 240) and `--seed` (default 20260831) tune the backdated history |
+| `operator` | accessd | `upsert <email> <pass>` creates a console operator with every capability, or resets an existing one's password and grants every capability. A new install has no operator until this runs |
+| `demo-seed` | accessd | Seeds the Northwind Traders demo estate and the console operator `admin@local.dev`. Refuses to run without `--confirm`; `--events` (default 240) and `--seed` (default 20260831) tune the backdated history |
 
 The PocketBase global flags apply to every command. `--dir` sets the data
 directory and defaults to `accessd.dataDir` (`./pb_data`).
@@ -79,7 +80,7 @@ those files before committing them.
 
 > [!NOTE]
 > **NATS comes up only on `serve`**
-> `migrate`, `superuser` and `demo-seed` touch only the database. The KV
+> `migrate`, `superuser`, `operator` and `demo-seed` touch only the database. The KV
 > mirror's hooks are bound on `serve`, so records those commands write reach
 > `ACC_POLICY` on the next `serve`, when the boot reconciliation publishes the
 > whole graph.

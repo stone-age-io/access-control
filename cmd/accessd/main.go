@@ -116,6 +116,9 @@ func main() {
 	// operator's edits do.
 	demoseed.RegisterCommand(pb)
 
+	// `operator upsert`: the first console operator on a new install.
+	registerOperatorCommand(pb)
+
 	// Resources brought up only when actually serving (not for migrate/superuser).
 	var (
 		nc          *natsx.Conn

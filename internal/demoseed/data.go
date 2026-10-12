@@ -412,9 +412,13 @@ var roles = []roleFixture{
 
 // ---------------------------------------------------------------- people
 
-// DemoPassword is shared by every seeded badge login. It is printed by the
-// command and is the reason --confirm exists.
+// DemoPassword is shared by every seeded login, the console operator's included.
+// It is printed by the command and is the reason --confirm exists.
 const DemoPassword = "demo1234"
+
+// DemoOperator signs in to the console with every capability. A new install
+// has no operator (the migrations seed none), so the demo brings its own.
+const DemoOperator = "admin@local.dev"
 
 type cardholderFixture struct {
 	ExternalID, Name, Email string
