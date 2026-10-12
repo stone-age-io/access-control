@@ -3,6 +3,7 @@ package pbmigrations
 import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/migrations"
+	"github.com/pocketbase/pocketbase/tools/security"
 )
 
 // Seeds a minimal end-to-end fixture so a fresh accessd boot has something to
@@ -12,12 +13,9 @@ import (
 //	schedule business-hours (M–F 08:00–17:00) → access group lobby-group
 //	role staff → cardholder alice → credential CARD-001
 //
-// Alice doubles as the badge-tier fixture: she signs in at /login as
-// alice@example.com / changeme123. A dev convenience, not a production
-// credential — same status as admin@local.dev in 1750000010.
-//
-// Idempotent and safe in any environment: it no-ops if the locations collection
-// is already populated, so it only ever touches a fresh dev database.
+// Idempotent: it no-ops if the locations collection is already populated, so it
+// only ever touches a fresh database. That includes every new production
+// install, which is why nothing here can sign in.
 //
 // Holidays, credential validity dates, and scheduled posture (auto_posture /
 // auto_schedule) are seeded by 1750000005_fixture_extras.go instead — they live
@@ -103,19 +101,16 @@ func init() {
 
 		// cardholders is an AUTH collection (1750000000), so PocketBase requires a
 		// non-blank password on every record — it force-re-enforces Required on the
-		// password field, unlike email. Alice gets a known dev one plus
-		// badge_login, so a fresh checkout can exercise the badge tier without an
-		// SMTP server; same dev-convenience-only status as admin@local.dev in
-		// 1750000010. `kind` is `holder`, so her QR carries an inert identifier
-		// rather than her credential value.
+		// password field, unlike email. Alice gets a random one and no badge_login.
+		// She used to sign in as alice@example.com / changeme123, and this fixture
+		// runs on every new install, so that was a known password on every
+		// production database; demo-seed's badge logins cover the badge tier now.
 		user, err := save("cardholders", map[string]any{
 			"external_id": "alice", "name": "Alice Example",
 			"email": "alice@example.com", "status": "active",
-			"roles": []string{role.Id},
-			// Set through the map like every other field: Record.SetPassword is
-			// just Set("password", …), and the field hashes on save.
-			"password": "changeme123", "verified": true,
-			"badge_login": true, "kind": "holder", "password_set": true,
+			"roles":    []string{role.Id},
+			"password": security.RandomString(30),
+			"kind":     "holder",
 		})
 		if err != nil {
 			return err

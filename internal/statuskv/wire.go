@@ -130,8 +130,8 @@ type AreaStatus struct {
 	Code       string   `json:"code"`
 	Location   string   `json:"location"`
 	Controller string   `json:"controller"`
-	Arm        string   `json:"arm"`            // AreaArmed | AreaDisarmed (this controller's effective state)
-	Source     string   `json:"source"`         // standing | scheduled | override (provenance, PostureSource*)
-	Peers      []string `json:"peers"`          // all participating controller codes (the denominator)
+	Arm        string   `json:"arm"`    // AreaArmed | AreaDisarmed (this controller's effective state)
+	Source     string   `json:"source"` // standing | scheduled | override (provenance, PostureSource*)
+	Peers      []string `json:"peers"`  // all participating controller codes (the denominator)
 	UpdatedAt  string   `json:"updatedAt"`
 }

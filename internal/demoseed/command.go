@@ -21,7 +21,8 @@ func RegisterCommand(app *pocketbase.PocketBase) {
 	cmd := &cobra.Command{
 		Use:   "demo-seed",
 		Short: "Populate this instance with demo/showcase data (idempotent)",
-		Long: "Seeds Northwind Traders: three sites, four controllers, ten portals, four " +
+		Long: "Seeds a console operator (admin@local.dev, if no account has that email) and " +
+			"Northwind Traders: three sites, four controllers, ten portals, four " +
 			"armed areas, aux inputs and outputs, schedules and a holiday calendar, " +
 			"access groups with arm/disarm rights, roles, cardholders with badge logins, " +
 			"visitor passes, and a backdated event history with open alarms.\n\n" +
@@ -46,8 +47,9 @@ func RegisterCommand(app *pocketbase.PocketBase) {
 					"refusing to seed without --confirm\n\n"+
 						"This creates %d fictional cardholders holding WORKING CREDENTIALS on\n"+
 						"every door it seeds, and %d of them can sign in with the password %q.\n"+
+						"So can the console operator %s, with every capability.\n"+
 						"Never run it against a production access control system.",
-					len(cardholders), badgeLoginCount(), DemoPassword)
+					len(cardholders), badgeLoginCount(), DemoPassword, DemoOperator)
 			}
 
 			if err := preflight(app); err != nil {
@@ -66,8 +68,10 @@ func RegisterCommand(app *pocketbase.PocketBase) {
 				return err
 			}
 
-			fmt.Printf("\ndone — every demo badge login uses password %q\n", DemoPassword)
-			fmt.Println("try:  dana@northwind.example    (staff + IT, all three sites)")
+			fmt.Printf("\ndone — every demo login uses password %q\n", DemoPassword)
+			fmt.Printf("console (/login):  %s  (every capability)\n", DemoOperator)
+			fmt.Println("badge (/login?as=badge):")
+			fmt.Println("      dana@northwind.example    (staff + IT, all three sites)")
 			fmt.Println("      elena@northwind.example  (warehouse: can arm AND disarm)")
 			fmt.Println("      priya@northwind.example  (cleaning: can arm, CANNOT disarm)")
 			fmt.Println("\nIf accessd is not running, the policy graph reaches NATS KV on its")

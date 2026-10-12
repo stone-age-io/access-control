@@ -36,6 +36,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
+	"github.com/stone-age-io/access-control/internal/authz"
 )
 
 // Options controls the generated bulk. The curated fixtures are always seeded in
@@ -145,6 +146,7 @@ func Run(app core.App, opts Options) (*Result, error) {
 		name string
 		fn   func() error
 	}{
+		{"console operator", s.seedOperator},
 		{"holiday calendars", s.seedCalendars},
 		{"locations", s.seedLocations},
 		{"schedules", s.seedSchedules},
@@ -164,6 +166,21 @@ func Run(app core.App, opts Options) (*Result, error) {
 		}
 	}
 	return s.res, nil
+}
+
+// seedOperator creates DemoOperator unless an account with that email exists.
+// An existing one is left alone, password included: it may be someone's real
+// account, or the fixture admin a pre-release database already has.
+func (s *seeder) seedOperator() error {
+	if _, err := s.app.FindAuthRecordByEmail("users", DemoOperator); err == nil {
+		s.res.mark("users", false)
+		return nil
+	}
+	if _, err := authz.UpsertOperator(s.app, DemoOperator, DemoPassword); err != nil {
+		return err
+	}
+	s.res.mark("users", true)
+	return nil
 }
 
 // ------------------------------------------------------------------ helpers

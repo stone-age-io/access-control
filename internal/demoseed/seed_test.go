@@ -416,6 +416,23 @@ func TestDrawerCardsCannotSignIn(t *testing.T) {
 	}
 }
 
+// The migrations seed no operator, so without this one the demo has no way into
+// the console.
+func TestDemoOperatorCanSignIn(t *testing.T) {
+	app := seedOnce(t)
+
+	op, err := app.FindAuthRecordByEmail("users", demoseed.DemoOperator)
+	if err != nil {
+		t.Fatalf("demo operator not seeded: %v", err)
+	}
+	if !op.ValidatePassword(demoseed.DemoPassword) {
+		t.Error("demo operator does not use DemoPassword")
+	}
+	if got := op.GetStringSlice("permissions"); len(got) != 5 {
+		t.Errorf("demo operator permissions = %v, want all five", got)
+	}
+}
+
 // The three visitor states — live, expired, revoked — are what makes
 // "troubleshoot a badge" a real exercise rather than a happy path.
 func TestVisitorPassesCoverLiveExpiredAndRevoked(t *testing.T) {

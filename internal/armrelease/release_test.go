@@ -56,9 +56,9 @@ func (f fakeResolver) ShouldReleaseDisarm(code string, _ time.Time) bool { retur
 func TestReleaseStale(t *testing.T) {
 	app := newApp(t)
 
-	releaseID := seedArea(t, app, "vault", "disarmed")  // resolver: release
-	keepID := seedArea(t, app, "closet", "disarmed")    // resolver: keep (base still armed / no schedule)
-	armedID := seedArea(t, app, "lobby-area", "armed")  // not a disarm override: never touched
+	releaseID := seedArea(t, app, "vault", "disarmed") // resolver: release
+	keepID := seedArea(t, app, "closet", "disarmed")   // resolver: keep (base still armed / no schedule)
+	armedID := seedArea(t, app, "lobby-area", "armed") // not a disarm override: never touched
 
 	resolver := fakeResolver{release: map[string]bool{"vault": true, "closet": false}}
 	releaseStale(app, resolver, time.Now().UTC(), logger.NewNopLogger())

@@ -63,7 +63,10 @@ func TestEvaluate_DefaultsToNow(t *testing.T) {
 }
 
 func TestEvaluate_BadInput(t *testing.T) {
-	cases := []struct{ name string; req request }{
+	cases := []struct {
+		name string
+		req  request
+	}{
 		{"missing portal", request{Credential: "C1"}},
 		{"bad posture", request{Portal: "door1", Posture: "bogus"}},
 		{"bad time", request{Portal: "door1", At: "not-a-time"}},

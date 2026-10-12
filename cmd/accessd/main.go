@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/mail"
@@ -50,6 +51,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/simulateapi"
 	"github.com/stone-age-io/access-control/internal/status"
 	"github.com/stone-age-io/access-control/internal/subjects"
+	"github.com/stone-age-io/access-control/internal/version"
 	"github.com/stone-age-io/access-control/internal/webhook"
 	"github.com/stone-age-io/access-control/internal/webui"
 
@@ -58,6 +60,16 @@ import (
 )
 
 func main() {
+	// PocketBase owns the CLI, but its --version would only run after the config
+	// loads, and loading fails on a box that is not configured yet, which is when
+	// someone asks which build it has. Its own version string also reads
+	// "(untracked)" when PocketBase is a library, so the dependency's is shown.
+	versionLine := "accessd version " + version.Main() + " (PocketBase " + version.Dependency("github.com/pocketbase/pocketbase") + ")"
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println(versionLine)
+		return
+	}
+
 	boot := logger.NewBootstrapLogger()
 
 	cfg, err := config.Load(configPath())
@@ -80,6 +92,9 @@ func main() {
 	pb := pocketbase.NewWithConfig(pocketbase.Config{
 		DefaultDataDir: cfg.Accessd.DataDir,
 	})
+	// Lists --version in `accessd --help`; the early return above answers it.
+	pb.RootCmd.Version = versionLine
+	pb.RootCmd.SetVersionTemplate("{{.Version}}\n")
 
 	// migratecmd exposes `accessd migrate ...` and, with Automigrate, snapshots
 	// dashboard collection edits into Go files beside our hand-authored ones.
@@ -115,6 +130,9 @@ func main() {
 	// mirror's hooks (or SyncAll on the next boot) carry them to KV, exactly as an
 	// operator's edits do.
 	demoseed.RegisterCommand(pb)
+
+	// `operator upsert`: the first console operator on a new install.
+	registerOperatorCommand(pb)
 
 	// Resources brought up only when actually serving (not for migrate/superuser).
 	var (

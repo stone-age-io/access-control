@@ -66,10 +66,13 @@ go build ./cmd/access-controller
 UI dev server (proxies `/api` + `/_` + `/branding` to `:8090`): `npm --prefix ui run dev` → http://localhost:5174
 
 Create the break-glass PocketBase admin (dashboard at `/_`): `./accessd superuser upsert <email> <pass>`. The
-console signs in against `users`; a fresh dev database seeds the operator `admin@local.dev` (migration
-`1750000010`), and further operators are added from the console.
+console signs in against `users`, and **a fresh database has no operator**: `./accessd operator upsert <email> <pass>`
+makes the first one with every capability (`demo-seed` makes `admin@local.dev` / `demo1234`), and further operators
+are added from the console. The fixture migrations run on *every* empty database, production installs included, so
+nothing they seed may be able to sign in — they used to seed `admin@local.dev` / `changeme123` and a badge login for
+alice, which put a known-password operator on every new install.
 
-`accessd` is driven by PocketBase's CLI (`serve`, `migrate`, `superuser`) plus our own `demo-seed` (the Northwind
+`accessd` is driven by PocketBase's CLI (`serve`, `migrate`, `superuser`) plus our own `operator` and `demo-seed` (the Northwind
 demo estate, idempotent, refuses to run without `--confirm`; see `demo/README.md`). NATS/KV/audit resources come
 up **only on `serve`**, not for `migrate`/`superuser`/`demo-seed`; records those write reach KV through `SyncAll`
 on the next `serve`.
@@ -81,6 +84,26 @@ go test ./...                                    # all tests are pure — no NAT
 go test ./internal/policy -run TestDecide        # single package / test
 cd ui && npm run build                           # UI has no test suite; the typecheck in build is the gate
 ```
+
+CI (`.github/workflows/ci.yml`) also gates **gofmt** (two apostrophes inside a Go doc comment get rewritten into a
+typographic quote, so reword rather than accept it), `go mod tidy -diff`, vet per release OS, and **a committed console
+that matches a fresh `npm run build`** — a frontend change without its rebuilt `internal/webui/public` goes red.
+
+## Release
+
+Tag-driven, ported from the platform: pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which cuts both binaries
+with goreleaser. Before tagging, promote `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] - date`, open a fresh empty
+`[Unreleased]`, and update the compare links at the bottom. `scripts/release-notes.sh` builds the release body from that
+section and **refuses an empty one**, so a forgotten promotion fails before anything publishes (an `-rcN` tag reads
+`[Unreleased]` and ships as a prerelease). Entries are paragraphs for an integrator, not commit subjects: the upgrade
+note is the part that exists nowhere else.
+
+- **No ldflags.** The version is what `go build` stamps from the checkout's tag (`internal/version`), and `--version`
+  and service discovery both read it. A dirty tree stamps `+dirty`, so the release builds the controller once and checks
+  its `-version` against the tag before goreleaser publishes anything.
+- **The committed console is what ships.** goreleaser has no `before` hooks (the platform's builds its console there,
+  because it tracks only a placeholder page). The release rebuilds `ui/` and fails if `internal/webui/public` differs,
+  since a tag can land on a commit CI never passed.
 
 ## Architecture
 
@@ -658,8 +681,8 @@ rejected, which was not a missing column value but an unbounded audit-redelivery
 Then the **read-path** pass: `1750000045`–`1750000048` (events list, unacknowledged-alarm, control-plane and
 denied-tap indexes, each composite ending in its sort's tiebreak column; `1750000047` also drops three unused
 `audit_logs` indexes), and `1750000049` (`events.user_name`, the cardholder's name resolved at projection time).
-The dev fixtures `1750000010` (the `admin@local.dev` operator) and `1750000014` (seeded portals set NATS-only,
-`reader_address = -1`) sit among these, both guarded to touch only the seeded fixture.
+The dev fixtures `1750000010` (now an empty no-op; it seeded the `admin@local.dev` operator) and `1750000014`
+(seeded portals set NATS-only, `reader_address = -1`) sit among these, both guarded to touch only the seeded fixture.
 
 **The base `1750000000` is NOT frozen any more, and there are gaps at 30/34/35.** The badge tier used to be a second
 auth collection (`badge_users`, migrations `1750000030`/`1750000034`/`1750000035`); it was collapsed into
