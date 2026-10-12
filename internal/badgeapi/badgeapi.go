@@ -72,6 +72,14 @@
 //     the remote path, with no second implementation to drift.
 //   - A denial carries the same stable reason code the door would emit.
 //
+// The snapshot holds standing and scheduled posture only. A runtime override set
+// by cmd.posture lives in the controller's memory and never reaches KV, so this
+// package cannot see it. The controller enforces that half: Runtime.Grant runs
+// policy.DecideCommandGrant over the effective posture and refuses the cmd.grant
+// under lockdown or disabled, emitting the denial as a source=badge tap event. By
+// then this route has already answered 202, so the holder's page says the unlock
+// went out. The door stays shut, and the refusal is in events.
+//
 // On top of that floor sits `portals.allow_remote_unlock` (migration 1750000031):
 // being on someone's badge is necessary but not sufficient, because "may walk
 // through" and "may open from anywhere, with no presence proof" are different
@@ -535,8 +543,8 @@ func (h *handler) publishGrant(snap *policysnapshot.Snapshot, portal *core.Recor
 // out of one more place. This mirrors the controller's command-grant event, which
 // likewise names an actor and no credential.
 //
-// Downstream is safe by construction: the disarm sink requires allow && cred != "",
-// and the notify sink only handles alarm/fire.
+// Downstream is safe by construction: the disarm sink requires an allow_grant with a
+// cred, and the notify sink only handles alarm/fire.
 func (h *handler) publishDeny(snap *policysnapshot.Snapshot, portal *core.Record, portalCode, cardholderID, reason string) error {
 	locCode, ptype, err := h.portalAddr(snap, portal, portalCode)
 	if err != nil {

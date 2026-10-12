@@ -118,7 +118,25 @@ posture `autoPosture` while `autoSchedule` is open → standing `posture`), so `
 
 Two postures both "allow without consulting the credential" but differ physically (the controller owns this, not
 `Decide`): `free_access` opens on any tap with the strike pulsing (door stays closed, every entry logged);
-`unlocked` holds the strike open (free passage, no tap needed).
+`unlocked` holds the strike open (free passage, no tap needed). **Because they never read the credential, the `cred`
+on an `allow_posture_*` tap event is whatever value was presented** — anything downstream that treats a tap as
+proof of a cardholder must require `allow_grant`, the one allow reached through the credential ladder. The
+entry-disarm sink checked only `allow && cred != ""` and so let any card value disarm the area behind a
+`free_access` entry door.
+
+**A commanded grant passes the posture gate too.** `cmd.grant` carries no credential, so it gets its own pure
+sibling, `policy.DecideCommandGrant(p, posture, portal)` — steps 1–2 of `Decide` alone (lockdown → `deny_lockdown`,
+disabled/unknown → `deny_point_disabled`, else `allow_command_grant`) — run by `Runtime.Grant` over the same effective
+posture `handleTap` uses. A refusal pulses nothing, opens no grant window, and emits the tap event as a deny. It
+used to pulse unconditionally, and since a `cmd.posture` override lives only in controller memory, nothing else
+could stop it: accessd's badge remote unlock decides over a KV snapshot that knows standing and scheduled posture
+only, so a commanded lockdown blocked every card at the reader and no grant at all. **The gate is the same for
+every `source`, operator door-pops included**, on purpose: lockdown means deny all, an operator with `command` can
+clear or change the override with that same capability (which leaves an `evt.state`), and exempting operators
+would let one operator's door-pop puncture another's lockdown with no record that it ended — and would make
+`source`, which says how a command *arrived*, an authorization input. The residue is UX: accessd has already
+answered the badge holder `202` ("Unlocked") before the controller refuses, so under a runtime lockdown the page
+says Unlocked and the door stays shut; the refusal is in `events`.
 
 ### Data flow (one direction, eventually consistent)
 
@@ -215,7 +233,8 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   by `point_type`), and a **portal** trip (`runtime.maybeForcedIntrusion` at the `forced` site — a member portal's
   unauthorized open while armed; a grant/REX open is normal passage and never trips). Entry-disarm is the inverse,
   and lives **centrally** (durable arm-state, area spans boxes): accessd's `internal/disarm` sink, not the
-  controller, writes `armOverride: disarmed` on a credential grant at a `disarm_on_grant` portal. A disarm
+  controller, writes `armOverride: disarmed` on a credential grant at a `disarm_on_grant` portal — a tap event
+  with `reason: allow_grant`, never a posture allow (whose `cred` was never checked) or a command grant. A disarm
   override (manual or entry-disarm) on a *scheduled* area is **one-shot**: accessd's `internal/armrelease` sweep
   clears it once the area's base arm-state (scheduled `autoArm`/standing, override excluded) is disarmed, so
   scheduled auto-arm + entry-disarm loops without an operator clearing it daily (an area with no `autoSchedule`
@@ -307,7 +326,9 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   `policy.Decide`**, run over a live `policysnapshot` of ACC_POLICY (a short TTL cache, since `SnapshotKV` drains the
   whole keyspace and this is a button a visitor can tap). So remote unlock can never exceed what that badge opens in
   person, and it emits the **existing `cmd.grant`** with `actor: badge:<cardholderId>` — no new subject, no edge
-  change. A per-door `portals.allow_remote_unlock` (default false, not mirrored) gates it, because "may walk through"
+  change. The snapshot cannot see a runtime `cmd.posture` override, so that half of the posture gate is enforced by
+  the controller's `Runtime.Grant` (see "A commanded grant passes the posture gate too" above).
+  A per-door `portals.allow_remote_unlock` (default false, not mirrored) gates it, because "may walk through"
   and "may open from anywhere with no presence proof" are different permissions. **A badge action never publishes
   `.tap`** — `Tap.Source` exists so a physical read stays distinguishable. Every attempt writes an `audit_logs` row,
   including denials: a deny never reaches the controller, so without it a holder could probe doors leaving no trace.
@@ -564,7 +585,8 @@ stderr), its subscriptions wait in the client through a cold boot without NATS, 
 
 Commands (`internal/controller/commands.go`) install **runtime posture overrides** that are operational state,
 never written back to PocketBase. `posture: "clear"` reverts to the effective posture (scheduled if open, else
-standing). The controller grows **no policy ticker** — `until` (timed reversion) comes from outside (an external
+standing). A `cmd.grant` is refused under an effective `lockdown` or `disabled` posture, override included, whoever
+sent it (`policy.DecideCommandGrant`). The controller grows **no policy ticker** — `until` (timed reversion) comes from outside (an external
 scheduler publishing a follow-up command). The only timers are **three** deliberate, scoped exceptions: the
 per-door held-open (DOTL) timer, the liveness heartbeat, and the **scheduled-posture hold-eval reconcile**
 (`runtime.reconcileHolds`, default 10s) — a sampling loop that flips the strike hold at schedule-window boundaries

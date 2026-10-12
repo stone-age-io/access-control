@@ -26,7 +26,7 @@ func newDisarmer(t *testing.T, result bool, ferr error) (*Disarmer, *[]disarmCal
 func TestProcessGrantDisarms(t *testing.T) {
 	d, calls := newDisarmer(t, true, nil)
 	status, err := d.process("acc.hq.door.lobby-main.evt.tap",
-		[]byte(`{"cred":"CARD-001","allow":true,"reason":"allow_in_window","ts":"2026-01-05T14:00:00Z"}`))
+		[]byte(`{"cred":"CARD-001","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z"}`))
 	if err != nil || status != "disarmed" {
 		t.Fatalf("process = (%q,%v), want (disarmed,nil)", status, err)
 	}
@@ -39,7 +39,7 @@ func TestProcessGrantDisarms(t *testing.T) {
 func TestProcessDenyNoDisarm(t *testing.T) {
 	d, calls := newDisarmer(t, true, nil)
 	status, err := d.process("acc.hq.door.lobby-main.evt.tap",
-		[]byte(`{"cred":"CARD-001","allow":false,"reason":"deny_no_grant","ts":"2026-01-05T14:00:00Z"}`))
+		[]byte(`{"cred":"CARD-001","allow":false,"reason":"deny_no_access","ts":"2026-01-05T14:00:00Z"}`))
 	if err != nil || status != "skip" {
 		t.Fatalf("process = (%q,%v), want (skip,nil)", status, err)
 	}
@@ -62,6 +62,29 @@ func TestProcessCommandGrantNoDisarm(t *testing.T) {
 	}
 }
 
+// Under free_access or unlocked posture policy.Decide allows without reading the
+// credential, so the cred on the event is whatever was presented: a card nobody
+// issued, a revoked one, a stranger's. Only allow_grant, the reason Decide returns
+// after actually checking the credential, may disarm. So may nothing the sink does
+// not recognise, including a body with no reason at all.
+func TestProcessPostureAllowNoDisarm(t *testing.T) {
+	for _, body := range []string{
+		`{"cred":"NOT-A-CARD","allow":true,"reason":"allow_posture_free_access","ts":"2026-01-05T14:00:00Z"}`,
+		`{"cred":"NOT-A-CARD","allow":true,"reason":"allow_posture_unlocked","ts":"2026-01-05T14:00:00Z"}`,
+		`{"cred":"NOT-A-CARD","allow":true,"ts":"2026-01-05T14:00:00Z"}`,
+		`{"cred":"NOT-A-CARD","allow":true,"reason":"allow_area_grant","ts":"2026-01-05T14:00:00Z"}`,
+	} {
+		d, calls := newDisarmer(t, true, nil)
+		status, err := d.process("acc.hq.door.lobby-main.evt.tap", []byte(body))
+		if err != nil || status != "skip" {
+			t.Errorf("process(%s) = (%q,%v), want (skip,nil)", body, status, err)
+		}
+		if len(*calls) != 0 {
+			t.Errorf("process(%s): disarm called %d times, want 0", body, len(*calls))
+		}
+	}
+}
+
 // Non-tap events (alarm/state/fire) and malformed subjects are skipped without
 // consulting the DisarmFunc.
 func TestProcessSkipsNonTap(t *testing.T) {
@@ -72,7 +95,7 @@ func TestProcessSkipsNonTap(t *testing.T) {
 		"acc.hq.evt.fire",
 		"acc.hq.evt",
 	} {
-		status, err := d.process(subj, []byte(`{"allow":true,"cred":"CARD-001"}`))
+		status, err := d.process(subj, []byte(`{"allow":true,"cred":"CARD-001","reason":"allow_grant"}`))
 		if err != nil || status != "skip" {
 			t.Errorf("process(%q) = (%q,%v), want (skip,nil)", subj, status, err)
 		}
@@ -86,7 +109,7 @@ func TestProcessSkipsNonTap(t *testing.T) {
 func TestProcessNonEntryPortalSkips(t *testing.T) {
 	d, _ := newDisarmer(t, false, nil) // no-op: not an entry door
 	status, err := d.process("acc.hq.door.lobby-main.evt.tap",
-		[]byte(`{"cred":"CARD-001","allow":true,"ts":"2026-01-05T14:00:00Z"}`))
+		[]byte(`{"cred":"CARD-001","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z"}`))
 	if err != nil || status != "skip" {
 		t.Errorf("process = (%q,%v), want (skip,nil)", status, err)
 	}
@@ -96,7 +119,7 @@ func TestProcessNonEntryPortalSkips(t *testing.T) {
 func TestProcessDisarmErrorNaks(t *testing.T) {
 	d, _ := newDisarmer(t, false, errors.New("db down"))
 	if _, err := d.process("acc.hq.door.lobby-main.evt.tap",
-		[]byte(`{"cred":"CARD-001","allow":true,"ts":"2026-01-05T14:00:00Z"}`)); err == nil {
+		[]byte(`{"cred":"CARD-001","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z"}`)); err == nil {
 		t.Fatal("want error (Nak) on disarm failure, got nil")
 	}
 }

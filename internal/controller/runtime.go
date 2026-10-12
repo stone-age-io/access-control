@@ -647,45 +647,69 @@ func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
 // source names the remote surface that issued the grant (a subjects.Source*
 // value); empty means an operator command, which is what every publisher before
 // the badge tier sent.
+//
+// The grant passes the portal's posture gate first (policy.DecideCommandGrant):
+// under an effective lockdown or disabled posture it is refused, the strike is not
+// touched, and the tap event records the denial. This is the only place that can
+// enforce a cmd.posture override, which never leaves this process. accessd's
+// badge path decides over KV and so sees standing and scheduled posture only. The
+// gate is the same for every source; see DecideCommandGrant for why operator
+// door-pops are not exempt.
 func (r *Runtime) Grant(portal string, seconds int, actor, reason, source string) {
 	if !r.drives(portal) {
 		r.log.Debug("ignoring grant command for portal not driven here", "portal", portal)
 		return
 	}
+	if source == "" {
+		source = subjects.SourceCommand
+	}
+	now := time.Now().UTC()
+	posture, postureSource, _ := r.effectivePosture(portal, now) // unresolved falls back to standing (fail-safe), as handleTap
+	d := r.store.DecideCommandGrant(posture, portal)
+	if !d.Allow {
+		r.log.Warn("command grant refused",
+			"portal", portal, "posture", posture, "postureSource", postureSource,
+			"decision", d.Reason, "actor", actor, "source", source, "reason", reason)
+		r.emitGrantEvent(portal, actor, source, d, now)
+		return
+	}
+
 	if seconds <= 0 {
-		if ap, ok := r.store.Portal(portal); ok {
-			seconds = ap.PulseSeconds
-		}
+		seconds = d.Pulse
 	}
 	lock, _ := r.lockFor(portal) // drives() guaranteed presence above
 	if err := lock.Pulse(seconds); err != nil {
 		r.log.Error("command grant pulse failed", "portal", portal, "error", err)
 		return
 	}
-	now := time.Now().UTC()
 	// A commanded grant is an authorized open, like a credential grant.
 	r.noteGrant(portal, now)
 	r.log.Info("command grant", "portal", portal, "seconds", seconds, "actor", actor, "reason", reason)
+	r.emitGrantEvent(portal, actor, source, d, now)
+}
 
-	// Emit an audit event: operator-initiated grants belong in the access trail.
-	// Source marks it as a commanded open rather than a card read — without it the
-	// two are separable only by string-prefixing the actor, which is exactly the
-	// forensic question Source exists to answer.
-	if source == "" {
-		source = subjects.SourceCommand
+// emitGrantEvent records a commanded grant, allowed or refused, as a tap event.
+// Operator-initiated grants belong in the access trail, and so do refused ones:
+// a door-pop bounced by a lockdown is exactly what an investigator asks about.
+// Source marks it as a commanded open rather than a card read. Without it the two
+// are separable only by string-prefixing the actor, which is exactly the forensic
+// question Source exists to answer. There is no cred, so the entry-disarm sink
+// ignores it either way.
+func (r *Runtime) emitGrantEvent(portal, actor, source string, d policy.Decision, at time.Time) {
+	location, ptype := r.portalAddr(portal)
+	if ptype == "" {
+		return
 	}
-	if location, ptype := r.portalAddr(portal); ptype != "" {
-		if err := r.emit.Emit(r.subs.EventTap(location, ptype, portal), TapEvent{
-			User:   actor,
-			Allow:  true,
-			Reason: policy.ReasonAllowCommandGrant,
-			TS:     now.Format(time.RFC3339),
-			Source: source,
-		}); err != nil {
-			r.log.Error("failed to emit command-grant event", "portal", portal, "error", err)
-		} else {
-			r.m.IncEventPublished("tap")
-		}
+	if err := r.emit.Emit(r.subs.EventTap(location, ptype, portal), TapEvent{
+		User:   actor,
+		Allow:  d.Allow,
+		Reason: d.Reason,
+		TS:     at.Format(time.RFC3339),
+		Source: source,
+	}); err != nil {
+		r.log.Error("failed to emit command-grant event", "portal", portal, "error", err)
+	} else {
+		r.m.IncEventPublished("tap")
 	}
 }
 

@@ -205,6 +205,12 @@ Both binaries register as NATS micro services, so `nats micro ls` (or any
   names the remote surface that sent it and is copied onto that event. The
   badge tier sends `badge`. Absent or empty (the operator route, and any older
   publisher) becomes `command`. The command's own `reason` is only logged.
+  A grant passes the portal's **posture gate** first
+  ([Commanded grants](#commanded-grants)). Under an effective `lockdown` or
+  `disabled` posture (override, scheduled or standing) it is refused for every
+  `source`: the strike does not pulse, no authorized-open window opens, and
+  the `evt.tap` carries `allow=false` with `deny_lockdown` or
+  `deny_point_disabled`.
 - **output** drives a named auxiliary output relay (`auxout` type). `on`/`off`
   set the standing held state. `pulse` energizes momentarily (`seconds<=0`
   falls back to the aux output's configured `pulseSeconds`). Any other action
@@ -370,12 +376,17 @@ audit and notify consumers:
 | Deliver policy | `DeliverNew` |
 | Filter | `acc.*.*.*.evt.tap` |
 
-- Only a **credential** grant disarms (`allow` with a `cred`). A deny is
-  ignored. An operator remote `cmd.grant` carries no `cred`, so a remote
-  door-pop cannot silently disarm a building. The sink checks only `allow` and
-  a non-empty `cred`, so under `free_access` or `unlocked` posture, where
-  `policy.Decide` allows without consulting the credential, any presented
-  value disarms.
+- Only a **credential** grant disarms: `allow` with a `cred` **and**
+  `reason=allow_grant`, the one allow `policy.Decide` returns after checking
+  the credential, its holder and a group window for the portal. A deny is
+  ignored. An operator or badge remote `cmd.grant` (`allow_command_grant`, no
+  `cred`) cannot silently disarm a building. Neither can a posture allow:
+  under `free_access` or `unlocked`, `policy.Decide` answers
+  `allow_posture_free_access` / `allow_posture_unlocked` without consulting
+  the credential, so the `cred` on that event is whatever value was presented,
+  and the sink skips it. A legitimate cardholder entering under one of those
+  postures does not disarm the area either. Disarm it from the console, or let
+  its schedule do it.
 - The write is idempotent and skips an area that is already overridden to
   disarmed or can never be armed, so a redelivery is a harmless no-op and needs
   no dedup.
@@ -416,9 +427,15 @@ the accessd side make it safe:
   that person's credential opens in person, and schedules, holidays, validity
   bounds and the posture gate (standing or scheduled posture) all apply with no
   second implementation. A runtime override set with `cmd.posture` exists only
-  on the controller, so accessd cannot see it, and the controller's `cmd.grant`
-  handler does not check posture: a commanded `lockdown` does not block a
-  remote unlock.
+  on the controller, so accessd cannot see it. The controller enforces it
+  instead: its `cmd.grant` handler runs the same posture gate over the
+  effective posture ([Commanded grants](#commanded-grants)), so a commanded
+  `lockdown` or `disabled` refuses the remote unlock at the edge. The refusal
+  is an `evt.tap` with `allow=false`, `source: badge` and `deny_lockdown` or
+  `deny_point_disabled`. accessd has already answered the holder `202` by
+  then, because `cmd.grant` is fire-and-forget, so the badge page still shows
+  "Unlocked" for that press. The door stays shut, and the `events` row is
+  where the refusal shows.
 - **`portals.allow_remote_unlock`** (default false) is a per-door opt-in,
   checked before the graph is consulted. It is control-plane only and **not
   mirrored** to KV: the decision happens before publishing, so the edge never
@@ -804,6 +821,27 @@ is the one tap event whose `reason` can fall outside this set. Besides any
 `policy.Decide` code, accessd emits `remote_unlock_not_allowed` (the portal's
 `allow_remote_unlock` is off, checked before the graph is consulted) and
 `no_credential` (the holder has no credential to decide with).
+
+### Commanded grants
+
+A `cmd.grant` carries no credential, so `policy.Decide` does not apply to it.
+Its sibling `policy.DecideCommandGrant` is step 1 and step 2 alone, over the
+same effective posture:
+
+1. Unknown portal → `deny_unknown_point`.
+2. Posture gate: `disabled` → `deny_point_disabled`; `lockdown` →
+   `deny_lockdown`; `secure`, `free_access` or `unlocked` →
+   `allow_command_grant` with the portal's pulse. Any other posture fails
+   closed as `deny_point_disabled`.
+
+Who may send the command was settled before it was published: an operator's
+`command` capability, or `policy.Decide` over a snapshot for a badge remote
+unlock. The edge adds the one input only it has, a runtime override. The gate
+is the **same for every `source`**, operator door-pops included. Lockdown means
+deny all, and an operator with `command` can clear or change the override with
+that same capability, which emits an `evt.state`. Exempting operators would let
+one operator's door-pop puncture another's lockdown with no record that the
+lockdown ended.
 
 ### Non-portal targets
 

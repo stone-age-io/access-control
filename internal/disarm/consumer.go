@@ -27,6 +27,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
+	"github.com/stone-age-io/access-control/internal/policy"
 	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
@@ -48,8 +49,9 @@ type DisarmFunc func(portal, cred string) (disarmed bool, err error)
 // tapBody is the subset of the evt.tap payload the sink reads (mirrors
 // controller.TapEvent's wire tags).
 type tapBody struct {
-	Cred  string `json:"cred"`
-	Allow bool   `json:"allow"`
+	Cred   string `json:"cred"`
+	Allow  bool   `json:"allow"`
+	Reason string `json:"reason"`
 }
 
 // Disarmer consumes portal decision events and disarms on authorizing grants.
@@ -121,9 +123,17 @@ func (d *Disarmer) Stop() {
 // record and ack on ("disarmed" / "skip"), or a non-nil error for a write failure
 // to Nak (redeliver). It takes no jetstream.Msg so tests can drive it directly.
 //
-// Only a real CREDENTIAL grant disarms: a deny is ignored, and an operator remote
-// grant (cmd.grant) carries no credential — so a remote door-pop can't silently
-// disarm the building.
+// Only a real CREDENTIAL grant disarms, which means the reason allow_grant: the one
+// allow policy.Decide returns after it has actually checked the credential, its
+// holder, and a group window covering this portal. Everything else is skipped:
+//
+//   - a deny;
+//   - an operator or badge remote grant (cmd.grant: allow_command_grant, no
+//     credential), so a remote door-pop can't silently disarm the building;
+//   - a posture allow (allow_posture_free_access / allow_posture_unlocked). Under
+//     those postures Decide never reads the credential, so the cred on the event
+//     is whatever value was presented. Checking only allow && cred once let any
+//     card, known or not, disarm the area behind a free_access entry door.
 func (d *Disarmer) process(subject string, data []byte) (string, error) {
 	_, _, thing, kind, ok := d.subj.ParseEvent(subject)
 	if !ok || kind != "tap" {
@@ -133,7 +143,7 @@ func (d *Disarmer) process(subject string, data []byte) (string, error) {
 	if err := json.Unmarshal(data, &ev); err != nil {
 		return "skip", nil // malformed: ack and skip
 	}
-	if !ev.Allow || ev.Cred == "" {
+	if !ev.Allow || ev.Cred == "" || ev.Reason != policy.ReasonAllowGrant {
 		return "skip", nil
 	}
 	disarmed, err := d.disarm(thing, ev.Cred)

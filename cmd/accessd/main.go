@@ -571,6 +571,11 @@ func wantsNotifyType(selected []string, notifyType string) bool {
 // which the mirror propagates to KV so every peer controller converges. Idempotent
 // and fail-safe — an unknown portal/area, a non-entry door, or an area that is
 // already disarmed (or can never be armed) is a silent no-op, never an error.
+//
+// It does not look the credential up. The sink calls it only for an allow_grant
+// tap, which policy.Decide at the edge returns after checking the credential, its
+// holder and a group window for this portal. A second, partial check here against
+// PocketBase would be an implementation to drift from that one.
 func newDisarmFunc(app core.App, log *logger.Logger) disarm.DisarmFunc {
 	return func(portalCode, cred string) (bool, error) {
 		portal, err := app.FindFirstRecordByFilter("portals", "code = {:code}", dbx.Params{"code": portalCode})

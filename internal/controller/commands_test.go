@@ -97,6 +97,29 @@ func TestCommandGrantDefaultsToPortalPulse(t *testing.T) {
 	}
 }
 
+// The badge remote-unlock path end to end on the wire: a cmd.posture lockdown, then
+// the cmd.grant accessd publishes for a holder's button press. accessd cannot see
+// the override, so the controller is what refuses it.
+func TestCommandGrantRefusedAfterLockdownCommand(t *testing.T) {
+	h, _, refs := handlerFor(t)
+	h.onPosture(&nats.Msg{
+		Subject: "acc.hq.door.lobby-main.cmd.posture",
+		Data:    []byte(`{"posture":"lockdown","actor":"guard"}`),
+	})
+	h.onGrant(&nats.Msg{
+		Subject: "acc.hq.door.lobby-main.cmd.grant",
+		Data:    []byte(`{"seconds":0,"actor":"badge:holder","reason":"remote_unlock","source":"badge"}`),
+	})
+
+	if got := refs.lock.Pulses(); len(got) != 0 {
+		t.Errorf("pulses = %v, want none under lockdown", got)
+	}
+	taps := refs.emit.taps()
+	if len(taps) != 1 || taps[0].Allow || taps[0].Reason != policy.ReasonDenyLockdown || taps[0].Source != subjects.SourceBadge {
+		t.Errorf("tap events = %+v, want one deny_lockdown from source badge", taps)
+	}
+}
+
 // Fire suppresses alarms for the location while active, and resumes when cleared.
 func TestFireSuppressesAlarm(t *testing.T) {
 	h, rt, refs := handlerFor(t)

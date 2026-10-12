@@ -260,8 +260,9 @@ After that each durable keeps its position on the NATS server (§5).
   stream, and uses the same send path as the sink.
 - **Webhook sink.** POSTs each pageable event as JSON. Inert (it acks and skips)
   while `accessd.webhookURL` is empty. Redirects are never followed.
-- **Entry-disarm sink.** On an allowed tap that carries a credential, at a
-  portal with `disarm_on_grant` and an `area`, it writes
+- **Entry-disarm sink.** On a credential grant (an `allow_grant` tap, never a
+  posture allow or a command grant), at a portal with `disarm_on_grant` and an
+  `area`, it writes
   `arm_override: disarmed` and an `audit_logs` row with
   `actor_email: entry-disarm`. It skips an area that is already overridden to
   disarmed or can never be armed. See

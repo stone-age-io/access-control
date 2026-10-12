@@ -213,3 +213,38 @@ func TestDecide(t *testing.T) {
 		})
 	}
 }
+
+// A commanded grant passes the posture gate and nothing else: lockdown and disabled
+// refuse it exactly as they refuse a card, and an unknown posture fails closed.
+func TestDecideCommandGrant(t *testing.T) {
+	tests := []struct {
+		name       string
+		posture    string
+		portal     string
+		wantAllow  bool
+		wantReason string
+		wantPulse  int
+	}{
+		{"secure", PostureSecure, "lobby", true, ReasonAllowCommandGrant, 5},
+		{"free_access", PostureFreeAccess, "lobby", true, ReasonAllowCommandGrant, 5},
+		{"unlocked", PostureUnlocked, "lobby", true, ReasonAllowCommandGrant, 5},
+		{"pulse is the portal's own", PostureSecure, "vault", true, ReasonAllowCommandGrant, 3},
+		{"lockdown refuses", PostureLockdown, "lobby", false, ReasonDenyLockdown, 0},
+		{"disabled refuses", PostureDisabled, "lobby", false, ReasonDenyPointDisabled, 0},
+		{"unknown posture fails closed", "bogus", "lobby", false, ReasonDenyPointDisabled, 0},
+		{"unset posture fails closed", "", "lobby", false, ReasonDenyPointDisabled, 0},
+		{"unknown point", PostureSecure, "garage", false, ReasonDenyUnknownPoint, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecideCommandGrant(basePolicy(), tc.posture, tc.portal)
+			if got.Allow != tc.wantAllow || got.Reason != tc.wantReason || got.Pulse != tc.wantPulse {
+				t.Errorf("DecideCommandGrant(%q, %q) = %+v, want allow=%v reason=%q pulse=%d",
+					tc.posture, tc.portal, got, tc.wantAllow, tc.wantReason, tc.wantPulse)
+			}
+			if got.User != "" {
+				t.Errorf("User = %q, want empty (a command names an actor, not a cardholder)", got.User)
+			}
+		})
+	}
+}

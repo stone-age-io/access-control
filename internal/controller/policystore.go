@@ -156,6 +156,14 @@ func (s *PolicyStore) Decide(posture, cred, portal string, atUTC time.Time) poli
 	return policy.Decide(&s.graph, loc, posture, cred, portal, atUTC)
 }
 
+// DecideCommandGrant delegates to the pure policy.DecideCommandGrant under a read
+// lock. Effective posture is supplied by the caller, as for Decide.
+func (s *PolicyStore) DecideCommandGrant(posture, portal string) policy.Decision {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return policy.DecideCommandGrant(&s.graph, posture, portal)
+}
+
 // ResolvePosture computes a portal's effective posture under one read lock:
 //
 //  1. a runtime command override (passed in; "" means none) wins;

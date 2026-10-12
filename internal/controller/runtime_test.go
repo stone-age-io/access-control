@@ -233,6 +233,109 @@ func TestGrantStampsSource(t *testing.T) {
 	}
 }
 
+// A commanded grant passes the posture gate. A runtime lockdown or disabled
+// override lives only in this process, so this is the one place it can stop a
+// cmd.grant. It refuses operator door-pops and badge remote unlocks alike: no
+// pulse, no authorized-open window, and a deny tap event carrying the posture's
+// reason and the issuing surface.
+func TestGrantRefusedUnderOverride(t *testing.T) {
+	for _, tc := range []struct {
+		posture, wantReason string
+	}{
+		{policy.PostureLockdown, policy.ReasonDenyLockdown},
+		{policy.PostureDisabled, policy.ReasonDenyPointDisabled},
+	} {
+		for _, src := range []struct{ sent, want string }{
+			{"", subjects.SourceCommand},
+			{subjects.SourceBadge, subjects.SourceBadge},
+		} {
+			rt, _, lock, emit := runtimeFor(t)
+			rt.SetPosture(lobby, tc.posture, "guard", "incident", ny(t, 2026, 1, 5, 8, 0))
+			rt.Grant(lobby, 5, "badge:holder", "remote_unlock", src.sent)
+
+			if got := lock.Pulses(); len(got) != 0 {
+				t.Errorf("%s/source=%q: pulses = %v, want none", tc.posture, src.sent, got)
+			}
+			taps := emit.taps()
+			if len(taps) != 1 {
+				t.Fatalf("%s/source=%q: tap events = %+v, want exactly one", tc.posture, src.sent, taps)
+			}
+			if ev := taps[0]; ev.Allow || ev.Reason != tc.wantReason || ev.Source != src.want || ev.User != "badge:holder" || ev.Cred != "" {
+				t.Errorf("%s/source=%q: tap event = %+v, want deny %q, source %q, user badge:holder, no cred",
+					tc.posture, src.sent, ev, tc.wantReason, src.want)
+			}
+			if !emit.hasSubject("acc.hq.door.lobby-main.evt.tap") {
+				t.Errorf("%s/source=%q: refusal not emitted on the portal's evt.tap subject", tc.posture, src.sent)
+			}
+			// A refused grant must not open the authorized-open window, or a door
+			// pushed open moments later would read as authorized rather than forced.
+			rt.mu.RLock()
+			m := rt.monitors[lobby]
+			rt.mu.RUnlock()
+			if m != nil && (m.grantPending || !m.grantUntil.IsZero()) {
+				t.Errorf("%s/source=%q: refused grant opened a grant window: %+v", tc.posture, src.sent, m)
+			}
+		}
+	}
+}
+
+// Standing and scheduled lockdown refuse a commanded grant too, not only a
+// runtime override. accessd's badge path already denies these from its KV
+// snapshot; the controller now agrees for an operator door-pop as well.
+func TestGrantRefusedUnderStandingAndScheduledLockdown(t *testing.T) {
+	for name, portal := range map[string]string{
+		"standing":  `{"code":"lobby-main","type":"door","location":"hq","posture":"lockdown","pulseSeconds":5,"controller":"ctrl-hq-1"}`,
+		"scheduled": `{"code":"lobby-main","type":"door","location":"hq","posture":"secure","pulseSeconds":5,"controller":"ctrl-hq-1","autoPosture":"lockdown","autoSchedule":"always"}`,
+	} {
+		rt, _, lock, emit := runtimeFor(t)
+		// Grant reads the wall clock, so the scheduled case needs a window that is
+		// open whenever the test runs.
+		rt.store.apply("sched.always", []byte(`{"code":"always","windows":[{"days":[1,2,3,4,5,6,7],"start":"00:00","end":"24:00"}]}`))
+		rt.store.apply("portal.lobby-main", []byte(portal))
+		rt.Grant(lobby, 5, "guard", "buzz in", "")
+
+		if got := lock.Pulses(); len(got) != 0 {
+			t.Errorf("%s: pulses = %v, want none", name, got)
+		}
+		if taps := emit.taps(); len(taps) != 1 || taps[0].Allow || taps[0].Reason != policy.ReasonDenyLockdown {
+			t.Errorf("%s: tap events = %+v, want one deny_lockdown", name, taps)
+		}
+	}
+}
+
+// Postures that let a card through let a commanded grant through, and lifting a
+// lockdown restores the door-pop. Clearing the override is the operator's
+// sanctioned way past a lockdown, and it is the one that leaves an evt.state.
+func TestGrantAllowedOutsideLockdown(t *testing.T) {
+	for _, p := range []string{policy.PostureFreeAccess, policy.PostureUnlocked} {
+		rt, _, lock, emit := runtimeFor(t)
+		rt.SetPosture(lobby, p, "guard", "open house", ny(t, 2026, 1, 5, 8, 0))
+		rt.Grant(lobby, 4, "guard", "buzz in", "")
+		if got := lock.Pulses(); len(got) != 1 || got[0] != 4 {
+			t.Errorf("%s: pulses = %v, want [4]", p, got)
+		}
+		if taps := emit.taps(); len(taps) != 1 || !taps[0].Allow || taps[0].Reason != policy.ReasonAllowCommandGrant {
+			t.Errorf("%s: tap events = %+v, want one allow_command_grant", p, taps)
+		}
+	}
+
+	rt, _, lock, emit := runtimeFor(t)
+	at := ny(t, 2026, 1, 5, 8, 0)
+	rt.SetPosture(lobby, policy.PostureLockdown, "guard", "incident", at)
+	rt.Grant(lobby, 0, "guard", "buzz in", "")
+	rt.ClearPosture(lobby, "guard", "all clear", at)
+	rt.Grant(lobby, 0, "guard", "buzz in", "")
+
+	if got := lock.Pulses(); len(got) != 1 || got[0] != 5 {
+		t.Errorf("pulses = %v, want [5]: refused under lockdown, then the portal's pulse once cleared", got)
+	}
+	taps := emit.taps()
+	if len(taps) != 2 || taps[0].Allow || taps[0].Reason != policy.ReasonDenyLockdown ||
+		!taps[1].Allow || taps[1].Reason != policy.ReasonAllowCommandGrant {
+		t.Errorf("tap events = %+v, want deny_lockdown then allow_command_grant", taps)
+	}
+}
+
 // A controller hears location-wildcarded commands for portals other controllers
 // drive; it must ignore them — no override stored, no state event emitted (which
 // would duplicate the owning controller's audit row).

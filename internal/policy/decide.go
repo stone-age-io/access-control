@@ -90,6 +90,48 @@ func Decide(p *Policy, loc *time.Location, posture, cred, portal string, atUTC t
 	return Decision{Reason: ReasonDenyNoAccess, User: u.ID}
 }
 
+// DecideCommandGrant answers "may a commanded grant (cmd.grant) pulse this portal's
+// strike right now?" as a pure function. The caller passes the effective posture,
+// resolved exactly as for Decide (command override → scheduled → standing).
+//
+// Evaluation order:
+//
+//  1. Unknown portal              -> deny_unknown_point
+//  2. Posture gate:
+//     disabled                 -> deny_point_disabled
+//     lockdown                 -> deny_lockdown
+//     secure / free_access / unlocked -> allow_command_grant (pulse = the portal's)
+//     anything else            -> deny_point_disabled (fail closed, as Decide)
+//
+// There is no credential step and no grant walk. Who may issue the command was
+// settled before it was published: the operator's `command` capability, or Decide
+// over a policy snapshot for a badge holder's remote unlock. The one input only the
+// edge has is a runtime override, because a cmd.posture override lives in the
+// controller's memory and nowhere else. Before this gate a commanded lockdown
+// blocked every card at the reader and no grant at all.
+//
+// The gate applies to every surface that sends cmd.grant, operator door-pops
+// included. Lockdown means deny all, and an operator holding `command` can lift or
+// change it with the same capability, which leaves an evt.state behind. Exempting
+// door-pops would let one operator puncture another's lockdown with no record that
+// the lockdown ever ended, and would turn `source` (how a command arrived) into an
+// authorization input.
+func DecideCommandGrant(p *Policy, posture, portal string) Decision {
+	ap, ok := p.Portals[portal]
+	if !ok {
+		return Decision{Reason: ReasonDenyUnknownPoint}
+	}
+	switch posture {
+	case PostureSecure, PostureFreeAccess, PostureUnlocked:
+		return Decision{Allow: true, Reason: ReasonAllowCommandGrant, Pulse: ap.PulseSeconds}
+	case PostureLockdown:
+		return Decision{Reason: ReasonDenyLockdown}
+	default:
+		// disabled, and any unknown/unset posture: fail closed.
+		return Decision{Reason: ReasonDenyPointDisabled}
+	}
+}
+
 // subjectFor resolves a credential value to the active user behind it, or the denial
 // that stops it. It is step 3 of Decide's contract, extracted verbatim so the
 // non-portal deciders (DecideArea, DecideOutput) enforce the same ladder in the same
