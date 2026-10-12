@@ -74,6 +74,11 @@ described in the [Configuration Reference](configuration.md#1-how-config-loads).
 The PocketBase global flags apply to every command. `--dir` sets the data
 directory and defaults to `accessd.dataDir` (`./pb_data`).
 
+`./accessd --version` prints the build and the PocketBase it was built
+against, without loading the config. The build is the version `go build`
+stamped from the checkout: the tag for a release, a pseudo-version between
+tags.
+
 `migratecmd` runs with `Automigrate` on, so a collection edit made in the
 PocketBase dashboard writes a new Go migration file into `pbmigrations`. Review
 those files before committing them.

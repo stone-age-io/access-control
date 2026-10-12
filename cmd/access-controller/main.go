@@ -1,15 +1,17 @@
 // Command access-controller is the edge stone-access app: it watches the policy
 // KV keyspace into in-memory maps, decides credential presentations locally
-// with the pure policy.Decide function, drives the reader/lock hardware (mocked
-// in v1), and emits access events to JetStream.
+// with the pure policy.Decide function, drives the reader/lock hardware, and
+// emits access events to JetStream.
 //
-// v1 drivers are mocks: taps are simulated by publishing to
-// {app}.{location}.{type}.{thing}.tap and the lock just logs its pulse.
+// The defaults are the dev ones: the mock driver (the lock just logs its pulse)
+// and the NATS reader (taps are published to {app}.{location}.{type}.{thing}.tap).
+// controller.driver and controller.reader select GPIO/I2C and OSDP.
 package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,11 +31,20 @@ import (
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/natsx"
 	"github.com/stone-age-io/access-control/internal/subjects"
+	"github.com/stone-age-io/access-control/internal/version"
 )
 
 func main() {
 	configPath := flag.String("config", "config/controller.yaml", "path to config file")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	// Before the config: on a box that is not configured yet, which is when
+	// someone asks which build it has, loading the config fails.
+	if *showVersion {
+		fmt.Println("access-controller version " + version.Main())
+		return
+	}
 
 	startedAt := time.Now().UTC()
 

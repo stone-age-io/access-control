@@ -307,6 +307,7 @@ internal/statuskv/      upward wire contract: ACC_STATUS key scheme + JSON shape
 internal/subjects/      every NATS subject is built and parsed here
 internal/drivers/hardware/  per-model board profiles (the console reads them for /api/models)
 internal/natsx/         NATS connection + KV helpers + service-discovery registration
+internal/version/       the build version `go build` stamps (--version, service discovery)
 internal/logger/        zap wrapper
 internal/metrics/       Prometheus instrumentation (default :2113; the example controller config uses :2114)
 

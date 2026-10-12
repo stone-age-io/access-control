@@ -4,10 +4,10 @@ package natsx
 
 import (
 	"regexp"
-	"runtime/debug"
 	"strings"
 
 	"github.com/nats-io/nats.go/micro"
+	"github.com/stone-age-io/access-control/internal/version"
 )
 
 // The discovery name of each binary. Every copy of a binary shares its name,
@@ -32,14 +32,10 @@ const (
 // is refused discovery only; nats.go reports that to stderr. Stop the returned
 // service before closing the connection.
 func (c *Conn) RegisterService(name, description string, meta map[string]string) micro.Service {
-	var built string
-	if info, ok := debug.ReadBuildInfo(); ok {
-		built = info.Main.Version // stamped by `go build` from the checkout; no ldflags
-	}
-	version := serviceVersion(built)
+	ver := serviceVersion(version.Main())
 	svc, err := micro.AddService(c.NC, micro.Config{
 		Name:        name,
-		Version:     version,
+		Version:     ver,
 		Description: description,
 		Metadata:    meta,
 	})
@@ -47,7 +43,7 @@ func (c *Conn) RegisterService(name, description string, meta map[string]string)
 		c.log.Warn("NATS service discovery registration failed; continuing without it", "service", name, "error", err)
 		return nil
 	}
-	c.log.Info("registered for NATS service discovery", "service", name, "version", version)
+	c.log.Info("registered for NATS service discovery", "service", name, "version", ver)
 	return svc
 }
 
