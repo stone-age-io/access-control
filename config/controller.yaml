@@ -16,10 +16,11 @@ nats:
     - "tls://nats.example.com:4222"
 
   # Provision a SEPARATE NATS identity for each controller on the platform
-  # (least privilege: a controller only needs to watch ACC_POLICY, publish
-  # acc.{location}.{type}.{thing}.evt.> and subscribe to the matching
-  # acc.*.cmd/acc.*.tap subjects). Save its creds file outside the repo
-  # (*.creds is gitignored).
+  # (least privilege: a controller only needs to watch ACC_POLICY, write
+  # ACC_STATUS, publish acc.{location}.{type}.{thing}.evt.> and its heartbeat,
+  # and subscribe to its location's cmd, tap and fire subjects, plus $SRV.> for
+  # service discovery; the full list is in docs/controller.md §7). Save its
+  # creds file outside the repo (*.creds is gitignored).
   credsFile: "config/controller.creds"
   #   nkeySeedFile: "config/controller.nk"
   #   token: "${SA_NATS_TOKEN}"
@@ -75,8 +76,9 @@ policy:
   # Offline config cache (OPT-IN). Persist the last policy graph delivered over KV
   # to a local file so a reboot with NATS unreachable (leaf node down, or no
   # network) still decides on last-known config instead of booting default-deny.
-  # When enabled, a missing NATS at startup is no longer fatal — the box binds KV
-  # lazily, runs on cache, and converges when the hub returns.
+  # A missing NATS at startup is never fatal, cache or not — the box binds KV
+  # lazily and converges when the hub returns; the cache is what it decides on
+  # meanwhile.
   #
   # Fail-secure: a missing/corrupt snapshot, or one older than maxAge, loads
   # nothing and the box stays default-deny. Live KV always wins once it syncs.

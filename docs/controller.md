@@ -168,9 +168,10 @@ no cleanup; the next boot drives every line it arms back to idle first. See
    [§3.3](#33-offline-cache)).
 5. Open the reader, the hardware backend and the runtime. Everything starts
    **armed for nothing**.
-6. Start the status writer (also bound lazily), the three reconcilers, the KV
-   watcher, the tap loop, the command subscriptions, the heartbeat and (if
-   enabled) the status page.
+6. Start the status writer (also bound lazily), the KV watcher, the three
+   reconcilers, the tap loop, the command subscriptions, the heartbeat, the
+   [service discovery](#service-discovery) registration and (if enabled) the
+   status page.
 7. Log `controller started; default-deny until policy syncs`.
 8. When the first KV sync completes, log `policy synced; controller live`.
    The reconcilers arm every portal and aux point bound to this code.

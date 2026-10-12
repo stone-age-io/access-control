@@ -111,7 +111,7 @@ accessd:
   controllerOfflineAfter: 45s
   # How long to keep control-plane audit rows (audit_logs — who changed which
   # policy record, written by internal/changelog) before a daily 03:00 prune
-  # deletes them. Unset (0) = 365 days; set negative to keep forever.
+  # deletes them. Unset = 365 days; 0 or negative keeps forever.
   auditRetentionDays: 365
   # How long to keep door-activity rows (events — the rebuildable projection of
   # the ACC_EVENTS JetStream stream) before a daily 03:00 prune deletes them.

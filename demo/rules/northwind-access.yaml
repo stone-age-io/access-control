@@ -331,7 +331,7 @@
 # genuinely in that state rather than from a hand-written reason string. The
 # sixth, deny_not_yet_valid, has no seeded credential: it needs a future
 # valid_from, which the seed deliberately does not create because a pass nobody
-# can use yet is invisible in every screen. Mint one on the Visitors page with a
+# can use yet is invisible in every screen. Mint one with New Visitor Pass with a
 # start date of tomorrow and add a rule here if you want the full set.
 #
 # EVERY RULE IN THIS SECTION IS ONE CARD ON A MINUTE CRON. No choice, no seconds
@@ -389,10 +389,12 @@
       mode: core
       payload: '{"cred":"NW-CARD-0009"}'
 
-# Dale Whitmore — a vendor pass that expired a fortnight ago. deny_expired is
-# decided at the EDGE from the credential's own valid_until, so it denies whether
-# or not the housekeeping sweep has got round to marking the pass revoked, and it
-# denies with the WAN down.
+# Dale Whitmore — a vendor pass that expired a fortnight ago. Expiry is decided
+# at the EDGE from the credential's own valid_until, so it denies whether or not
+# the housekeeping sweep has got round to marking the pass revoked, and it denies
+# with the WAN down. The sweep runs when accessd starts serving, and Decide checks
+# status before dates, so live taps come back deny_revoked; deny_expired shows
+# only in the seeded history.
 - trigger:
     schedule:
       cron: "*/23 * * * *"

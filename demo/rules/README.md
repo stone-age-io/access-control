@@ -19,6 +19,9 @@ access group in the console and the next tap changes.
 ## Run it
 
 Four processes plus the scheduler, all on one NATS server and **one account**.
+Both binaries load the example configs by default, which name a `credsFile` and
+a placeholder URL, so give them a config that points at your server first (see
+[Build and Run](../../README.md#build-and-run)).
 
 ```bash
 ./accessd migrate up
@@ -55,7 +58,8 @@ rule-router --config config/rule-scheduler.yaml --rules demo/rules
 
 ## Credentials — where the join actually pays off
 
-On a plain dev `nats-server` with no auth, none of this matters. On a Stone Age
+On a plain dev `nats-server` with no auth, none of this matters beyond a config
+with no `credsFile`. On a Stone Age
 platform deployment it does, and it is worth doing properly because it is the
 part that shows the two apps are one system.
 
@@ -90,7 +94,7 @@ role fits it.
 
 | Where | What |
 |---|---|
-| Events | a steady mix of `allow_grant`, `allow_posture_unlocked`, and five different denial codes — under **half a dozen different names**, not one repeated |
+| Events | a steady mix of `allow_grant`, `allow_posture_unlocked`, and four different denial codes — under **half a dozen different names**, not one repeated |
 | Alarm Console | a forced door on Dock A, a held-open on the DC entrance that clears itself two minutes later, and overnight intrusions in three different areas |
 | Monitor | strikes pulsing, the Springfield dock disarming on the morning open, the yard gate under lockdown after 20:00, the dock horn on a pulse |
 | Controllers | four boxes online, heartbeating every 15s |
@@ -164,10 +168,16 @@ needs to be able to predict from the cron alone.
 ## Two things that expire
 
 Sandra Okonkwo's visitor pass is valid from the day before the seed run to three
-days after it, so after day three her taps start coming back `deny_expired`
-alongside Dale's. Re-seeding does not refresh the dates (the seed is
-found-or-create, and re-running tops up rather than rewriting), so extend the
-pass on the **Visitors** page or accept the extra denial.
+days after it, so after day three her taps start being refused alongside
+Dale's. Both come back `deny_revoked`, not `deny_expired`: accessd's visitor
+credential sweep marks an expired visitor pass `revoked` (once at `serve` and
+then hourly), and `policy.Decide` checks a credential's status before its
+dates. `deny_expired` appears only in the seeded history. Re-seeding does not
+refresh the dates (the seed is found-or-create, and re-running tops up rather
+than rewriting), so to keep her taps allowed, edit her credential on the
+**Credentials** page (set `valid_until` later and `status` back to active), or
+accept the extra denial. Reissuing the pass from her Cardholder page mints a new
+credential value, which this file does not know.
 
 `deny_not_yet_valid` is the one reason code this file never produces. It needs a
 credential with a future `valid_from`, which the seed does not create — a pass

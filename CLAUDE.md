@@ -11,11 +11,11 @@ Two Go binaries plus a Vue 3 management UI:
 - **`accessd`** (`cmd/accessd`) — central system of record. Embeds PocketBase (control plane + schema),
   mirrors the policy graph to NATS KV (one key per record), runs the JetStream audit consumer, runs the
   controller-health monitor (heartbeats → `controllers.last_seen`/`status`), runs the **notification
-  sink** (`internal/notify`) — a *second*, independent durable on ACC_EVENTS that emails on alarm/fire
-  (`DeliverNew`, always on but config-free and inert unless opted in: an alarm source sets
-  `portals`/`areas.notify_on_alarm` or `locations.notify_fire`, **and** an operator sets `users.notify` to
-  receive it — recipients optionally scoped to locations via `users.notify_locations`, empty = all; SMTP
-  transport is PocketBase's own mail settings) — and runs the **entry-disarm sink**
+  sink** (`internal/notify`) — a *second*, independent durable on ACC_EVENTS that emails on alarm/fire and
+  controller-offline (`DeliverNew`, always on but config-free and inert unless opted in: an alarm source sets
+  `portals`/`areas.notify_on_alarm`, `locations.notify_fire` or `controllers.notify_offline`, **and** an operator
+  sets `users.notify` to receive it — recipients optionally scoped to locations via `users.notify_locations`,
+  empty = all; SMTP transport is PocketBase's own mail settings) — and runs the **entry-disarm sink**
   (`internal/disarm`) — a *third* such durable that, on a valid credential grant at a `disarm_on_grant` portal,
   durably disarms that portal's area (`DeliverNew`, always on but inert unless a portal opts in) — and runs the
   **one-shot disarm release** (`internal/armrelease`) — a periodic sweep that clears a disarm `arm_override` on a
@@ -32,8 +32,9 @@ simulated taps published to `acc.{location}.{type}.{thing}.tap`, for dev), `osdp
 model's RS485 bus), or `both` (NATS for every portal **plus** OSDP for the portals that have a physical reader).
 Under `both` a portal opts into OSDP per-portal via its `reader_address` (`>= 0` = OSDP reader at that PD address,
 `-1` = NATS-only); the `internal/controller` `multiReader` composes the two readers behind one `Reader` interface,
-dispatching `Arm` by address and fanning both tap streams into one. Each `evt.tap` carries a `source` (`nats`/`osdp`)
-so a physical read is distinguishable from a NATS-published tap in the audit trail. The OSDP reader is the controller acting as ACU/CP: `internal/drivers/osdp` is a no-cgo CP
+dispatching `Arm` by address and fanning both tap streams into one. Each `evt.tap` carries a `source` (`nats`/`osdp`,
+or `command`/`badge` for a commanded grant) so a physical read is distinguishable from a NATS-published tap in the
+audit trail. The OSDP reader is the controller acting as ACU/CP: `internal/drivers/osdp` is a no-cgo CP
 engine (per-PD `INIT→CAPDET→ONLINE→OFFLINE` state machine round-robined over one bus, mirroring libosdp's design)
 built on the clear-text packet codec in `internal/drivers/osdp/wire`; OSDP Secure Channel is a deliberate v1
 omission (fast-follow). The reader plugs in behind `drivers.ReaderDriver` (a card read becomes a `Tap`), so
@@ -62,12 +63,16 @@ go build ./cmd/access-controller
 ./access-controller -config config/controller.yaml
 ```
 
-UI dev server (proxies `/api` + `/_` to `:8090`): `npm --prefix ui run dev` → http://localhost:5174
+UI dev server (proxies `/api` + `/_` + `/branding` to `:8090`): `npm --prefix ui run dev` → http://localhost:5174
 
-Create the admin login (collections are superuser-only): `./accessd superuser upsert <email> <pass>`
+Create the break-glass PocketBase admin (dashboard at `/_`): `./accessd superuser upsert <email> <pass>`. The
+console signs in against `users`; a fresh dev database seeds the operator `admin@local.dev` (migration
+`1750000010`), and further operators are added from the console.
 
-`accessd` is driven by PocketBase's CLI (`serve`, `migrate`, `superuser`). NATS/KV/audit resources come up
-**only on `serve`**, not for `migrate`/`superuser`.
+`accessd` is driven by PocketBase's CLI (`serve`, `migrate`, `superuser`) plus our own `demo-seed` (the Northwind
+demo estate, idempotent, refuses to run without `--confirm`; see `demo/README.md`). NATS/KV/audit resources come
+up **only on `serve`**, not for `migrate`/`superuser`/`demo-seed`; records those write reach KV through `SyncAll`
+on the next `serve`.
 
 ## Test
 
@@ -149,7 +154,7 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   fail-secure — a missing/corrupt/too-old snapshot (staleness bound `policy.cache.maxAge`) loads nothing — and
   live KV always wins once a sync lands. `StatusWriter` binds its bucket lazily the same way (upward status is
   simply not published while offline). `PolicyStore.SyncStatus` reports `synced`/`cached`/`loading` for the
-  `/status` page. See `docs/configuration.md`.
+  `/status` page. See `docs/controller.md` §3 and `docs/configuration.md`.
 - **PortalManager** (`internal/controller/portalmanager.go`) keeps the controller's armed portals in step with
   policy. Binding is **central**: the set this box drives is every portal whose `controller` relation points at
   this controller's `code` (`PolicyStore.PortalsForController`), so reassigning a portal to another box, retyping
@@ -167,10 +172,11 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   **exception-only** (a used grant emits nothing, so the happy path adds no volume) and rides the **existing
   hold-eval tick** rather than a per-grant timer: the controller keeps exactly three timers by design, and since
   the grace window and the tick are both 10s it lands 10–20s late — the same sampling trade scheduled-posture
-  holds already accept. A portal with no `dpsInput` can never observe an open, so it is gated out entirely or it
-  would fire on every grant. The hardware binding (logical relay/input indices, held-open threshold) rides policy
-  on the portal record, never the pure `policy.Decide`; the box maps logical indices to physical lines via its
-  `model` profile.
+  holds already accept. An open is observable only when the portal's binding declares a `dpsInput` **and** the box
+  has a door-input driver, so `sweepNoEntry` checks both, or it would fire on every grant; under `driver: mock` (no
+  inputs: every demo and dev box) no `no_entry` is ever emitted. The hardware binding (logical relay/input indices,
+  held-open threshold) rides policy on the portal record, never the pure `policy.Decide`; the box maps logical
+  indices to physical lines via its `model` profile.
 - **Fire is an aux input, not a driver interface.** A location's fire-alarm interface is an `aux_input` whose
   `point_type` is `fire`; the controller that owns the contact publishes `acc.{loc}.evt.fire` on **both edges**,
   and every controller at that location (including the publisher, idempotently) applies it. It used to be
@@ -221,6 +227,9 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   Because the projection is rebuildable, an optional daily 03:00 prune (`RegisterPrune`, gated on
   `accessd.eventRetentionDays`, **off by default = keep forever**) trims `events` older than the retention
   window — draining in bounded batches (it's high-volume, unlike the changelog's single-batch audit-log prune).
+  `user` stays the cardholder's record id (the join key); the consumer also writes `user_name`, resolved when it
+  projects (migration `1750000049`), so a rename never rewrites history and a deleted cardholder does not blank old
+  rows. Anything that is not a cardholder id leaves it empty, and the UI falls back to `user`.
   **No new `kind` value has ever been added**: `kind` is a SelectField (a migration + UI filter change) while
   `type` is plain text, so the *pair* `(type, kind)` carries every newer shape — `(area, state)` is an arm
   transition, `(ctrl, state)` a liveness flip, `(door, alarm)` with `type: no_entry` a grant nobody used.
@@ -234,7 +243,7 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   the two causes were independent: the column's vocabulary is one thing — how an event *arrived*
   (`nats`/`osdp`/`command`/`badge`) — and arm provenance is not it; the consumer asks the *collection* whether a
   value is accepted before writing it, keeping an unknown one in `payload` rather than losing the row (the schema
-  is the authority, so there is no second list to drift); and `retry` backs off (~5 min total) then `Term`s, since
+  is the authority, so there is no second list to drift); and `retry` backs off (~6 min total) then `Term`s, since
   giving up costs one row until a rebuild while looping costs the log. Adding a value to
   `internal/subjects.Source*` **is a migration plus the UI's `EventSource` union and `SOURCES` filter list**.
 - **Notification opt-in has two axes, not one.** Beyond the source×recipient AND, `users.notify_types` selects
@@ -561,8 +570,8 @@ per-door held-open (DOTL) timer, the liveness heartbeat, and the **scheduled-pos
 (`runtime.reconcileHolds`, default 10s) — a sampling loop that flips the strike hold at schedule-window boundaries
 (the no-event case) and is backed up by immediate reconciles on posture commands and on portal arming. Only the
 `unlocked` posture holds the strike (via `LockDriver.SetHeld`, which composes with `Pulse`); everything else is
-enforced lazily at tap, so physically the strike is just not held. Fire input suppresses alarm emission (hardware
-owns egress).
+enforced lazily at tap, so physically the strike is just not held. Fire input suppresses alarm emission where the
+location sets `fai_suppress` (hardware owns egress).
 
 ### Schema is code
 
@@ -624,6 +633,11 @@ reminder cap survives a restart — an in-memory counter would reset and page fo
 and a transport but nothing produced the signal, since `drivers.FAIInput` had zero implementations), and
 `1750000044` (`events.source` gains `command`/`badge` — the two values `cmd.grant` already carried and the select
 rejected, which was not a missing column value but an unbounded audit-redelivery loop; see the Audit section).
+Then the **read-path** pass: `1750000045`–`1750000048` (events list, unacknowledged-alarm, control-plane and
+denied-tap indexes, each composite ending in its sort's tiebreak column; `1750000047` also drops three unused
+`audit_logs` indexes), and `1750000049` (`events.user_name`, the cardholder's name resolved at projection time).
+The dev fixtures `1750000010` (the `admin@local.dev` operator) and `1750000014` (seeded portals set NATS-only,
+`reader_address = -1`) sit among these, both guarded to touch only the seeded fixture.
 
 **The base `1750000000` is NOT frozen any more, and there are gaps at 30/34/35.** The badge tier used to be a second
 auth collection (`badge_users`, migrations `1750000030`/`1750000034`/`1750000035`); it was collapsed into
@@ -647,8 +661,9 @@ record in `users` *specifically* (`@request.auth.collectionName = "users"`, migr
 authenticated request", so the badge tier below cannot inherit it; only writes and commands are
 gated. Two enforcement points share `permissions`: **collection rules** (migration `1750000016`, the real boundary
 — rule form is `@request.auth.permissions ~ "x"`, JSON-LIKE not `?=`, exact only because capability names are
-pairwise non-substring) and **`authz.RequireCapability`** on accessd's custom routes (`internal/commandapi`'s
-grant/posture/output need `command`; `internal/modelsapi`'s `/api/models` and `internal/simulateapi`'s
+pairwise non-substring) and **`authz.RequireCapability`** on accessd's custom routes (every `internal/commandapi`
+route — grant/posture/output, area arm/disarm/arm-clear, event ack — needs `command`; `internal/modelsapi`'s
+`/api/models` and `internal/simulateapi`'s
 `/api/simulate` need only operator auth). Every operator route binds **`authz.RequireOperatorAuth()`**, never bare
 `apis.RequireAuth()`: bare RequireAuth admits *any* auth collection (`/api/simulate` is a decision oracle over the
 whole graph, so that would be worse than exposing the collections), while `apis.RequireAuth("users")` alone would
@@ -664,7 +679,7 @@ The full reference is `docs/operators.md`.
 Unified `config.Config` (`config/config.go`) for both binaries, loaded via Viper. Every key is overridable by an
 **`SA_`-prefixed env var** (`SA_NATS_URLS`, `SA_CONTROLLER_LOCATION`, ...). A missing config file is fine — defaults +
 env apply. `accessd` reads `$SA_CONFIG` (default `config/accessd.yaml`); `access-controller` uses its `-config`
-flag (default `config/controller.yaml`). Exactly one NATS auth method may be set (creds file / nkey / token /
+flag (default `config/controller.yaml`). At most one NATS auth method may be set (creds file / nkey / token /
 user-pass); `*.creds` and `config/local*.yaml` are gitignored — never commit credentials.
 
 A controller's config is just its identity and hardware selection: `controller.code` (which portals it drives,
@@ -676,7 +691,7 @@ selects the hardware profile + RS485 serial port), `controller.reader` (`nats`|`
 offline. An optional, **off-by-default** read-only diagnostics endpoint (`diagnostics.enabled`/`diagnostics.address`,
 controller-only, localhost by default) serves a self-contained local `/status` page (+ `/status.json`) of this box's
 live state for field install/troubleshooting — `internal/diag`, strictly read-only (control stays on the command
-plane); see `docs/configuration.md`.
+plane); see `docs/controller.md` §5.
 
 An optional operator **branding overlay** (`branding.dir`, accessd-only, env `SA_BRANDING_DIR`, empty by default)
 lets an install override the UI's app name, logo, and DaisyUI theme **without rebuilding**: accessd serves that host
@@ -744,7 +759,9 @@ width whether it holds 2 fields or 9, so columns line up across cards. Tailwind 
 ## Conventions
 
 - Module path `github.com/stone-age-io/access-control`, Go 1.26. Structured logging via `zap` wrapper
-  (`internal/logger`); Prometheus metrics (`internal/metrics`) on a side port (accessd `:2113`, controller `:2114`).
+  (`internal/logger`); Prometheus metrics (`internal/metrics`) on a side port when `metrics.enabled` is set (off by
+  default; `metrics.address` defaults to `:2113` for both binaries, and the example `controller.yaml` uses `:2114`
+  so both can share a host).
 - **Fail-safe everywhere**: dangling references, malformed values, not-yet-synced records, parse errors — all
   resolve to deny or "keep previous value," never to a grant or a crash.
 - Decision **reason codes** (`policy.go`) are stable strings that flow verbatim into events and the UI — treat
