@@ -1,8 +1,19 @@
-# Shell scripts must check out with LF on every platform.
-#
 # This repo is developed on Windows with core.autocrlf=true, which rewrites text
-# files to CRLF in the working copy. A CRLF `#!/usr/bin/env bash` line makes the
-# kernel look for an interpreter named "bash\r", and the release runner fails with
-# `bad interpreter` naming env, which exists, rather than the carriage return,
-# which is the problem.
+# files to CRLF in the working copy. Two things must not be rewritten.
+
+# Shell scripts. A CRLF `#!/usr/bin/env bash` line makes the kernel look for an
+# interpreter named "bash\r", and the release runner fails with `bad interpreter`
+# naming env, which exists, rather than the carriage return, which is the problem.
 *.sh text eol=lf
+
+# The console's source, and the build committed beside it. A production build is
+# a function of the source bytes, and carriage returns are bytes:
+# @vitejs/plugin-vue hashes each component's raw source into its style scope id,
+# and vite copies index.html and public/ into the output with their line endings.
+# So a CRLF checkout built a different console from CI's Linux one, and CI, which
+# fails if the committed console differs from a fresh build, rejected it. LF for
+# every text file here makes a Windows build byte-identical; text=auto leaves
+# images alone. The output is pinned too, so the bytes a Windows `go build`
+# embeds are the committed ones.
+ui/** text=auto eol=lf
+internal/webui/public/** text=auto eol=lf

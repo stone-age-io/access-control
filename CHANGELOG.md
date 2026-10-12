@@ -19,6 +19,14 @@ record for that period, and this file starts where the versioned releases do.
   fresh `git clone` failed with `invalid path` unless `core.protectNTFS` was
   turned off. The directory is `ui/src/views/aux_io/` now. Routes and the
   built console are unchanged in behaviour.
+- **A console built on Windows matches the one CI builds.** The console's
+  source (`ui/`) and its committed build now check out with LF line endings
+  everywhere. A component's style scope id is a hash of its raw source,
+  carriage returns included, and `index.html` and `ui/public/` are copied into
+  the build as they are, so a build from a CRLF checkout differed from CI's
+  and failed the committed-console check. In an existing Windows checkout,
+  delete those files and run `git checkout -- ui internal/webui/public` once
+  to pick up the change.
 
 ## [0.1.0] - 2026-10-12
 

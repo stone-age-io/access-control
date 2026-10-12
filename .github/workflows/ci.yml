@@ -6,8 +6,10 @@
 # goes with that ("rebuild and commit it whenever the frontend changes"), so a
 # frontend change committed without its build shipped the previous console, with
 # every Go test green. Rebuilding here and diffing is the guard. The build is
-# deterministic: a clean LF clone rebuilt byte-identical to what a Windows
-# checkout committed.
+# deterministic across platforms only because .gitattributes checks out ui/
+# with LF: a component's scope id hashes its raw source, and index.html and
+# public/ are copied with their line endings, so a CRLF checkout builds a
+# different console (see .gitattributes).
 #
 # One job with sequential steps, on purpose: the Go build embeds the console, so
 # the stages are ordered anyway, and parallel jobs would mean shipping the build
