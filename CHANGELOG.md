@@ -12,6 +12,19 @@ record for that period, and this file starts where the versioned releases do.
 
 ## [Unreleased]
 
+### Added
+
+- **A controller answers health requests over NATS.** A request on
+  `acc.{location}.ctrl.{code}.health` returns the box's live state: the local
+  status page's report without its recent decisions, which carry raw
+  credential values. That is identity, build, NATS and policy health, its
+  portals and aux points, fire suppression and recent door alarms. It is
+  read-only and always on, and it is the `health` endpoint of the
+  `access-controller` discovery service, so `nats micro info` lists it. A
+  field check no longer needs an SSH tunnel to the status page.
+  **Upgrading:** give each controller's credential subscribe on its health
+  subject. Without it the endpoint is refused and nothing else changes.
+
 ### Fixed
 
 - **The repository clones on Windows.** The console's aux I/O views lived in

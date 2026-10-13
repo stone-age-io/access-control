@@ -591,6 +591,8 @@ overlapping stream subjects (err 10065). Leading with `acc` keeps our subject sp
 - `acc.{location}.ctrl.{code}.heartbeat` — controller liveness. A controller is addressed under the reserved
   `ctrl` namespace (not a portal type); the heartbeat sits **outside** the `.evt` subtree (5 tokens, no `evt`) on
   purpose, so ACC_EVENTS never captures it — accessd updates the `controllers` record directly instead.
+- `acc.{location}.ctrl.{code}.health` — the controller's read-only health request/reply, beside the heartbeat and
+  likewise 5 tokens outside `.evt` (see below).
 
 **All subject construction and parsing lives in `internal/subjects`** (one `Subjects` value carrying the `acc`
 app token from `subjects.app` config, default `acc`, threaded through every constructor) — never hand-format
@@ -601,15 +603,21 @@ pattern is fixed-arity, no trailing `>`, so it can't expand to overlap the porta
 controller must share the same `subjects.app`** (a mismatch silently severs policy/commands/events).
 `docs/protocol.md` is the full wire reference (subjects, message shapes, KV key scheme, decision reason codes).
 
-**Service discovery is identity, not an API.** Both binaries register as NATS micro services
-(`natsx.RegisterService`) with **no endpoints**: `access-controller` with `code`/`location` metadata, `accessd`
-with `host`. So `$SRV.PING`/`INFO`/`STATS` (what `nats micro ls` reads) expose only name, version, that metadata
-and start time, with no way to call, read or control anything else. The `$SRV` subjects belong to the micro
+**Service discovery is identity, plus one read-only endpoint.** Both binaries register as NATS micro services
+(`natsx.RegisterService`): `access-controller` with `code`/`location` metadata, `accessd` with `host`. accessd has
+**no endpoints**. The controller has exactly one, `health` (`diag.RegisterHealth`, on `subjects.Health`): the
+`/status.json` report minus its recent decisions, because each decision carries the raw presented credential
+value and the endpoint answers anyone the account lets publish on the subject. That is the line for anything added
+here: **read-only, and nothing a badge presented**. Control stays on the `cmd.*` subjects, which are fan-out
+fire-and-forget to every controller at a location, not request/reply, and a heartbeat (push) still decides
+liveness, since a sweep needs no request to notice silence. The endpoint has no queue group (like the agent's), so
+two boxes misconfigured with one code both answer. The `$SRV` subjects belong to the micro
 protocol and the library builds them — the one exception to `internal/subjects`, on purpose. The version is the
 module version `go build` stamps from the checkout (no ldflags), or `0.0.0-dev` when not semver. A credential
 needs `$SRV.>` subscribe and a way to reply (`_INBOX.>` publish or `allow_responses`). Registration is **never
 fatal and never blocks**: a failure is a warning, a refused `$SRV.>` costs discovery only (nats.go prints it to
-stderr), its subscriptions wait in the client through a cold boot without NATS, and micro adds no timer.
+stderr), its subscriptions wait in the client through a cold boot without NATS, and micro adds no timer. The
+health subject is a separate grant, so a credential without it loses the endpoint and nothing else.
 
 Commands (`internal/controller/commands.go`) install **runtime posture overrides** that are operational state,
 never written back to PocketBase. `posture: "clear"` reverts to the effective posture (scheduled if open, else
@@ -741,7 +749,8 @@ selects the hardware profile + RS485 serial port), `controller.reader` (`nats`|`
 offline. An optional, **off-by-default** read-only diagnostics endpoint (`diagnostics.enabled`/`diagnostics.address`,
 controller-only, localhost by default) serves a self-contained local `/status` page (+ `/status.json`) of this box's
 live state for field install/troubleshooting — `internal/diag`, strictly read-only (control stays on the command
-plane); see `docs/controller.md` §5.
+plane); see `docs/controller.md` §5. The same `diag.Source` always feeds the NATS `health` endpoint, without the
+decisions; it is the page that is optional, not the report.
 
 An optional operator **branding overlay** (`branding.dir`, accessd-only, env `SA_BRANDING_DIR`, empty by default)
 lets an install override the UI's app name, logo, and DaisyUI theme **without rebuilding**: accessd serves that host

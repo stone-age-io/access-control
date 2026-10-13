@@ -271,13 +271,22 @@ func main() {
 	hb.Start(ctx)
 	defer hb.Stop()
 
-	// Service discovery: identity only (no endpoints), never fatal, and fine while
-	// NATS is still unreachable. Stopped before the deferred nc.Close.
+	// This box's live state, read by the health endpoint and the status page.
+	src := diag.NewSource(cfg, store, rt, nc.NC, startedAt)
+
+	// Service discovery, with one read-only endpoint: health, the status page's
+	// report without its decisions. Never fatal, and fine while NATS is still
+	// unreachable. Stopped before the deferred nc.Close.
 	if svc := nc.RegisterService(natsx.ServiceController, "stone-access edge controller", map[string]string{
 		"code":     cfg.Controller.Code,
 		"location": cfg.Controller.Location,
 	}); svc != nil {
 		defer func() { _ = svc.Stop() }()
+		if cfg.Controller.Code == "" || cfg.Controller.Location == "" {
+			log.Warn("no controller code or location; not answering health requests")
+		} else if err := diag.RegisterHealth(svc, subj.Health(cfg.Controller.Location, cfg.Controller.Code), src, log); err != nil {
+			log.Warn("health endpoint registration failed; continuing without it", "error", err)
+		}
 	}
 
 	// Optional read-only diagnostics page for field install/troubleshooting.
@@ -285,7 +294,6 @@ func main() {
 	// -default) address. Strictly read-only — control stays on the command plane.
 	var diagSrv *http.Server
 	if cfg.Diagnostics.Enabled {
-		src := diag.NewSource(cfg, store, rt, nc.NC, startedAt)
 		diagSrv = diag.NewServer(cfg.Diagnostics.Address, src, log)
 		go func() {
 			log.Info("diagnostics server listening", "address", cfg.Diagnostics.Address)

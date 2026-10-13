@@ -31,6 +31,7 @@
 //	{app}.{location}.{type}.{thing}.evt.alarm    forced / held-open alarm
 //	{app}.{location}.ctrl.{code}.evt.state       controller liveness TRANSITION (audited)
 //	{app}.{location}.ctrl.{code}.heartbeat       controller liveness beat (NOT audited)
+//	{app}.{location}.ctrl.{code}.health          controller health request/reply (NOT audited)
 //
 // The {app}.*.…evt subtree is the audit surface; EventsWildcards() captures it
 // via two patterns of different fixed arity (location-scoped fire at 4 tokens;
@@ -198,6 +199,14 @@ func (s Subjects) Heartbeat(location, code string) string {
 // across all locations and codes.
 func (s Subjects) HeartbeatWildcard() string {
 	return fmt.Sprintf("%s.*.%s.*.heartbeat", s.App(), CtrlType)
+}
+
+// Health is the subject a controller answers health requests on:
+// {app}.{location}.ctrl.{code}.health. It is request/reply over core NATS,
+// beside the heartbeat in the ctrl namespace and, like it, 5 tokens outside the
+// .evt subtree, so the events stream never captures a request.
+func (s Subjects) Health(location, code string) string {
+	return fmt.Sprintf("%s.%s.%s.%s.health", s.App(), location, CtrlType, code)
 }
 
 // EventsWildcards is the ACC_EVENTS stream's subject set and the audit consumer's

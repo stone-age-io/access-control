@@ -5,6 +5,9 @@
 // recent decisions — by reading existing accessors on the PolicyStore and
 // Runtime. It is strictly read-only: it never mutates state and exposes no control
 // path (all control stays on the NATS command plane).
+//
+// The same report, without its recent decisions, answers the controller's NATS
+// health endpoint (health.go), which is always on.
 package diag
 
 import (
@@ -31,8 +34,8 @@ type Report struct {
 	Fire        []FireStatus                `json:"fire"`
 	AuxOutputs  []controller.AuxLive        `json:"auxOutputs"`
 	AuxInputs   []controller.AuxLive        `json:"auxInputs"`
-	Decisions   []controller.DecisionRecord `json:"decisions"` // most-recent first
-	Alarms      []controller.AlarmRecord    `json:"alarms"`    // most-recent first
+	Decisions   []controller.DecisionRecord `json:"decisions,omitempty"` // most-recent first; never in Health
+	Alarms      []controller.AlarmRecord    `json:"alarms"`              // most-recent first
 }
 
 // Identity is the controller's configured identity and hardware selection.

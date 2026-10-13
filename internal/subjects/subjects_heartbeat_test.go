@@ -51,3 +51,19 @@ func TestParseHeartbeatRejects(t *testing.T) {
 		}
 	}
 }
+
+// The health subject sits beside the heartbeat: ctrl-scoped, 5 tokens, and not
+// an event, so a health request can never land in the audit stream.
+func TestHealthSubject(t *testing.T) {
+	s := Default()
+	subj := s.Health("hq", "ctrl-hq-1")
+	if subj != "acc.hq.ctrl.ctrl-hq-1.health" {
+		t.Fatalf("Health = %q", subj)
+	}
+	if _, _, _, _, ok := s.ParseEvent(subj); ok {
+		t.Errorf("ParseEvent(%q) ok=true, want false (a health request must not parse as an event)", subj)
+	}
+	if _, _, ok := s.ParseHeartbeat(subj); ok {
+		t.Errorf("ParseHeartbeat(%q) ok=true, want false", subj)
+	}
+}
