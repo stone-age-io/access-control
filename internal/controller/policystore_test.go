@@ -15,7 +15,16 @@ import (
 // the KV watcher drives). Mirrors the PocketBase fixture: location hq
 // (America/New_York) → portal lobby-main (door, secure, pulse 5) under
 // business-hours (M–F 08:00–17:00); role staff → cardholder alice → CARD-001.
+// It stands for a completed live sync, so the store is Ready (lock commands are
+// refused before one); seededUnsynced is the same graph before the sentinel.
 func seeded(t *testing.T) *PolicyStore {
+	t.Helper()
+	s := seededUnsynced(t)
+	s.readyOnce.Do(func() { close(s.ready) })
+	return s
+}
+
+func seededUnsynced(t *testing.T) *PolicyStore {
 	t.Helper()
 	s := NewPolicyStore(nil, logger.NewNopLogger(), nil)
 	records := []struct{ key, val string }{

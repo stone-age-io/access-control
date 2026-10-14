@@ -607,13 +607,31 @@ func (r *Runtime) drives(portal string) bool {
 	return ok
 }
 
+// acceptCommand is the gate every command that drives a portal's lock passes
+// (cmd.posture, its clear, and cmd.grant). Beyond drives, it refuses while the
+// store holds no policy: a box that armed its portals from the bindings snapshot
+// has their hardware but no posture and no lockdown, so an unlocked override or a
+// door-pop there would act on a door whose policy this box has never seen. A full
+// cache load counts as policy. Commands are fire-and-forget, so the refusal is a
+// log line.
+func (r *Runtime) acceptCommand(portal, command string) bool {
+	if !r.drives(portal) {
+		r.log.Debug("ignoring command for portal not driven here", "command", command, "portal", portal)
+		return false
+	}
+	if state, _ := r.store.SyncStatus(); state == "loading" {
+		r.log.Warn("refusing command: policy not synced", "command", command, "portal", portal)
+		return false
+	}
+	return true
+}
+
 // SetPosture installs a runtime posture override for a portal and emits a state
 // event. Used by the command handler. The override is operational state and is
 // never written back to PocketBase. Ignored for portals this controller does
 // not drive (another controller at the location owns them).
 func (r *Runtime) SetPosture(portal, posture, actor, reason string, at time.Time) {
-	if !r.drives(portal) {
-		r.log.Debug("ignoring posture command for portal not driven here", "portal", portal)
+	if !r.acceptCommand(portal, "posture") {
 		return
 	}
 	r.mu.Lock()
@@ -627,8 +645,7 @@ func (r *Runtime) SetPosture(portal, posture, actor, reason string, at time.Time
 // and emits a state event reflecting the now-effective posture. Ignored for
 // portals this controller does not drive.
 func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
-	if !r.drives(portal) {
-		r.log.Debug("ignoring posture-clear command for portal not driven here", "portal", portal)
+	if !r.acceptCommand(portal, "posture-clear") {
 		return
 	}
 	r.mu.Lock()
@@ -656,8 +673,7 @@ func (r *Runtime) ClearPosture(portal, actor, reason string, at time.Time) {
 // gate is the same for every source; see DecideCommandGrant for why operator
 // door-pops are not exempt.
 func (r *Runtime) Grant(portal string, seconds int, actor, reason, source string) {
-	if !r.drives(portal) {
-		r.log.Debug("ignoring grant command for portal not driven here", "portal", portal)
+	if !r.acceptCommand(portal, "grant") {
 		return
 	}
 	if source == "" {
@@ -677,7 +693,7 @@ func (r *Runtime) Grant(portal string, seconds int, actor, reason, source string
 	if seconds <= 0 {
 		seconds = d.Pulse
 	}
-	lock, _ := r.lockFor(portal) // drives() guaranteed presence above
+	lock, _ := r.lockFor(portal) // acceptCommand guaranteed presence above
 	if err := lock.Pulse(seconds); err != nil {
 		r.log.Error("command grant pulse failed", "portal", portal, "error", err)
 		return

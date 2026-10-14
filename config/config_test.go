@@ -136,6 +136,9 @@ func TestCacheDefaultsAndEnvOnlyKeys(t *testing.T) {
 	if !c.Enabled || c.Path != DefaultPolicyCachePath || c.MaxAge != DefaultPolicyCacheMaxAge {
 		t.Errorf("cache = %+v, want enabled with default path/maxAge", c)
 	}
+	if cfg.Policy.Bindings.Path != DefaultPolicyBindingsPath {
+		t.Errorf("bindings path = %q, want %q", cfg.Policy.Bindings.Path, DefaultPolicyBindingsPath)
+	}
 	if cfg.Accessd.WebhookURL != "https://hooks.example/x" || cfg.Accessd.EventRetentionDays != 30 {
 		t.Errorf("accessd = %+v, want env overrides applied", cfg.Accessd)
 	}

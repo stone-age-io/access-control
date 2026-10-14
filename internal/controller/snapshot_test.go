@@ -88,7 +88,7 @@ func TestDecisionRingWraps(t *testing.T) {
 // Ready reflects the boot default-deny window (false until the sync sentinel),
 // and Counts reports what loaded.
 func TestStoreReadyAndCounts(t *testing.T) {
-	s := seeded(t)
+	s := seededUnsynced(t)
 	if s.Ready() {
 		t.Errorf("Ready() = true before sync, want false (boot default-deny)")
 	}

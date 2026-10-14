@@ -335,3 +335,42 @@ func TestPollReadFailureIsHarmless(t *testing.T) {
 		t.Errorf("read failure emitted events: %+v", e)
 	}
 }
+
+// Arming a maglock portal drives its relay to the maglock's idle level, which is
+// ENERGIZED (locked), with the latch written before the pin turns output so it
+// never glitches through the unpowered (unlocked) level. This is what makes an
+// arm from the bindings snapshot lock a maglock door at boot. Holding it open
+// de-energizes it.
+func TestArmMaglockEnergizesIdle(t *testing.T) {
+	p, _ := hardware.ProfileFor("kincony-pi5r8")
+	f := newFakeBus()
+	h := newHardware(p, f, logger.NewNopLogger())
+	defer h.Close()
+
+	lock, err := h.Arm("d1", drivers.PortalIO{LockRelay: 1, Maglock: true}) // relay1 = pin8 (port B bit0), active-high
+	if err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	if order := f.writeOrder(); len(order) != 2 || order[0] != regOLATB || order[1] != regIODIRB {
+		t.Fatalf("write order = %v, want [OLATB, IODIRB]", order)
+	}
+	if f.get(0x20, regIODIRB)&0x01 != 0 {
+		t.Errorf("relay pin not configured as output")
+	}
+	if f.get(0x20, regOLATB)&0x01 == 0 {
+		t.Errorf("maglock relay de-energized after arm (want energized: locked)")
+	}
+
+	if err := lock.SetHeld(true); err != nil {
+		t.Fatalf("SetHeld: %v", err)
+	}
+	if f.get(0x20, regOLATB)&0x01 != 0 {
+		t.Errorf("maglock relay still energized while held open")
+	}
+	if err := lock.SetHeld(false); err != nil {
+		t.Fatalf("SetHeld: %v", err)
+	}
+	if f.get(0x20, regOLATB)&0x01 == 0 {
+		t.Errorf("maglock relay not re-energized when the hold was released")
+	}
+}

@@ -89,6 +89,15 @@ policy:
   #   path: "./data/policy-cache.json"
   #   maxAge: 72h
 
+  # Bindings snapshot (ALWAYS ON). After every live sync the box also writes its
+  # own portals' hardware bindings (type, relay, inputs, lock type, reader
+  # address) — no posture, no credentials. Booting without a usable cache, it arms
+  # those portals before policy arrives, so a maglock is locked instead of
+  # unpowered, and still denies every tap and refuses every lock command until
+  # policy syncs. Only the path is configurable.
+  # bindings:
+  #   path: "./data/bindings.json"
+
 # ----------------------------------------------------------------------------
 # Subjects — the app-discriminator segment for all NATS subjects. MUST match
 # accessd's subjects.app (and every other controller's), or this controller

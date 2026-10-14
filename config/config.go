@@ -65,6 +65,10 @@ const (
 	// "unlimited", so an accidental omission can't silently disable the staleness
 	// check; an install that wants a wider window sets policy.cache.maxAge explicitly.
 	DefaultPolicyCacheMaxAge = 72 * time.Hour
+
+	// DefaultPolicyBindingsPath is where the controller writes its bindings
+	// snapshot (always on), beside the offline cache's default.
+	DefaultPolicyBindingsPath = "./data/bindings.json"
 )
 
 // Config is the unified configuration. Each binary reads the sections it needs:
@@ -132,10 +136,23 @@ type DiagnosticsConfig struct {
 }
 
 // PolicyConfig names the KV bucket that mirrors the policy graph, and configures
-// the controller's optional local last-known-config cache.
+// the controller's two local snapshots: the always-on bindings snapshot and the
+// optional last-known-config cache.
 type PolicyConfig struct {
-	Bucket string      `json:"bucket" yaml:"bucket" mapstructure:"bucket"`
-	Cache  CacheConfig `json:"cache" yaml:"cache" mapstructure:"cache"`
+	Bucket   string         `json:"bucket" yaml:"bucket" mapstructure:"bucket"`
+	Cache    CacheConfig    `json:"cache" yaml:"cache" mapstructure:"cache"`
+	Bindings BindingsConfig `json:"bindings" yaml:"bindings" mapstructure:"bindings"`
+}
+
+// BindingsConfig configures the controller-side bindings snapshot: this box's
+// portal hardware bindings (type, relay, inputs, lock type, reader address) and
+// nothing else, written after every live sync. On a boot without a usable offline
+// cache the controller arms its portals from it before policy arrives, so a
+// maglock is locked rather than unpowered; it carries no posture and no
+// credential, so every tap and lock command is still refused until policy syncs.
+// Always on and controller-only; it has no maxAge because it grants nothing.
+type BindingsConfig struct {
+	Path string `json:"path" yaml:"path" mapstructure:"path"`
 }
 
 // CacheConfig configures the controller-side offline config cache: a local,
@@ -298,7 +315,7 @@ func Load(path string) (*Config, error) {
 		"policy.bucket", "events.stream", "status.bucket", "subjects.app",
 		"accessd.dataDir", "accessd.controllerOfflineAfter",
 		"accessd.auditRetentionDays", "accessd.eventRetentionDays", "accessd.webhookURL",
-		"policy.cache.enabled", "policy.cache.path", "policy.cache.maxAge",
+		"policy.cache.enabled", "policy.cache.path", "policy.cache.maxAge", "policy.bindings.path",
 		"branding.dir",
 		"controller.code", "controller.location", "controller.heartbeatInterval",
 		"controller.driver", "controller.model", "controller.reader",
@@ -375,6 +392,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Policy.Cache.MaxAge <= 0 {
 		cfg.Policy.Cache.MaxAge = DefaultPolicyCacheMaxAge
+	}
+	if cfg.Policy.Bindings.Path == "" {
+		cfg.Policy.Bindings.Path = DefaultPolicyBindingsPath
 	}
 	if cfg.Events.Stream == "" {
 		cfg.Events.Stream = DefaultEventsStream

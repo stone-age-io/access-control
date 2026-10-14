@@ -93,7 +93,7 @@ type PolicyStore struct {
 
 	onChange func() // fired (off the lock) after each applied change and each sync
 
-	cache         *PolicyCache // optional offline config cache (nil = disabled)
+	cache         *PolicyCache // local snapshots written after a live sync (nil = none)
 	fromCache     bool         // booted from the on-disk cache, no live sync yet (guarded by mu)
 	cacheSyncedAt time.Time    // freshness time of the loaded cache, for diagnostics (guarded by mu)
 
@@ -431,8 +431,8 @@ func (s *PolicyStore) AuxOutput(code string) (policykv.AuxOutput, bool) {
 // before Watch (the callback is read from the watcher goroutine).
 func (s *PolicyStore) SetOnChange(fn func()) { s.onChange = fn }
 
-// SetCache attaches an offline config cache (nil disables it, the default). Must
-// be called before LoadCache and Watch.
+// SetCache attaches the local snapshot writer (nil = none, the default). Must be
+// called before LoadCache and Watch.
 func (s *PolicyStore) SetCache(c *PolicyCache) { s.cache = c }
 
 // LoadCache seeds the policy graph from the on-disk snapshot written by a previous
@@ -446,7 +446,7 @@ func (s *PolicyStore) SetCache(c *PolicyCache) { s.cache = c }
 // single-threaded, before the watcher goroutine runs. Returns whether it loaded,
 // plus the cache's freshness time and age for logging.
 func (s *PolicyStore) LoadCache(maxAge time.Duration) (loaded bool, syncedAt time.Time, age time.Duration) {
-	if s.cache == nil {
+	if s.cache == nil || s.cache.path == "" {
 		return false, time.Time{}, 0
 	}
 	snap, ok, err := s.cache.load()
@@ -479,6 +479,64 @@ func (s *PolicyStore) LoadCache(maxAge time.Duration) (loaded bool, syncedAt tim
 	s.log.Info("loaded policy from offline cache; operating on last-known config until sync",
 		"entries", n, "age", age.Round(time.Second), "syncedAt", snap.SyncedAt)
 	return true, snap.SyncedAt, age
+}
+
+// LoadLocal seeds the store from disk at boot, before Watch: the full offline
+// cache when one is enabled and loads, else the bindings snapshot, never both (the
+// bindings records would overwrite the cached portals with posture ""). It reports
+// which one loaded: "cache", "bindings", or "" for neither (default-deny, nothing
+// armed until policy syncs).
+func (s *PolicyStore) LoadLocal(maxAge time.Duration) string {
+	if loaded, _, _ := s.LoadCache(maxAge); loaded {
+		return "cache"
+	}
+	if s.cache != nil && s.cache.bindingsPath != "" && s.loadBindings(s.cache.bindingsPath) > 0 {
+		return "bindings"
+	}
+	return ""
+}
+
+// loadBindings seeds the store from the bindings snapshot (see portalBinding) when
+// there is no full cache to boot from, so the portal manager arms this box's
+// portals before policy arrives: hardware at its idle level, which is a locked
+// maglock and an unpowered strike. Each entry is reduced again on load, so a
+// hand-edited file cannot slip a posture in, and only portal keys are read. It
+// does NOT count as policy: fromCache stays false, every bound portal resolves to
+// posture "" (each tap denies deny_point_disabled), and the runtime refuses
+// lock commands until a live sync. A missing or corrupt file loads nothing, which
+// is the old boot. Returns the number of portals loaded.
+//
+// Must be called before Watch, like LoadCache.
+func (s *PolicyStore) loadBindings(path string) int {
+	snap, ok, err := readSnapshot(path)
+	if err != nil {
+		s.log.Error("bindings snapshot unreadable; arming nothing until policy syncs", "path", path, "error", err)
+		return 0
+	}
+	if !ok {
+		s.log.Info("no bindings snapshot on disk; arming nothing until policy syncs", "path", path)
+		return 0
+	}
+	n := 0
+	for key, val := range snap.Entries {
+		if !strings.HasPrefix(key, policykv.PrefixPortal) {
+			continue
+		}
+		b, ok := reducePortal(val)
+		if !ok {
+			continue
+		}
+		raw, err := json.Marshal(b)
+		if err != nil {
+			continue
+		}
+		if s.apply(key, raw) {
+			n++
+		}
+	}
+	s.log.Info("loaded bindings snapshot; arming portals locked, denying everything until policy syncs",
+		"portals", n, "syncedAt", snap.SyncedAt)
+	return n
 }
 
 // SyncStatus reports the store's policy-source state for the diagnostics page:

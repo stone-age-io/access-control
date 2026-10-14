@@ -27,6 +27,29 @@ record for that period, and this file starts where the versioned releases do.
 
 ### Fixed
 
+- **A maglock door is locked from boot, not from the first policy sync.** A
+  maglock is locked only while its relay is energized, and a controller armed
+  its portals only once policy arrived, so every maglock door was unlocked
+  while a box booted, and for as long as NATS stayed down after a reboot
+  unless the opt-in offline cache was on. After every live sync the controller
+  now also writes a bindings snapshot (`policy.bindings.path`, default
+  `./data/bindings.json`, always on): only its own portals, only the fields
+  that arm hardware, no posture and no credentials. A box that boots without a
+  usable cache arms those portals from it, which drives a maglock locked and a
+  strike unpowered, while every tap still denies (`deny_point_disabled`).
+  Until policy syncs or a full cache loads, `cmd.posture` and `cmd.grant` are
+  refused (`refusing command: policy not synced`), so an unlocked override
+  cannot open a door whose policy the box has never seen. The same boot drives
+  a strike that a killed process left held open back to idle. When policy
+  lands, the portals are not re-armed. The docs said a crash re-locked a
+  strike; only a graceful stop writes the idle level, and the new
+  [Physical state](docs/hardware.md#physical-state) table says which cases
+  still need checking on real hardware.
+  **Upgrading:** nothing to configure. The controller must be able to write
+  `./data/` under its working directory (or wherever `policy.bindings.path`
+  points); a failed write is logged and the box boots as it did before. The
+  first snapshot is written at the first sync after the upgrade, so the boot
+  after that is the first one that benefits.
 - **The repository clones on Windows.** The console's aux I/O views lived in
   `ui/src/views/aux/`, and `aux` is a reserved device name on Windows, so a
   fresh `git clone` failed with `invalid path` unless `core.protectNTFS` was

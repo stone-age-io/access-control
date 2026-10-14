@@ -118,22 +118,33 @@ func main() {
 	store := controller.NewPolicyStore(nc.KVBinder(cfg.Policy.Bucket), log, m)
 	resync = store.Resync
 
-	// Optional offline config cache: persist the last-known policy graph locally so a
-	// reboot with NATS unreachable (leaf node down, or no network) still decides on
-	// last-known config instead of booting default-deny. Opt-in and fail-secure — a
-	// missing/stale/corrupt snapshot just yields today's default-deny boot. Wired
-	// before the watcher and reconcilers so cached policy is in the maps when portals
-	// first arm, and a live sync overwrites it the moment one lands.
+	// Local snapshots, both written only after a live sync and both loaded before
+	// the watcher and reconcilers, so whatever they hold is in the maps when portals
+	// first arm and a live sync overwrites it the moment one lands.
+	//
+	// The offline config cache (opt-in) is the whole policy graph, so a reboot with
+	// NATS unreachable (leaf node down, or no network) still decides on last-known
+	// config. Fail-secure: a missing/stale/corrupt one loads nothing.
+	//
+	// The bindings snapshot (always on) is this box's portal hardware bindings and
+	// nothing else. Without a usable cache, the box arms its portals from it, which
+	// drives every relay to idle: a maglock locked, a strike unpowered. With no
+	// posture loaded, every tap denies, and the runtime refuses lock commands until
+	// policy syncs. Without it a maglock door stayed unlocked until policy arrived.
+	cachePath := ""
 	if cfg.Policy.Cache.Enabled {
-		cache := controller.NewPolicyCache(cfg.Policy.Cache.Path, log)
-		cache.SetConnected(nc.NC.IsConnected)
-		cache.Start(ctx)
-		defer cache.Stop()
-		store.SetCache(cache)
-		if loaded, syncedAt, age := store.LoadCache(cfg.Policy.Cache.MaxAge); loaded {
-			log.Warn("controller operating on CACHED config until policy syncs (NATS may be unreachable)",
-				"syncedAt", syncedAt, "age", age.Round(time.Second), "maxAge", cfg.Policy.Cache.MaxAge)
-		}
+		cachePath = cfg.Policy.Cache.Path
+	}
+	cache := controller.NewPolicyCache(cachePath, log)
+	cache.SetBindings(cfg.Policy.Bindings.Path, cfg.Controller.Code)
+	cache.SetConnected(nc.NC.IsConnected)
+	cache.Start(ctx)
+	defer cache.Stop()
+	store.SetCache(cache)
+	bootFrom := store.LoadLocal(cfg.Policy.Cache.MaxAge)
+	if bootFrom == "cache" {
+		log.Warn("controller operating on CACHED config until policy syncs (NATS may be unreachable)",
+			"maxAge", cfg.Policy.Cache.MaxAge)
 	}
 
 	if cfg.Controller.Code == "" {
@@ -303,7 +314,14 @@ func main() {
 		}()
 	}
 
-	log.Info("controller started; default-deny until policy syncs",
+	startedMsg := "controller started; default-deny until policy syncs"
+	switch bootFrom {
+	case "cache":
+		startedMsg = "controller started on cached config until policy syncs"
+	case "bindings":
+		startedMsg = "controller started; portals armed from the bindings snapshot, denying every tap and refusing lock commands until policy syncs"
+	}
+	log.Info(startedMsg,
 		"policyBucket", cfg.Policy.Bucket,
 		"subjectsApp", cfg.Subjects.App,
 		"location", cfg.Controller.Location,
