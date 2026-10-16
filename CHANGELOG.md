@@ -12,6 +12,8 @@ record for that period, and this file starts where the versioned releases do.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
 ### Added
 
 - **A controller answers health requests over NATS.** A request on
@@ -218,5 +220,6 @@ Also found in that audit:
 - **A database created before 2026-07-26**, when `cardholders` became an auth
   collection, cannot migrate onto this schema. Start from a fresh `pb_data`.
 
-[Unreleased]: https://github.com/stone-age-io/access-control/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/stone-age-io/access-control/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/stone-age-io/access-control/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/stone-age-io/access-control/releases/tag/v0.1.0
