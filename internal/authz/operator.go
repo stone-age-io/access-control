@@ -3,7 +3,7 @@ package authz
 import (
 	"fmt"
 
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 )
 
 // AllCapabilities is every value users.permissions accepts.

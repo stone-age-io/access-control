@@ -1,8 +1,8 @@
 package pbmigrations
 
 import (
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/migrations"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/migrations"
 )
 
 // Widens events.source to the two values the code already emits: "command" (an

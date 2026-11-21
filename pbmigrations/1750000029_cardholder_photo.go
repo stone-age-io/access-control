@@ -1,8 +1,8 @@
 package pbmigrations
 
 import (
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/migrations"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/migrations"
 )
 
 // Adds a photo to cardholders: the identification half of a badge, and useful on

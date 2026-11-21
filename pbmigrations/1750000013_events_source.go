@@ -1,8 +1,8 @@
 package pbmigrations
 
 import (
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/migrations"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/migrations"
 )
 
 // Adds source to events: which reader transport produced a tap — "nats" (a tap

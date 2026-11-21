@@ -23,13 +23,13 @@ import (
 	"strings"
 	"time"
 
+	"ganigeorgiev.com/pocketbase/dbx"
+	"ganigeorgiev.com/pocketbase/pocketbase"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/plugins/migratecmd"
+	"ganigeorgiev.com/pocketbase/pocketbase/tools/mailer"
+	"ganigeorgiev.com/pocketbase/pocketbase/tools/types"
 	"github.com/nats-io/nats.go/micro"
-	"github.com/pocketbase/dbx"
-	"github.com/pocketbase/pocketbase"
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/plugins/migratecmd"
-	"github.com/pocketbase/pocketbase/tools/mailer"
-	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/armrelease"
@@ -64,7 +64,7 @@ func main() {
 	// loads, and loading fails on a box that is not configured yet, which is when
 	// someone asks which build it has. Its own version string also reads
 	// "(untracked)" when PocketBase is a library, so the dependency's is shown.
-	versionLine := "accessd version " + version.Main() + " (PocketBase " + version.Dependency("github.com/pocketbase/pocketbase") + ")"
+	versionLine := "accessd version " + version.Main() + " (PocketBase " + version.Dependency("ganigeorgiev.com/pocketbase/pocketbase") + ")"
 	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
 		fmt.Println(versionLine)
 		return

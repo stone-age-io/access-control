@@ -1,8 +1,8 @@
 package pbmigrations
 
 import (
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/migrations"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/migrations"
 )
 
 // Adds events.user_name: the cardholder's display name at the moment the event

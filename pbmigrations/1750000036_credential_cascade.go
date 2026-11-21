@@ -3,8 +3,8 @@ package pbmigrations
 import (
 	"errors"
 
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/migrations"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/migrations"
 )
 
 // Makes `credentials.user` cascade, so deleting a person deletes their cards.

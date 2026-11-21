@@ -3,7 +3,7 @@ package authz
 import (
 	"testing"
 
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 )
 
 // recordWith builds an in-memory users-like record carrying the given

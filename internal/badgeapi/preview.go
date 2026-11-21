@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 	"github.com/stone-age-io/access-control/internal/authz"
 )
 

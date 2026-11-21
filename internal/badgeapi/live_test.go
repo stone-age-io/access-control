@@ -3,7 +3,7 @@ package badgeapi
 import (
 	"testing"
 
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 )
 
 // floorplanXY is what decides whether something appears on a badge's plan, and its

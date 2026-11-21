@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tests"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/tests"
 	"github.com/stone-age-io/access-control/internal/policykv"
 
 	// Side-effect import registers the schema + fixture migrations.

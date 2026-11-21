@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tests"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/tests"
 )
 
 // seedAlarmEvent creates an unacknowledged alarm row and returns its id.

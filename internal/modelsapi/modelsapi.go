@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 	"github.com/stone-age-io/access-control/internal/authz"
 	"github.com/stone-age-io/access-control/internal/drivers/hardware"
 )

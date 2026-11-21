@@ -7,8 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/pocketbase/pocketbase/apis"
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/apis"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 	"github.com/stone-age-io/access-control/internal/policy"
 	"github.com/stone-age-io/access-control/internal/policysnapshot"
 )

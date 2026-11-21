@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 )
 
 // areaRecord builds an in-memory areas record with the given field values (no DB).

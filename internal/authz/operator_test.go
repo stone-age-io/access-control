@@ -3,7 +3,7 @@ package authz_test
 import (
 	"testing"
 
-	"github.com/pocketbase/pocketbase/tests"
+	"ganigeorgiev.com/pocketbase/pocketbase/tests"
 	"github.com/stone-age-io/access-control/internal/authz"
 
 	// Side-effect import registers the migrations that define users.permissions.

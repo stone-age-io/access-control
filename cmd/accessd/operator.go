@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/pocketbase/pocketbase"
+	"ganigeorgiev.com/pocketbase/pocketbase"
 	"github.com/spf13/cobra"
 	"github.com/stone-age-io/access-control/internal/authz"
 )

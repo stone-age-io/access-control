@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/pocketbase/pocketbase/apis"
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/apis"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 )
 
 // GET /api/badge/live — the holder's own doors and controls, placed on the floor plan of

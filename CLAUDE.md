@@ -817,7 +817,7 @@ width whether it holds 2 fields or 9, so columns line up across cards. Tailwind 
 
 ## Conventions
 
-- Module path `github.com/stone-age-io/access-control`, Go 1.26. Structured logging via `zap` wrapper
+- Module path `github.com/stone-age-io/access-control`, Go 1.27, on PocketBase from `ganigeorgiev.com/pocketbase` (never `github.com/pocketbase`, the archived module). Structured logging via `zap` wrapper
   (`internal/logger`); Prometheus metrics (`internal/metrics`) on a side port when `metrics.enabled` is set (off by
   default; `metrics.address` defaults to `:2113` for both binaries, and the example `controller.yaml` uses `:2114`
   so both can share a host).

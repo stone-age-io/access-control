@@ -24,8 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/pocketbase/pocketbase/core"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/policykv"
