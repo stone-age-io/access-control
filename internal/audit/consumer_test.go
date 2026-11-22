@@ -28,7 +28,7 @@ func TestRecordFromTap(t *testing.T) {
 	c, app := newConsumer(t)
 	data := []byte(`{"cred":"CARD-001","user":"u_alice","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z","source":"osdp"}`)
 
-	rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+	rec, ok, err := c.recordFrom("acc.hq.evt.door.lobby-main.tap", data)
 	if err != nil || !ok {
 		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
 	}
@@ -76,7 +76,7 @@ func TestStreamSeqDedupe(t *testing.T) {
 	c, app := newConsumer(t)
 	data := []byte(`{"cred":"CARD-002","allow":false,"reason":"deny_no_access"}`)
 
-	rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+	rec, ok, err := c.recordFrom("acc.hq.evt.door.lobby-main.tap", data)
 	if err != nil || !ok {
 		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
 	}
@@ -93,7 +93,7 @@ func TestStreamSeqDedupe(t *testing.T) {
 	}
 
 	// Unique-index backstop: a second row with the same sequence must not save.
-	dup, _, _ := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+	dup, _, _ := c.recordFrom("acc.hq.evt.door.lobby-main.tap", data)
 	dup.Set("stream_seq", 42)
 	if err := app.Save(dup); err == nil {
 		t.Errorf("saving duplicate stream_seq succeeded, want unique-index error")
@@ -101,7 +101,7 @@ func TestStreamSeqDedupe(t *testing.T) {
 
 	// Legacy rows: any number of stream_seq-less rows coexist.
 	for i := 0; i < 2; i++ {
-		legacy, _, _ := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+		legacy, _, _ := c.recordFrom("acc.hq.evt.door.lobby-main.tap", data)
 		if err := app.Save(legacy); err != nil {
 			t.Fatalf("save legacy row %d: %v", i, err)
 		}
@@ -124,7 +124,7 @@ func TestRecordFromCommandAndBadgeSources(t *testing.T) {
 		c, app := newConsumer(t)
 		data := []byte(`{"cred":"CARD-009","allow":true,"reason":"allow_command_grant","source":"` + source + `"}`)
 
-		rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+		rec, ok, err := c.recordFrom("acc.hq.evt.door.lobby-main.tap", data)
 		if err != nil || !ok {
 			t.Fatalf("%s: recordFrom: ok=%v err=%v", source, ok, err)
 		}
@@ -146,7 +146,7 @@ func TestRecordFromForeignSourceStillProjects(t *testing.T) {
 	c, app := newConsumer(t)
 	data := []byte(`{"arm":"armed","previous":"disarmed","source":"override"}`)
 
-	rec, ok, err := c.recordFrom("acc.hq.area.warehouse.evt.state", data)
+	rec, ok, err := c.recordFrom("acc.hq.evt.area.warehouse.state", data)
 	if err != nil || !ok {
 		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
 	}
@@ -192,7 +192,7 @@ func TestRecordFromTapResolvesUserName(t *testing.T) {
 	}
 
 	data := []byte(`{"cred":"CARD-001","user":"` + holder.Id + `","allow":false,"reason":"deny_no_access","ts":"2026-01-05T14:00:00Z"}`)
-	rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+	rec, ok, err := c.recordFrom("acc.hq.evt.door.lobby-main.tap", data)
 	if err != nil || !ok {
 		t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
 	}
@@ -221,7 +221,7 @@ func TestRecordFromTapUnresolvableUserStillProjects(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data := []byte(`{"cred":"CARD-999","user":"` + tc.user + `","allow":false,"reason":"deny_unknown_credential","ts":"2026-01-05T14:00:00Z"}`)
-			rec, ok, err := c.recordFrom("acc.hq.door.lobby-main.evt.tap", data)
+			rec, ok, err := c.recordFrom("acc.hq.evt.door.lobby-main.tap", data)
 			if err != nil || !ok {
 				t.Fatalf("recordFrom: ok=%v err=%v", ok, err)
 			}

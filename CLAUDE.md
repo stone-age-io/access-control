@@ -28,7 +28,7 @@ Two Go binaries plus a Vue 3 management UI:
   raises an `intrusion` alarm), emits access events to JetStream, and publishes a liveness heartbeat.
 
 v1 status: the reader is selectable via `controller.reader` (orthogonal to the lock/door driver) — `nats` (default;
-simulated taps published to `acc.{location}.{type}.{thing}.tap`, for dev), `osdp` (a real OSDP reader on the
+simulated taps published to `acc.{location}.tap.{type}.{thing}`, for dev), `osdp` (a real OSDP reader on the
 model's RS485 bus), or `both` (NATS for every portal **plus** OSDP for the portals that have a physical reader).
 Under `both` a portal opts into OSDP per-portal via its `reader_address` (`>= 0` = OSDP reader at that PD address,
 `-1` = NATS-only); the `internal/controller` `multiReader` composes the two readers behind one `Reader` interface,
@@ -247,7 +247,7 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   leaves the box. That shadow is also where an arm/disarm becomes an **event**:
   all four paths that change arm-state (the operator route, entry-disarm, the one-shot release, and a scheduled
   auto-arm evaluated at the edge) converge on it, so accessd's status projector emits
-  `acc.{loc}.area.{code}.evt.state` by comparing old-vs-new on the record it has *already loaded* — one
+  `acc.{loc}.evt.area.{code}.state` by comparing old-vs-new on the record it has *already loaded* — one
   comparison covering four features, with no new query, no new timer, and no migration. Scheduled auto-arm
   otherwise leaves no trace anywhere in the system. The tension is real and was taken deliberately: this makes
   **accessd an event emitter**, where the architecture otherwise has the edge emit and accessd project. The
@@ -321,7 +321,7 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   sweep that marks a silent box offline. Heartbeats are deliberately kept out of the audit stream — but a
   **liveness transition is not a heartbeat**: an online↔offline flip is one event per outage, and it is the most
   operationally urgent thing the system notices (that site is now on cached policy, or default-deny), so each
-  transition emits `acc.{loc}.ctrl.{code}.evt.state`. Six tokens, so the existing `acc.*.*.*.evt.>` stream
+  transition emits `acc.{loc}.evt.ctrl.{code}.state`. Six tokens, so the existing `acc.*.evt.>` stream
   subject captures it with **no stream change**; the heartbeat stays outside `.evt` at five. Zero new timers —
   the sweep loop already ticks and `sweep()` already *is* the transition branch (it queries only `status =
   'online'`); the online direction needed one comparison, since `markOnline` sets status unconditionally.
@@ -358,7 +358,7 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   the controller's `Runtime.Grant` (see "A commanded grant passes the posture gate too" above).
   A per-door `portals.allow_remote_unlock` (default false, not mirrored) gates it, because "may walk through"
   and "may open from anywhere with no presence proof" are different permissions. **A badge action never publishes
-  `.tap`** — `Tap.Source` exists so a physical read stays distinguishable. Every attempt writes an `audit_logs` row,
+  `tap` channel** — `Tap.Source` exists so a physical read stays distinguishable. Every attempt writes an `audit_logs` row,
   including denials: a deny never reaches the controller, so without it a holder could probe doors leaving no trace.
   The **non-door actions** are the same shape (`areas.go`): `POST /api/badge/areas/{id}/arm` and `/disarm` authorize
   with `policy.DecideArea` and then write `areas.arm_override` — a *durable record write*, exactly as
@@ -585,21 +585,21 @@ a shared NATS account, a stream subject that *led with a wildcard* (e.g. `*.*.*.
 stream rooted at a literal first token (`things.>`, `cameras.>`, `kiosk.*.event.>`, …), and JetStream rejects
 overlapping stream subjects (err 10065). Leading with `acc` keeps our subject space disjoint from theirs.
 
-- `acc.{location}.{type}.{thing}.tap` — credential presentation (the `nats` reader subscribes here; the `osdp` reader reads RS485 instead; under `both`, NATS for every portal and RS485 for the reader portals)
-- `acc.{location}.{type}.{thing}.evt.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS. An **area intrusion alarm** reuses this as `acc.{location}.area.{areacode}.evt.alarm` (type token `area`, body `{type:"intrusion",point,ts}`) — captured by the existing 6-token wildcard, no new stream subject.
-- `acc.{location}.{type}.{thing}.cmd.posture` / `.cmd.grant` / `.cmd.output` — control-plane commands (core NATS, fire-and-forget). **There is no `cmd.arm`**: arm/disarm is a *durable record write* (`areas.arm_override` → mirror → KV → controllers converge), so a reboot can't silently disarm.
-- `acc.{location}.ctrl.{code}.heartbeat` — controller liveness. A controller is addressed under the reserved
-  `ctrl` namespace (not a portal type); the heartbeat sits **outside** the `.evt` subtree (5 tokens, no `evt`) on
+- `acc.{location}.tap.{type}.{thing}` — credential presentation (the `nats` reader subscribes here; the `osdp` reader reads RS485 instead; under `both`, NATS for every portal and RS485 for the reader portals)
+- `acc.{location}.evt.{type}.{thing}.{kind}` (`tap`/`state`/`alarm`) and `acc.{location}.evt.fire` (location-scoped) — audit events → ACC_EVENTS. An **area intrusion alarm** reuses this as `acc.{location}.evt.area.{areacode}.alarm` (type token `area`, body `{type:"intrusion",point,ts}`) — captured by the `acc.*.evt.>` stream subject, no change.
+- `acc.{location}.cmd.{type}.{thing}.{posture,grant,output}` — control-plane commands (core NATS, fire-and-forget). **There is no `cmd.arm`**: arm/disarm is a *durable record write* (`areas.arm_override` → mirror → KV → controllers converge), so a reboot can't silently disarm.
+- `acc.{location}.heartbeat.ctrl.{code}` — controller liveness. A controller is addressed with the reserved
+  `{type}` `ctrl` (not a portal type); the heartbeat rides the **`heartbeat` channel**, outside `evt`, on
   purpose, so ACC_EVENTS never captures it — accessd updates the `controllers` record directly instead.
-- `acc.{location}.ctrl.{code}.health` — the controller's read-only health request/reply, beside the heartbeat and
-  likewise 5 tokens outside `.evt` (see below).
+- `acc.{location}.cmd.ctrl.{code}.health` — the controller's read-only health request/reply on the `cmd` channel, which
+  no stream captures (see below).
 
 **All subject construction and parsing lives in `internal/subjects`** (one `Subjects` value carrying the `acc`
 app token from `subjects.app` config, default `acc`, threaded through every constructor) — never hand-format
-subject strings elsewhere. The audit stream captures two patterns of **different fixed arity** — `acc.*.evt.fire`
-(4-token fire) and `acc.*.*.*.evt.>` (6+-token portal events) — both rooted at that literal app token, so they
-overlap neither each other nor a sibling app's stream, and can't capture a foreign Thing's events. (The fire
-pattern is fixed-arity, no trailing `>`, so it can't expand to overlap the portal pattern.) **accessd and every
+subject strings elsewhere. Subjects follow ADR 0008 (platform-docs): `{app}.{location}.{channel}.{rest}`, the
+channel right after the location. So the audit stream is the one subject `acc.*.evt.>`, rooted at the literal
+app token so it overlaps no sibling app's stream, and every `evt` publish carries a `Nats-Msg-Id`
+(`subjects.EventMsg`). **accessd and every
 controller must share the same `subjects.app`** (a mismatch silently severs policy/commands/events).
 `docs/protocol.md` is the full wire reference (subjects, message shapes, KV key scheme, decision reason codes).
 

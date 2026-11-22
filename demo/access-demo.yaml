@@ -5,7 +5,7 @@
 # UI (Overview "Recent Activity" + Alarm Console) looks alive during a demo.
 #
 # HOW IT WORKS
-#   These rules publish directly to the audit subtree `acc.*.*.*.evt.*` (and the
+#   These rules publish directly to the audit subtree `acc.*.evt.*.*.*` (and the
 #   location-scoped `acc.{location}.evt.fire`). accessd's ACC_EVENTS JetStream
 #   stream captures that subtree, and its always-on `acc-audit` consumer projects
 #   every message into the PocketBase `events` collection — the same path real
@@ -13,10 +13,10 @@
 #   all three demo sites (hq / dc / east-office) regardless.
 #
 # WIRE CONTRACT (docs/protocol.md)
-#   tap   : acc.{loc}.{type}.{thing}.evt.tap   {"cred","user","allow","reason","ts","source"}
-#   state : acc.{loc}.{type}.{thing}.evt.state {"posture","reason","ts"}
-#   alarm : acc.{loc}.{type}.{thing}.evt.alarm {"type","ts"}   (type: forced|held|held_clear|intrusion)
-#   area  : acc.{loc}.area.{areacode}.evt.alarm {"type":"intrusion","point","ts"}
+#   tap   : acc.{loc}.evt.{type}.{thing}.tap   {"cred","user","allow","reason","ts","source"}
+#   state : acc.{loc}.evt.{type}.{thing}.state {"posture","reason","ts"}
+#   alarm : acc.{loc}.evt.{type}.{thing}.alarm {"type","ts"}   (type: forced|held|held_clear|intrusion)
+#   area  : acc.{loc}.evt.area.{areacode}.alarm {"type":"intrusion","point","ts"}
 #   fire  : acc.{loc}.evt.fire                 {"active":bool}
 #   {loc}/{type}/{thing} are record CODES (e.g. hq, door, lobby-main), not ids.
 #   `ts` is RFC3339 UTC; reason codes are the stable strings policy.Decide emits.
@@ -74,7 +74,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.hq.door.lobby-main.evt.tap"
+      subject: "acc.hq.evt.door.lobby-main.tap"
       payload: '{"cred":"CARD-001","user":"Alice Example","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
 
 # HQ — Public Lobby (auto-unlocked during office hours → posture allow)
@@ -84,7 +84,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.hq.door.lobby-public.evt.tap"
+      subject: "acc.hq.evt.door.lobby-public.tap"
       payload: '{"cred":"CARD-1005","user":"Emily Rodriguez","allow":true,"reason":"allow_posture_unlocked","ts":"{@timestamp.iso}","source":"nats"}'
 
 # East Coast Office — Lobby, weekday business hours (Eastern)
@@ -94,7 +94,7 @@
       timezone: "America/New_York"
   action:
     nats:
-      subject: "acc.east-office.door.east-lobby.evt.tap"
+      subject: "acc.east-office.evt.door.east-lobby.tap"
       payload: '{"cred":"CARD-1001","user":"Sarah Chen","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
 
 # Distribution Center — pedestrian turnstile, extended hours Mon–Sat (Central)
@@ -104,7 +104,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.dc.turnstile.dc-turnstile.evt.tap"
+      subject: "acc.dc.evt.turnstile.dc-turnstile.tap"
       payload: '{"cred":"CARD-1006","user":"James Wilson","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
 
 # Security patrol — HQ Server Room, 24/7 (security role has all-doors access)
@@ -113,7 +113,7 @@
       cron: "*/9 * * * *"
   action:
     nats:
-      subject: "acc.hq.door.hq-server-room.evt.tap"
+      subject: "acc.hq.evt.door.hq-server-room.tap"
       payload: '{"cred":"CARD-1002","user":"Marcus Johnson","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
 
 # Visitor pass at the East lobby, business hours (Eastern). The credential value is the
@@ -125,7 +125,7 @@
       timezone: "America/New_York"
   action:
     nats:
-      subject: "acc.east-office.door.east-lobby.evt.tap"
+      subject: "acc.east-office.evt.door.east-lobby.tap"
       payload: '{"cred":"V-DEMOLIVE0001","user":"Dana Whitfield","allow":true,"reason":"allow_grant","ts":"{@timestamp.iso}","source":"nats"}'
 
 # -----------------------------------------------------------------------------
@@ -138,7 +138,7 @@
       cron: "*/11 * * * *"
   action:
     nats:
-      subject: "acc.east-office.door.east-server-room.evt.tap"
+      subject: "acc.east-office.evt.door.east-server-room.tap"
       payload: '{"cred":"CARD-1007","user":"Olivia Martinez","allow":false,"reason":"deny_no_access","ts":"{@timestamp.iso}","source":"nats"}'
 
 # Unknown card presented at the DC turnstile
@@ -147,7 +147,7 @@
       cron: "*/13 * * * *"
   action:
     nats:
-      subject: "acc.dc.turnstile.dc-turnstile.evt.tap"
+      subject: "acc.dc.evt.turnstile.dc-turnstile.tap"
       payload: '{"cred":"CARD-9999","user":"","allow":false,"reason":"deny_unknown_credential","ts":"{@timestamp.iso}","source":"nats"}'
 
 # Cleaning contractor outside their Tue/Thu window
@@ -156,7 +156,7 @@
       cron: "*/17 * * * *"
   action:
     nats:
-      subject: "acc.hq.door.lobby-main.evt.tap"
+      subject: "acc.hq.evt.door.lobby-main.tap"
       payload: '{"cred":"CARD-2001","user":"Night Owl Cleaning","allow":false,"reason":"deny_schedule_closed","ts":"{@timestamp.iso}","source":"nats"}'
 
 # Expired visitor pass presented at the East lobby. The edge enforces the credential's
@@ -167,7 +167,7 @@
       cron: "*/19 * * * *"
   action:
     nats:
-      subject: "acc.east-office.door.east-lobby.evt.tap"
+      subject: "acc.east-office.evt.door.east-lobby.tap"
       payload: '{"cred":"V-DEMOEXPIRED1","user":"Ibrahim Osei","allow":false,"reason":"deny_expired","ts":"{@timestamp.iso}","source":"nats"}'
 
 # Suspended cardholder badges at the HQ lobby. deny_revoked is correct and not a typo:
@@ -178,7 +178,7 @@
       cron: "7,37 * * * *"
   action:
     nats:
-      subject: "acc.hq.door.lobby-main.evt.tap"
+      subject: "acc.hq.evt.door.lobby-main.tap"
       payload: '{"cred":"CARD-1012","user":"Tom Burns","allow":false,"reason":"deny_revoked","ts":"{@timestamp.iso}","source":"nats"}'
 
 # -----------------------------------------------------------------------------
@@ -192,7 +192,7 @@
       timezone: "America/New_York"
   action:
     nats:
-      subject: "acc.east-office.door.east-lobby.evt.state"
+      subject: "acc.east-office.evt.door.east-lobby.state"
       payload: '{"posture":"unlocked","reason":"scheduled","ts":"{@timestamp.iso}"}'
 
 # Office closes — East lobby reverts to "secure"
@@ -202,7 +202,7 @@
       timezone: "America/New_York"
   action:
     nats:
-      subject: "acc.east-office.door.east-lobby.evt.state"
+      subject: "acc.east-office.evt.door.east-lobby.state"
       payload: '{"posture":"secure","reason":"scheduled","ts":"{@timestamp.iso}"}'
 
 # -----------------------------------------------------------------------------
@@ -216,7 +216,7 @@
       cron: "*/15 * * * *"
   action:
     nats:
-      subject: "acc.dc.door.dc-dock-2.evt.alarm"
+      subject: "acc.dc.evt.door.dc-dock-2.alarm"
       payload: '{"type":"forced","ts":"{@timestamp.iso}"}'
 
 # Held-open (DOTL) — HQ Lobby Main propped past its threshold
@@ -225,7 +225,7 @@
       cron: "*/35 * * * *"
   action:
     nats:
-      subject: "acc.hq.door.lobby-main.evt.alarm"
+      subject: "acc.hq.evt.door.lobby-main.alarm"
       payload: '{"type":"held","ts":"{@timestamp.iso}"}'
 
 # Intrusion — motion in the armed DC Warehouse area
@@ -234,7 +234,7 @@
       cron: "*/25 * * * *"
   action:
     nats:
-      subject: "acc.dc.area.dc-warehouse.evt.alarm"
+      subject: "acc.dc.evt.area.dc-warehouse.alarm"
       payload: '{"type":"intrusion","point":"dc-motion-1","ts":"{@timestamp.iso}"}'
 
 # -----------------------------------------------------------------------------

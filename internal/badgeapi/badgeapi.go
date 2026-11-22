@@ -560,7 +560,7 @@ func (h *handler) publishDeny(snap *policysnapshot.Snapshot, portal *core.Record
 	if err != nil {
 		return err
 	}
-	return h.nc.Publish(h.subj.EventTap(locCode, ptype, portalCode), payload)
+	return h.nc.PublishMsg(subjects.EventMsg(h.subj.EventTap(locCode, ptype, portalCode), payload))
 }
 
 // portalAddr resolves a portal's location and type for subject construction. Both

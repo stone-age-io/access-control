@@ -6,7 +6,7 @@
 # a scheduled lockdown, yard lighting, sirens and horns, and a trickle of alarms.
 #
 # THIS FILE DRIVES REAL CONTROLLERS. It publishes credential presentations to
-# the READER subject `acc.{location}.{type}.{thing}.tap`, so a running
+# the READER subject `acc.{location}.tap.{type}.{thing}`, so a running
 # access-controller decides each one itself against its mirrored policy graph
 # and emits the resulting `evt.tap`. Nothing here fabricates a decision. That
 # means the reason codes on the Events screen are the ones `policy.Decide`
@@ -40,7 +40,7 @@
 #
 # PUBLISH MODE — the split below is deliberate, not cosmetic
 #   `mode: core`      for anything a CONTROLLER consumes: taps, cmd.*, evt.fire.
-#                     No JetStream stream covers `acc.*.*.*.tap` or `.cmd.>`, so
+#                     No JetStream stream covers `acc.*.tap.>` or `acc.*.cmd.>`, so
 #                     a jetstream publish there would hang waiting for an ack
 #                     that no stream will ever send.
 #   `mode: jetstream` for the injected alarms at the bottom, which only the
@@ -110,7 +110,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-dock-a.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-dock-a"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0003,NW-CARD-0004,NW-CARD-0100,NW-CARD-0005)}"}'
 
@@ -123,7 +123,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-main"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0003,NW-CARD-0004,NW-CARD-0005)}"}'
 
@@ -135,7 +135,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-freezer-1.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-freezer-1"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0003,NW-CARD-0004)}"}'
 
@@ -146,7 +146,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.SGF-XD2.door.sgf-xd2-dock-b.tap"
+      subject: "acc.SGF-XD2.tap.door.sgf-xd2-dock-b"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0100,NW-CARD-0003,NW-CARD-0004)}"}'
 
@@ -170,7 +170,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.SGF-XD2.door.sgf-xd2-main.tap"
+      subject: "acc.SGF-XD2.tap.door.sgf-xd2-main"
       mode: core
       payload: '{"cred":"NW-CARD-0003"}'
 
@@ -188,7 +188,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.SGF-XD2.door.sgf-xd2-main.tap"
+      subject: "acc.SGF-XD2.tap.door.sgf-xd2-main"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0006,NW-CARD-0002,NW-CARD-0001)}"}'
 
@@ -211,7 +211,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-OFFICE.door.kc-office-lobby.tap"
+      subject: "acc.KC-OFFICE.tap.door.kc-office-lobby"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0001,NW-CARD-0002,NW-CARD-0005)}"}'
 
@@ -224,7 +224,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-OFFICE.door.kc-office-lobby.tap"
+      subject: "acc.KC-OFFICE.tap.door.kc-office-lobby"
       mode: core
       payload: '{"cred":"NW-CARD-0007"}'
 
@@ -235,7 +235,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-main"
       mode: core
       payload: '{"cred":"NW-CARD-0007"}'
 
@@ -259,7 +259,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-mdf.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-mdf"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0002,NW-CARD-0001)}"}'
 
@@ -269,7 +269,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.SGF-XD2.door.sgf-xd2-mdf.tap"
+      subject: "acc.SGF-XD2.tap.door.sgf-xd2-mdf"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0001,NW-CARD-0002,NW-CARD-0101)}"}'
 
@@ -281,16 +281,16 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-OFFICE.door.kc-office-server.tap"
+      subject: "acc.KC-OFFICE.tap.door.kc-office-server"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0001,NW-CARD-0002)}"}'
 
 # -----------------------------------------------------------------------------
 # THE YARD GATE — a `gate`, not a `door`
 #
-# The subject's third token is the portal TYPE, so this one is
-# acc.KC-DC1.gate.kc-dc1-yard.tap. Getting it wrong is not an error anywhere: the
-# controller subscribes with acc.KC-DC1.*.*.tap, the wildcard matches, and the
+# The subject's fourth token is the portal TYPE, so this one is
+# acc.KC-DC1.tap.gate.kc-dc1-yard. Getting it wrong is not an error anywhere: the
+# controller subscribes with acc.KC-DC1.tap.*.*, the wildcard matches, and the
 # tap resolves to no portal — deny_unknown_point, from a card that is perfectly
 # valid. It is the single most likely mistake when hand-writing these subjects.
 #
@@ -303,7 +303,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.gate.kc-dc1-yard.tap"
+      subject: "acc.KC-DC1.tap.gate.kc-dc1-yard"
       mode: core
       payload: '{"cred":"{@random.choice(NW-CARD-0006,NW-CARD-0002,NW-CARD-0005)}"}'
 
@@ -320,7 +320,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-main"
       mode: core
       payload: '{"cred":"NW-VISIT-001"}'
 
@@ -349,7 +349,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-main"
       mode: core
       payload: '{"cred":"NW-CARD-0010"}'
 
@@ -360,7 +360,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-dock-a.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-dock-a"
       mode: core
       payload: '{"cred":"NW-CARD-9999"}'
 
@@ -371,7 +371,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-dock-a.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-dock-a"
       mode: core
       payload: '{"cred":"NW-CARD-0008"}'
 
@@ -385,7 +385,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-dock-a.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-dock-a"
       mode: core
       payload: '{"cred":"NW-CARD-0009"}'
 
@@ -401,7 +401,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-main"
       mode: core
       payload: '{"cred":"NW-VISIT-002"}'
 
@@ -415,7 +415,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-main.tap"
+      subject: "acc.KC-DC1.tap.door.kc-dc1-main"
       mode: core
       payload: '{"cred":"NW-CARD-0005"}'
 
@@ -441,7 +441,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-OFFICE.door.kc-office-server.cmd.grant"
+      subject: "acc.KC-OFFICE.cmd.door.kc-office-server.grant"
       mode: core
       payload: '{"seconds":{@random.int(4,8)},"actor":"demo-operator","reason":"escorted delivery"}'
 
@@ -456,7 +456,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-OFFICE.auxout.kc-office-gate.cmd.output"
+      subject: "acc.KC-OFFICE.cmd.auxout.kc-office-gate.output"
       mode: core
       payload: '{"action":"pulse","seconds":{@random.int(4,7)},"actor":"demo-operator","reason":"visitor at the gate"}'
 
@@ -471,7 +471,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.auxout.kc-dc1-dock-horn.cmd.output"
+      subject: "acc.KC-DC1.cmd.auxout.kc-dc1-dock-horn.output"
       mode: core
       payload: '{"action":"pulse","seconds":{@random.int(2,4)},"actor":"demo-scheduler","reason":"trailer cleared to depart"}'
 
@@ -483,7 +483,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.SGF-XD2.auxout.sgf-xd2-siren.cmd.output"
+      subject: "acc.SGF-XD2.cmd.auxout.sgf-xd2-siren.output"
       mode: core
       payload: '{"action":"pulse","seconds":3,"actor":"demo-scheduler","reason":"weekly siren test"}'
 
@@ -494,7 +494,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.auxout.kc-dc1-yard-lights.cmd.output"
+      subject: "acc.KC-DC1.cmd.auxout.kc-dc1-yard-lights.output"
       mode: core
       payload: '{"action":"on","actor":"demo-scheduler","reason":"dusk"}'
 
@@ -504,7 +504,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.auxout.kc-dc1-yard-lights.cmd.output"
+      subject: "acc.KC-DC1.cmd.auxout.kc-dc1-yard-lights.output"
       mode: core
       payload: '{"action":"off","actor":"demo-scheduler","reason":"dawn"}'
 
@@ -529,7 +529,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.gate.kc-dc1-yard.cmd.posture"
+      subject: "acc.KC-DC1.cmd.gate.kc-dc1-yard.posture"
       mode: core
       payload: '{"posture":"lockdown","actor":"demo-scheduler","reason":"yard closed"}'
 
@@ -542,7 +542,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.gate.kc-dc1-yard.cmd.posture"
+      subject: "acc.KC-DC1.cmd.gate.kc-dc1-yard.posture"
       mode: core
       payload: '{"posture":"clear","actor":"demo-scheduler","reason":"yard open"}'
 
@@ -572,7 +572,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-dock-a.evt.alarm"
+      subject: "acc.KC-DC1.evt.door.kc-dc1-dock-a.alarm"
       mode: jetstream
       payload: '{"type":"forced","ts":"{@timestamp.iso}"}'
 
@@ -586,7 +586,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-main.evt.alarm"
+      subject: "acc.KC-DC1.evt.door.kc-dc1-main.alarm"
       mode: jetstream
       payload: '{"type":"held","ts":"{@timestamp.iso}"}'
 
@@ -596,7 +596,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.door.kc-dc1-main.evt.alarm"
+      subject: "acc.KC-DC1.evt.door.kc-dc1-main.alarm"
       mode: jetstream
       payload: '{"type":"held_clear","ts":"{@timestamp.iso}"}'
 
@@ -618,7 +618,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-DC1.area.kc-dc1-warehouse.evt.alarm"
+      subject: "acc.KC-DC1.evt.area.kc-dc1-warehouse.alarm"
       mode: jetstream
       payload: '{"type":"intrusion","point":"kc-dc1-motion-1","ts":"{@timestamp.iso}"}'
 
@@ -638,7 +638,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.SGF-XD2.area.sgf-xd2-dock.evt.alarm"
+      subject: "acc.SGF-XD2.evt.area.sgf-xd2-dock.alarm"
       mode: jetstream
       payload: '{"type":"intrusion","point":"sgf-xd2-motion","ts":"{@timestamp.iso}"}'
 
@@ -648,7 +648,7 @@
       timezone: "America/Chicago"
   action:
     nats:
-      subject: "acc.KC-OFFICE.area.kc-office-suite.evt.alarm"
+      subject: "acc.KC-OFFICE.evt.area.kc-office-suite.alarm"
       mode: jetstream
       payload: '{"type":"intrusion","point":"kc-office-motion","ts":"{@timestamp.iso}"}'
 

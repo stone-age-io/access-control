@@ -76,7 +76,7 @@ func TestRegisterHealth(t *testing.T) {
 	}
 	defer func() { _ = svc.Stop() }()
 
-	const subject = "acc.hq.ctrl.ctrl-hq-1.health"
+	const subject = "acc.hq.cmd.ctrl.ctrl-hq-1.health"
 	if err := RegisterHealth(svc, subject, fakeSource{sampleReport()}, logger.NewNopLogger()); err != nil {
 		t.Fatalf("register: %v", err)
 	}

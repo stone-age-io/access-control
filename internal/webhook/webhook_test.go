@@ -31,7 +31,7 @@ func newSink(t *testing.T) (*Sink, *[]Payload) {
 
 func TestProcessPostsAlarm(t *testing.T) {
 	s, got := newSink(t)
-	status, err := s.process(context.Background(), "acc.hq.door.lobby-main.evt.alarm",
+	status, err := s.process(context.Background(), "acc.hq.evt.door.lobby-main.alarm",
 		[]byte(`{"type":"forced","ts":"2026-01-05T14:00:00Z"}`), 42)
 	if err != nil || status != "ok" {
 		t.Fatalf("process = (%q,%v), want (ok,nil)", status, err)
@@ -67,7 +67,7 @@ func TestProcessControllerLiveness(t *testing.T) {
 		{"online", "skip", 0},
 	} {
 		s, got := newSink(t)
-		status, err := s.process(context.Background(), "acc.hq.ctrl.ctrl-hq-1.evt.state",
+		status, err := s.process(context.Background(), "acc.hq.evt.ctrl.ctrl-hq-1.state",
 			[]byte(`{"status":"`+tc.status+`","ts":"t"}`), 1)
 		if err != nil || status != tc.want {
 			t.Errorf("%s: process = (%q,%v), want (%q,nil)", tc.status, status, err, tc.want)
@@ -82,10 +82,10 @@ func TestProcessControllerLiveness(t *testing.T) {
 func TestProcessSkipsNonPageable(t *testing.T) {
 	s, got := newSink(t)
 	for _, tc := range []struct{ subject, body string }{
-		{"acc.hq.door.lobby-main.evt.alarm", `{"type":"held_clear"}`},
+		{"acc.hq.evt.door.lobby-main.alarm", `{"type":"held_clear"}`},
 		{"acc.hq.evt.fire", `{"active":false}`}, // a fire input clearing
-		{"acc.hq.door.lobby-main.evt.tap", `{"allow":true}`},
-		{"acc.hq.area.zone1.evt.state", `{"arm":"armed"}`},
+		{"acc.hq.evt.door.lobby-main.tap", `{"allow":true}`},
+		{"acc.hq.evt.area.zone1.state", `{"arm":"armed"}`},
 		{"acc.hq.evt", `{}`}, // unparseable subject
 	} {
 		if status, err := s.process(context.Background(), tc.subject, []byte(tc.body), 1); status != "skip" || err != nil {
@@ -104,7 +104,7 @@ func TestProcessInertWithoutURL(t *testing.T) {
 	cfg := func() (string, string, bool) { return "", "", false }
 	s := New(nil, "ACC_EVENTS", subjects.Default(), cfg, send, logger.NewNopLogger(), nil)
 
-	if status, err := s.process(context.Background(), "acc.hq.door.lobby-main.evt.alarm",
+	if status, err := s.process(context.Background(), "acc.hq.evt.door.lobby-main.alarm",
 		[]byte(`{"type":"forced"}`), 1); status != "skip" || err != nil {
 		t.Errorf("process = (%q,%v), want (skip,nil)", status, err)
 	}
@@ -120,7 +120,7 @@ func TestProcessDeliveryFailureRetries(t *testing.T) {
 	cfg := func() (string, string, bool) { return "https://hook.test/in", "", true }
 	s := New(nil, "ACC_EVENTS", subjects.Default(), cfg, send, logger.NewNopLogger(), nil)
 
-	if _, err := s.process(context.Background(), "acc.hq.door.lobby-main.evt.alarm",
+	if _, err := s.process(context.Background(), "acc.hq.evt.door.lobby-main.alarm",
 		[]byte(`{"type":"forced"}`), 1); err == nil {
 		t.Error("want error (Nak) on delivery failure, got nil")
 	}

@@ -11,7 +11,7 @@ it is one the seed creates — including the fire-lockbox card and the two aux
 outputs that nothing used to drive.
 
 It **drives real controllers**. Taps are published to the reader subject
-`acc.{location}.{type}.{thing}.tap`, so a running `access-controller` decides
+`acc.{location}.tap.{type}.{thing}`, so a running `access-controller` decides
 each one itself and emits the resulting event. The reason codes you see are the
 ones `policy.Decide` produced, not strings someone typed into YAML — edit an
 access group in the console and the next tap changes.

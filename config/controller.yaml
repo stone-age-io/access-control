@@ -17,7 +17,7 @@ nats:
 
   # Provision a SEPARATE NATS identity for each controller on the platform
   # (least privilege: a controller only needs to watch ACC_POLICY, write
-  # ACC_STATUS, publish acc.{location}.{type}.{thing}.evt.> and its heartbeat,
+  # ACC_STATUS, publish acc.{location}.evt.{type}.{thing}.> and its heartbeat,
   # and subscribe to its location's cmd, tap and fire subjects, plus $SRV.> for
   # service discovery; the full list is in docs/controller.md §7). Save its
   # creds file outside the repo (*.creds is gitignored).
@@ -124,7 +124,7 @@ controller:
   code: "ctrl-hq-1"
   location: "hq"
   # Liveness heartbeat cadence. The controller publishes to
-  # acc.{location}.ctrl.{code}.heartbeat (core NATS, outside the audit stream) so
+  # acc.{location}.heartbeat.ctrl.{code} (core NATS, outside the audit stream) so
   # accessd can show this box online/offline. Grant this subject in the
   # controller's NATS publish permissions alongside the evt.> portal events.
   heartbeatInterval: 15s
@@ -145,7 +145,7 @@ controller:
 
   # Credential reader (independent of the lock/door driver above):
   #   nats — simulated (default). Taps arrive by publishing
-  #          {app}.{location}.{type}.{thing}.tap; drive it with `nats pub` for dev.
+  #          {app}.{location}.tap.{type}.{thing}; drive it with `nats pub` for dev.
   #   osdp — a real OSDP reader polled on the model's RS485 bus (e.g. /dev/ttyAMA2
   #          on the Pi5R8). Requires `model`. The lock strike and DPS/REX stay on
   #          the GPIO/I2C driver above. Each portal's PD address on the bus is its

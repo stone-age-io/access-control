@@ -88,7 +88,7 @@ status:
 
 # ----------------------------------------------------------------------------
 # Subjects — the app-discriminator segment every NATS subject leads with
-# ({app}.{location}.{type}.{thing}.tap/.cmd/.evt …). accessd and EVERY
+# ({app}.{location}.tap.{type}.{thing}/.cmd/.evt …). accessd and EVERY
 # controller must use the same app token. Change it only to isolate a deployment
 # on a shared NATS account. Must be a single NATS token (no '.', '*', '>', or
 # whitespace).
@@ -105,7 +105,7 @@ accessd:
   # internal/webui/public), not served from disk — there is no pb_public.
   dataDir: "./pb_data"
   # How long without a heartbeat before a controller is shown offline. accessd
-  # subscribes to acc.*.ctrl.*.heartbeat (core NATS) and updates the controllers
+  # subscribes to acc.*.heartbeat.ctrl.* (core NATS) and updates the controllers
   # record directly. Keep this a few controller heartbeatIntervals so one dropped
   # heartbeat does not flap a box offline.
   controllerOfflineAfter: 45s

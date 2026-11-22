@@ -5,10 +5,13 @@ import (
 	"fmt"
 
 	"github.com/nats-io/nats.go"
+
+	"github.com/stone-age-io/access-control/internal/subjects"
 )
 
-// Emitter publishes access events. The controller emits to the {app}.evt subtree
-// over core NATS; the ACC_EVENTS JetStream stream captures them for audit.
+// Emitter publishes access events. The controller emits to the {app}.*.evt
+// channel over core NATS; the ACC_EVENTS JetStream stream captures them for audit.
+// An event carries a Nats-Msg-Id (subjects.EventMsg); a heartbeat does not.
 type Emitter interface {
 	Emit(subject string, payload any) error
 }
@@ -23,7 +26,7 @@ func (e *natsEmitter) Emit(subject string, payload any) error {
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
 	}
-	return e.nc.Publish(subject, b)
+	return e.nc.PublishMsg(subjects.EventMsg(subject, b))
 }
 
 // TapEvent is emitted once per credential presentation, carrying the outcome.

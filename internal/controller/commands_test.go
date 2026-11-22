@@ -29,7 +29,7 @@ func TestCommandPostureOverrideAndClear(t *testing.T) {
 	at := ny(t, 2026, 1, 5, 9, 0)
 
 	h.onPosture(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.posture",
+		Subject: "acc.hq.cmd.door.lobby-main.posture",
 		Data:    []byte(`{"posture":"lockdown","actor":"guard"}`),
 	})
 	if got, src, _ := rt.effectivePosture("lobby-main", at); got != policy.PostureLockdown || src != statuskv.PostureSourceOverride {
@@ -37,7 +37,7 @@ func TestCommandPostureOverrideAndClear(t *testing.T) {
 	}
 
 	h.onPosture(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.posture",
+		Subject: "acc.hq.cmd.door.lobby-main.posture",
 		Data:    []byte(`{"posture":"clear"}`),
 	})
 	if got, src, _ := rt.effectivePosture("lobby-main", at); got != policy.PostureSecure || src != statuskv.PostureSourceStanding {
@@ -55,7 +55,7 @@ func TestCommandPostureAllForwardablePosturesAccepted(t *testing.T) {
 		h, rt, _ := handlerFor(t)
 		at := ny(t, 2026, 1, 5, 9, 0)
 		h.onPosture(&nats.Msg{
-			Subject: "acc.hq.door.lobby-main.cmd.posture",
+			Subject: "acc.hq.cmd.door.lobby-main.posture",
 			Data:    []byte(`{"posture":"` + p + `","actor":"guard"}`),
 		})
 		if got, src, _ := rt.effectivePosture("lobby-main", at); got != p || src != statuskv.PostureSourceOverride {
@@ -67,7 +67,7 @@ func TestCommandPostureAllForwardablePosturesAccepted(t *testing.T) {
 func TestCommandPostureInvalidIgnored(t *testing.T) {
 	h, rt, _ := handlerFor(t)
 	h.onPosture(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.posture",
+		Subject: "acc.hq.cmd.door.lobby-main.posture",
 		Data:    []byte(`{"posture":"bogus"}`),
 	})
 	if got, _, _ := rt.effectivePosture("lobby-main", ny(t, 2026, 1, 5, 9, 0)); got != policy.PostureSecure {
@@ -78,7 +78,7 @@ func TestCommandPostureInvalidIgnored(t *testing.T) {
 func TestCommandGrantExplicitSeconds(t *testing.T) {
 	h, _, refs := handlerFor(t)
 	h.onGrant(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.grant",
+		Subject: "acc.hq.cmd.door.lobby-main.grant",
 		Data:    []byte(`{"seconds":7,"actor":"guard"}`),
 	})
 	if got := refs.lock.Pulses(); len(got) != 1 || got[0] != 7 {
@@ -89,7 +89,7 @@ func TestCommandGrantExplicitSeconds(t *testing.T) {
 func TestCommandGrantDefaultsToPortalPulse(t *testing.T) {
 	h, _, refs := handlerFor(t)
 	h.onGrant(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.grant",
+		Subject: "acc.hq.cmd.door.lobby-main.grant",
 		Data:    []byte(`{}`),
 	})
 	if got := refs.lock.Pulses(); len(got) != 1 || got[0] != 5 {
@@ -103,11 +103,11 @@ func TestCommandGrantDefaultsToPortalPulse(t *testing.T) {
 func TestCommandGrantRefusedAfterLockdownCommand(t *testing.T) {
 	h, _, refs := handlerFor(t)
 	h.onPosture(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.posture",
+		Subject: "acc.hq.cmd.door.lobby-main.posture",
 		Data:    []byte(`{"posture":"lockdown","actor":"guard"}`),
 	})
 	h.onGrant(&nats.Msg{
-		Subject: "acc.hq.door.lobby-main.cmd.grant",
+		Subject: "acc.hq.cmd.door.lobby-main.grant",
 		Data:    []byte(`{"seconds":0,"actor":"badge:holder","reason":"remote_unlock","source":"badge"}`),
 	})
 
@@ -124,7 +124,7 @@ func TestCommandGrantRefusedAfterLockdownCommand(t *testing.T) {
 func TestFireSuppressesAlarm(t *testing.T) {
 	h, rt, refs := handlerFor(t)
 	at := ny(t, 2026, 1, 5, 9, 0)
-	const alarmSubj = "acc.hq.door.lobby-main.evt.alarm"
+	const alarmSubj = "acc.hq.evt.door.lobby-main.alarm"
 
 	rt.EmitAlarm("lobby-main", "forced", at)
 	if n := refs.emit.countSubject(alarmSubj); n != 1 {

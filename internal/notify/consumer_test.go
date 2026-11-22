@@ -24,7 +24,7 @@ func newNotifier(t *testing.T) (*Notifier, *[]Message) {
 
 func TestProcessAlarmSends(t *testing.T) {
 	n, sent := newNotifier(t)
-	status, err := n.process("acc.hq.door.lobby-main.evt.alarm",
+	status, err := n.process("acc.hq.evt.door.lobby-main.alarm",
 		[]byte(`{"type":"forced","ts":"2026-01-05T14:00:00Z"}`), 0)
 	if err != nil || status != "ok" {
 		t.Fatalf("process = (%q,%v), want (ok,nil)", status, err)
@@ -67,8 +67,8 @@ func TestProcessFire(t *testing.T) {
 func TestProcessSkipsTapAndState(t *testing.T) {
 	n, sent := newNotifier(t)
 	for _, subj := range []string{
-		"acc.hq.door.lobby-main.evt.tap",
-		"acc.hq.door.lobby-main.evt.state",
+		"acc.hq.evt.door.lobby-main.tap",
+		"acc.hq.evt.door.lobby-main.state",
 	} {
 		status, err := n.process(subj, []byte(`{"ts":"2026-01-05T14:00:00Z"}`), 0)
 		if err != nil || status != "skip" {
@@ -92,7 +92,7 @@ func TestProcessControllerLiveness(t *testing.T) {
 		{"online", "skip", 0},
 	} {
 		n, sent := newNotifier(t)
-		status, err := n.process("acc.hq.ctrl.ctrl-hq-1.evt.state",
+		status, err := n.process("acc.hq.evt.ctrl.ctrl-hq-1.state",
 			[]byte(`{"status":"`+tc.status+`","ts":"2026-01-05T14:00:00Z"}`), 0)
 		if err != nil || status != tc.wantStatus {
 			t.Errorf("%s: process = (%q,%v), want (%q,nil)", tc.status, status, err, tc.wantStatus)
@@ -109,8 +109,8 @@ func TestProcessControllerLiveness(t *testing.T) {
 func TestProcessSkipsNonCtrlState(t *testing.T) {
 	n, sent := newNotifier(t)
 	for _, subj := range []string{
-		"acc.hq.door.lobby-main.evt.state",
-		"acc.hq.area.zone1.evt.state",
+		"acc.hq.evt.door.lobby-main.state",
+		"acc.hq.evt.area.zone1.state",
 	} {
 		if status, err := n.process(subj, []byte(`{"arm":"armed","ts":"t"}`), 0); status != "skip" || err != nil {
 			t.Errorf("process(%q) = (%q,%v), want (skip,nil)", subj, status, err)
@@ -124,7 +124,7 @@ func TestProcessSkipsNonCtrlState(t *testing.T) {
 // held_clear is a clear, not a raise: never emailed.
 func TestProcessSkipsHeldClear(t *testing.T) {
 	n, sent := newNotifier(t)
-	status, err := n.process("acc.hq.door.lobby-main.evt.alarm",
+	status, err := n.process("acc.hq.evt.door.lobby-main.alarm",
 		[]byte(`{"type":"held_clear","ts":"2026-01-05T14:00:00Z"}`), 0)
 	if status != "skip" || err != nil {
 		t.Errorf("process = (%q,%v), want (skip,nil)", status, err)
@@ -201,7 +201,7 @@ func TestProcessSkipsUnrecognizedSubject(t *testing.T) {
 // A redelivered (subject, ts) is sent once, then deduped.
 func TestProcessDedupsRedelivery(t *testing.T) {
 	n, sent := newNotifier(t)
-	subj := "acc.hq.door.lobby-main.evt.alarm"
+	subj := "acc.hq.evt.door.lobby-main.alarm"
 	data := []byte(`{"type":"held","ts":"2026-01-05T14:00:00Z"}`)
 
 	if status, _ := n.process(subj, data, 0); status != "ok" {
@@ -235,7 +235,7 @@ func TestProcessSendFailureRetries(t *testing.T) {
 		return true, nil
 	}
 	n := New(nil, "ACC_EVENTS", subjects.Default(), send, logger.NewNopLogger(), nil)
-	subj := "acc.hq.door.lobby-main.evt.alarm"
+	subj := "acc.hq.evt.door.lobby-main.alarm"
 	data := []byte(`{"type":"forced","ts":"2026-01-05T14:00:00Z"}`)
 
 	if _, err := n.process(subj, data, 0); err == nil {
@@ -258,7 +258,7 @@ func TestProcessNotOptedInSkips(t *testing.T) {
 		return calls <= wantSent, nil // opt-in flips on once wantSent is bumped
 	}
 	n := New(nil, "ACC_EVENTS", subjects.Default(), send, logger.NewNopLogger(), nil)
-	subj := "acc.hq.door.lobby-main.evt.alarm"
+	subj := "acc.hq.evt.door.lobby-main.alarm"
 	data := []byte(`{"type":"forced","ts":"2026-01-05T14:00:00Z"}`)
 
 	if status, err := n.process(subj, data, 0); status != "skip" || err != nil {

@@ -69,7 +69,7 @@ func TestArmTransitionEmits(t *testing.T) {
 		t.Fatalf("arm events = %d, want 1", len(*got))
 	}
 	ev := (*got)[0]
-	if want := "acc.hq.area.zone1.evt.state"; ev.subject != want {
+	if want := "acc.hq.evt.area.zone1.state"; ev.subject != want {
 		t.Errorf("subject = %q, want %q", ev.subject, want)
 	}
 	if ev.body["arm"] != "armed" || ev.body["previous"] != "disarmed" {

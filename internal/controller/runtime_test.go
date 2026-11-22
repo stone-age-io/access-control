@@ -128,8 +128,8 @@ func TestRuntimeGrantPulses(t *testing.T) {
 	if len(taps) != 1 || !taps[0].Allow || taps[0].Reason != policy.ReasonAllowGrant || taps[0].User != "alice" {
 		t.Errorf("tap events = %+v, want one allow_grant for alice", taps)
 	}
-	if !emit.hasSubject("acc.hq.door.lobby-main.evt.tap") {
-		t.Errorf("missing acc.hq.door.lobby-main.evt.tap subject")
+	if !emit.hasSubject("acc.hq.evt.door.lobby-main.tap") {
+		t.Errorf("missing acc.hq.evt.door.lobby-main.tap subject")
 	}
 }
 
@@ -170,7 +170,7 @@ func TestRuntimePostureOverrideUnlocked(t *testing.T) {
 	if taps := emit.taps(); len(taps) != 1 || !taps[0].Allow || taps[0].Reason != policy.ReasonAllowPostureUnlocked {
 		t.Errorf("tap events = %+v, want one allow_posture_unlocked", taps)
 	}
-	if !emit.hasSubject("acc.hq.door.lobby-main.evt.state") {
+	if !emit.hasSubject("acc.hq.evt.door.lobby-main.state") {
 		t.Errorf("expected a state event on posture override")
 	}
 }
@@ -264,7 +264,7 @@ func TestGrantRefusedUnderOverride(t *testing.T) {
 				t.Errorf("%s/source=%q: tap event = %+v, want deny %q, source %q, user badge:holder, no cred",
 					tc.posture, src.sent, ev, tc.wantReason, src.want)
 			}
-			if !emit.hasSubject("acc.hq.door.lobby-main.evt.tap") {
+			if !emit.hasSubject("acc.hq.evt.door.lobby-main.tap") {
 				t.Errorf("%s/source=%q: refusal not emitted on the portal's evt.tap subject", tc.posture, src.sent)
 			}
 			// A refused grant must not open the authorized-open window, or a door

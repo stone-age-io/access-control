@@ -25,7 +25,7 @@ func newDisarmer(t *testing.T, result bool, ferr error) (*Disarmer, *[]disarmCal
 // A valid credential grant disarms the portal's area, passing the portal + cred.
 func TestProcessGrantDisarms(t *testing.T) {
 	d, calls := newDisarmer(t, true, nil)
-	status, err := d.process("acc.hq.door.lobby-main.evt.tap",
+	status, err := d.process("acc.hq.evt.door.lobby-main.tap",
 		[]byte(`{"cred":"CARD-001","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z"}`))
 	if err != nil || status != "disarmed" {
 		t.Fatalf("process = (%q,%v), want (disarmed,nil)", status, err)
@@ -38,7 +38,7 @@ func TestProcessGrantDisarms(t *testing.T) {
 // A denied tap never disarms.
 func TestProcessDenyNoDisarm(t *testing.T) {
 	d, calls := newDisarmer(t, true, nil)
-	status, err := d.process("acc.hq.door.lobby-main.evt.tap",
+	status, err := d.process("acc.hq.evt.door.lobby-main.tap",
 		[]byte(`{"cred":"CARD-001","allow":false,"reason":"deny_no_access","ts":"2026-01-05T14:00:00Z"}`))
 	if err != nil || status != "skip" {
 		t.Fatalf("process = (%q,%v), want (skip,nil)", status, err)
@@ -52,7 +52,7 @@ func TestProcessDenyNoDisarm(t *testing.T) {
 // silently disarm the building.
 func TestProcessCommandGrantNoDisarm(t *testing.T) {
 	d, calls := newDisarmer(t, true, nil)
-	status, err := d.process("acc.hq.door.lobby-main.evt.tap",
+	status, err := d.process("acc.hq.evt.door.lobby-main.tap",
 		[]byte(`{"allow":true,"reason":"allow_command_grant","ts":"2026-01-05T14:00:00Z"}`)) // no cred
 	if err != nil || status != "skip" {
 		t.Fatalf("process = (%q,%v), want (skip,nil)", status, err)
@@ -75,7 +75,7 @@ func TestProcessPostureAllowNoDisarm(t *testing.T) {
 		`{"cred":"NOT-A-CARD","allow":true,"reason":"allow_area_grant","ts":"2026-01-05T14:00:00Z"}`,
 	} {
 		d, calls := newDisarmer(t, true, nil)
-		status, err := d.process("acc.hq.door.lobby-main.evt.tap", []byte(body))
+		status, err := d.process("acc.hq.evt.door.lobby-main.tap", []byte(body))
 		if err != nil || status != "skip" {
 			t.Errorf("process(%s) = (%q,%v), want (skip,nil)", body, status, err)
 		}
@@ -90,8 +90,8 @@ func TestProcessPostureAllowNoDisarm(t *testing.T) {
 func TestProcessSkipsNonTap(t *testing.T) {
 	d, calls := newDisarmer(t, true, nil)
 	for _, subj := range []string{
-		"acc.hq.door.lobby-main.evt.alarm",
-		"acc.hq.door.lobby-main.evt.state",
+		"acc.hq.evt.door.lobby-main.alarm",
+		"acc.hq.evt.door.lobby-main.state",
 		"acc.hq.evt.fire",
 		"acc.hq.evt",
 	} {
@@ -108,7 +108,7 @@ func TestProcessSkipsNonTap(t *testing.T) {
 // A grant at a non-entry portal (DisarmFunc returns disarmed=false) acks as a skip.
 func TestProcessNonEntryPortalSkips(t *testing.T) {
 	d, _ := newDisarmer(t, false, nil) // no-op: not an entry door
-	status, err := d.process("acc.hq.door.lobby-main.evt.tap",
+	status, err := d.process("acc.hq.evt.door.lobby-main.tap",
 		[]byte(`{"cred":"CARD-001","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z"}`))
 	if err != nil || status != "skip" {
 		t.Errorf("process = (%q,%v), want (skip,nil)", status, err)
@@ -118,7 +118,7 @@ func TestProcessNonEntryPortalSkips(t *testing.T) {
 // A write failure surfaces as an error (→ Nak / redelivery), not a swallowed skip.
 func TestProcessDisarmErrorNaks(t *testing.T) {
 	d, _ := newDisarmer(t, false, errors.New("db down"))
-	if _, err := d.process("acc.hq.door.lobby-main.evt.tap",
+	if _, err := d.process("acc.hq.evt.door.lobby-main.tap",
 		[]byte(`{"cred":"CARD-001","allow":true,"reason":"allow_grant","ts":"2026-01-05T14:00:00Z"}`)); err == nil {
 		t.Fatal("want error (Nak) on disarm failure, got nil")
 	}

@@ -569,7 +569,7 @@ func dateOnly(r *core.Record, field string) string {
 // reservedTokens are subject keywords a location/portal code or portal type must
 // not collide with, or positional subject parsing would misfire.
 var reservedTokens = map[string]bool{
-	"acc": true, "evt": true, "cmd": true, "tap": true, "fire": true,
+	"acc": true, "evt": true, "cmd": true, "tap": true, "fire": true, "heartbeat": true,
 }
 
 // validToken rejects a value that cannot serve as a NATS subject segment: empty,

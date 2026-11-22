@@ -12,6 +12,52 @@ record for that period, and this file starts where the versioned releases do.
 
 ## [Unreleased]
 
+### Breaking
+
+Every NATS subject follows ADR 0008 in platform-docs, the ecosystem's grammar
+`{app}.{scope}.{channel}.{rest}`: the channel moves to right after the
+location. Upgrade `accessd`, every controller, and anything else that publishes
+or subscribes on `acc.>` (rule-router rules, Telegraf, NATS permissions)
+together. A publisher on an old subject reaches nobody.
+
+| | Before | After |
+|---|---|---|
+| Card read | `acc.{location}.{type}.{thing}.tap` | `acc.{location}.tap.{type}.{thing}` |
+| Posture, grant | `acc.{location}.{type}.{thing}.cmd.{posture,grant}` | `acc.{location}.cmd.{type}.{thing}.{posture,grant}` |
+| Aux output | `acc.{location}.auxout.{thing}.cmd.output` | `acc.{location}.cmd.auxout.{thing}.output` |
+| Events | `acc.{location}.{type}.{thing}.evt.{tap,state,alarm}` | `acc.{location}.evt.{type}.{thing}.{tap,state,alarm}` |
+| Fire | `acc.{location}.evt.fire` | unchanged |
+| Controller liveness | `acc.{location}.ctrl.{code}.evt.state` | `acc.{location}.evt.ctrl.{code}.state` |
+| Heartbeat | `acc.{location}.ctrl.{code}.heartbeat` | `acc.{location}.heartbeat.ctrl.{code}` |
+| Health request | `acc.{location}.ctrl.{code}.health` | `acc.{location}.cmd.ctrl.{code}.health` |
+| `ACC_EVENTS` subjects | `acc.*.evt.fire`, `acc.*.*.*.evt.>` | `acc.*.evt.>` |
+
+- **The stream and the consumers update in place.** `ACC_EVENTS` and its
+  consumers are created with CreateOrUpdate, so accessd moves them to the new
+  subjects at startup. An event still waiting under an old subject at that
+  moment is never projected, because the new filters do not match it. Its row
+  is lost from the `events` collection, though the message stays in the stream
+  until it ages out. Upgrade while accessd is caught up, which it is unless
+  NATS or PocketBase was down.
+- **Controller NATS permissions change shape.** A controller subscribes on
+  `acc.{location}.cmd.*.*.{posture,grant,output}`, `acc.{location}.evt.fire`
+  and `acc.{location}.tap.{type}.{code}`, and publishes on
+  `acc.{location}.evt.>` and `acc.{location}.heartbeat.ctrl.{code}`. See
+  `docs/controller.md`.
+- `heartbeat` is now a reserved subject keyword: no location, portal type or
+  code may be named `heartbeat`.
+
+### Added
+
+- **Every event carries a `Nats-Msg-Id`**, made once per event, so
+  `ACC_EVENTS` stores an event once within its duplicate window even if a
+  publish is retried. Commands, taps and heartbeats carry none.
+
+### Changed
+
+- PocketBase is imported from `ganigeorgiev.com/pocketbase` at v0.41.1 (the
+  GitHub module is archived), on Go 1.27.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added

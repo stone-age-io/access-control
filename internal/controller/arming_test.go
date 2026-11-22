@@ -151,7 +151,7 @@ func armedRuntime(t *testing.T, areaJSON, pointType string) (*Runtime, *fakeEmit
 	return rt, emit
 }
 
-const intrusionSubject = "acc.hq.area.zone1.evt.alarm"
+const intrusionSubject = "acc.hq.evt.area.zone1.alarm"
 
 // An armed area's intrusion point raises an alarm on its rising edge.
 func TestIntrusionArmedAlarms(t *testing.T) {

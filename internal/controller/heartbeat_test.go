@@ -33,7 +33,7 @@ func TestHeartbeatPublishesImmediately(t *testing.T) {
 	eventually(t, time.Second, func() bool { return len(heartbeats(emit)) == 1 })
 
 	got := heartbeats(emit)
-	if got[0] != "acc.hq.ctrl.ctrl-hq-1.heartbeat" {
+	if got[0] != "acc.hq.heartbeat.ctrl.ctrl-hq-1" {
 		t.Errorf("heartbeat subject = %q", got[0])
 	}
 	// Payload carries the controller identity.

@@ -93,7 +93,7 @@ already in hand:
 old := rec.GetString("state")           // "" for a newly created row
 // ... existing Set() calls, Save() ...
 if r.kind == statuskv.KindArea && old != "" && old != r.state {
-    // emit acc.{location}.area.{code}.evt.state
+    // emit acc.{location}.evt.area.{code}.state
 }
 ```
 
@@ -122,13 +122,13 @@ free. The pair `(type, kind)` already carries everything being added:
 
 | new event | subject | type | kind | migration |
 |---|---|---|---|---|
-| arm/disarm | `acc.{loc}.area.{code}.evt.state` | `area` | `state` | none |
-| controller liveness | `acc.{loc}.ctrl.{code}.evt.state` | `ctrl` | `state` | none |
-| badge deny | `acc.{loc}.{type}.{portal}.evt.tap` | portal kind | `tap` | none |
-| `no_entry` | `acc.{loc}.{type}.{portal}.evt.alarm` | portal kind | `alarm` | none |
-| door state (Ph. 6) | `acc.{loc}.{type}.{portal}.evt.state` | portal kind | `state` | none |
+| arm/disarm | `acc.{loc}.evt.area.{code}.state` | `area` | `state` | none |
+| controller liveness | `acc.{loc}.evt.ctrl.{code}.state` | `ctrl` | `state` | none |
+| badge deny | `acc.{loc}.evt.{type}.{portal}.tap` | portal kind | `tap` | none |
+| `no_entry` | `acc.{loc}.evt.{type}.{portal}.alarm` | portal kind | `alarm` | none |
+| door state (Ph. 6) | `acc.{loc}.evt.{type}.{portal}.state` | portal kind | `state` | none |
 
-`acc.{loc}.ctrl.{code}.evt.state` is 6 tokens, so the existing `acc.*.*.*.evt.>`
+`acc.{loc}.evt.ctrl.{code}.state` is 6 tokens, so the existing `acc.*.evt.>`
 stream subject captures it — the same trick area alarms used. **No stream subject
 changes anywhere in this plan.**
 

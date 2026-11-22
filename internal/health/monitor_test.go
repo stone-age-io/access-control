@@ -75,7 +75,7 @@ func TestLivenessOnlineEmitsOncePerTransition(t *testing.T) {
 		t.Fatalf("liveness events = %d, want 1 (only the transition)", len(*got))
 	}
 	ev := (*got)[0]
-	if want := "acc.hq.ctrl." + ctrl + ".evt.state"; ev.subject != want {
+	if want := "acc.hq.evt.ctrl." + ctrl + ".state"; ev.subject != want {
 		t.Errorf("subject = %q, want %q", ev.subject, want)
 	}
 	if ev.body["status"] != "online" {
