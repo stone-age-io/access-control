@@ -12,6 +12,8 @@ record for that period, and this file starts where the versioned releases do.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-22
+
 ### Breaking
 
 Every NATS subject follows ADR 0008 in platform-docs, the ecosystem's grammar
@@ -59,7 +61,7 @@ together. A publisher on an old subject reaches nobody.
 
 - **`contract/`**: the Thing Types, operations and NATS roles an organization
   needs, as a `stone` template. Onboard one with
-  `stone apply --template contract/` (stone-cli, unreleased). The roles are
+  `stone apply --template contract/` (stone v0.12.0). The roles are
   `accessd` and `access-controller`; a controller's cannot write ACC_POLICY.
 - **Every event carries a `Nats-Msg-Id`**, made once per event, so
   `ACC_EVENTS` stores an event once within its duplicate window even if a
@@ -293,6 +295,7 @@ Also found in that audit:
 - **A database created before 2026-07-26**, when `cardholders` became an auth
   collection, cannot migrate onto this schema. Start from a fresh `pb_data`.
 
-[Unreleased]: https://github.com/stone-age-io/access-control/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/stone-age-io/access-control/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/stone-age-io/access-control/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/stone-age-io/access-control/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/stone-age-io/access-control/releases/tag/v0.1.0
