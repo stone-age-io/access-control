@@ -31,7 +31,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/natsx"
 	"github.com/stone-age-io/access-control/internal/subjects"
-	"github.com/stone-age-io/access-control/internal/version"
+	"github.com/stone-age-io/kit/version"
 )
 
 func main() {
@@ -42,7 +42,7 @@ func main() {
 	// Before the config: on a box that is not configured yet, which is when
 	// someone asks which build it has, loading the config fails.
 	if *showVersion {
-		fmt.Println("access-controller version " + version.Main())
+		fmt.Println("access-controller version " + version.Build())
 		return
 	}
 
@@ -98,7 +98,7 @@ func main() {
 	// retryOnFailedConnect: an edge controller must survive a boot with NATS
 	// unreachable (leaf node down, or no network) rather than crashing — it comes up
 	// on cached/default-deny policy and converges when NATS returns.
-	nc, err := natsx.Connect(&cfg.NATS, log, m, func() {
+	nc, err := natsx.Connect(&cfg.NATS, natsx.ServiceController, log, m, func() {
 		if resync != nil {
 			resync()
 		}
@@ -288,8 +288,7 @@ func main() {
 	// Service discovery, with one read-only endpoint: health, the status page's
 	// report without its decisions. Never fatal, and fine while NATS is still
 	// unreachable. Stopped before the deferred nc.Close.
-	if svc := nc.RegisterService(natsx.ServiceController, "stone-access edge controller", map[string]string{
-		"code":     cfg.Controller.Code,
+	if svc := nc.RegisterService(natsx.ServiceController, "stone-access edge controller", cfg.Controller.Code, map[string]string{
 		"location": cfg.Controller.Location,
 	}); svc != nil {
 		defer func() { _ = svc.Stop() }()

@@ -16,11 +16,9 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"net/http"
 	"net/mail"
 	"os"
 	"slices"
-	"strings"
 	"time"
 
 	"ganigeorgiev.com/pocketbase/dbx"
@@ -29,6 +27,7 @@ import (
 	"ganigeorgiev.com/pocketbase/pocketbase/plugins/migratecmd"
 	"ganigeorgiev.com/pocketbase/pocketbase/tools/mailer"
 	"ganigeorgiev.com/pocketbase/pocketbase/tools/types"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stone-age-io/access-control/config"
@@ -40,7 +39,7 @@ import (
 	"github.com/stone-age-io/access-control/internal/commandapi"
 	"github.com/stone-age-io/access-control/internal/demoseed"
 	"github.com/stone-age-io/access-control/internal/disarm"
-	"github.com/stone-age-io/access-control/internal/health"
+	"github.com/stone-age-io/access-control/internal/liveness"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
 	"github.com/stone-age-io/access-control/internal/mirror"
@@ -51,9 +50,11 @@ import (
 	"github.com/stone-age-io/access-control/internal/simulateapi"
 	"github.com/stone-age-io/access-control/internal/status"
 	"github.com/stone-age-io/access-control/internal/subjects"
-	"github.com/stone-age-io/access-control/internal/version"
 	"github.com/stone-age-io/access-control/internal/webhook"
 	"github.com/stone-age-io/access-control/internal/webui"
+	"github.com/stone-age-io/kit/health"
+	"github.com/stone-age-io/kit/pbx"
+	"github.com/stone-age-io/kit/version"
 
 	// Side-effect import: registers the schema + fixture migrations.
 	_ "github.com/stone-age-io/access-control/pbmigrations"
@@ -64,7 +65,7 @@ func main() {
 	// loads, and loading fails on a box that is not configured yet, which is when
 	// someone asks which build it has. Its own version string also reads
 	// "(untracked)" when PocketBase is a library, so the dependency's is shown.
-	versionLine := "accessd version " + version.Main() + " (PocketBase " + version.Dependency("ganigeorgiev.com/pocketbase/pocketbase") + ")"
+	versionLine := "accessd version " + version.Build() + " (PocketBase " + version.Dependency("ganigeorgiev.com/pocketbase/pocketbase") + ")"
 	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
 		fmt.Println(versionLine)
 		return
@@ -137,14 +138,13 @@ func main() {
 	// Resources brought up only when actually serving (not for migrate/superuser).
 	var (
 		nc          *natsx.Conn
-		metricsSrv  *http.Server
 		collector   *metrics.Collector
 		auditC      *audit.Consumer
 		notifier    *notify.Notifier
 		repager     *repage.Sweeper
 		webhookSink *webhook.Sink
 		disarmer    *disarm.Disarmer
-		healthMon   *health.Monitor
+		healthMon   *liveness.Monitor
 		statusProj  *status.Projector
 		pub         *mirror.Publisher
 		releaser    *armrelease.Releaser
@@ -152,88 +152,47 @@ func main() {
 		discovery   micro.Service
 	)
 
+	// The readiness prober's loop lives for as long as the server does.
+	proberCtx, stopProber := context.WithCancel(context.Background())
+
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		// Serve the embedded management UI (SPA) at "/" with history-mode
-		// fallback. PocketBase does not serve static assets in framework mode,
-		// so we register the catch-all ourselves; the more specific /api and /_
-		// routes PocketBase registers take precedence over /{path...}.
+		// The embedded management UI (SPA) at "/" with history-mode fallback, and
+		// the operator branding overlay under /branding/*, both from the kit's pbx.
+		// PocketBase's own /api and /_ routes take precedence over the catch-all,
+		// and pbx.ServeSPA never answers under them with the console.
 		uiFS, err := fs.Sub(webui.FS, "public")
 		if err != nil {
 			return err
 		}
+		pbx.Branding(e, cfg.Branding.Dir, log.Logger)
+		pbx.ServeSPA(e, uiFS)
 
-		// Operator branding overlay: serve files (theme.css, logo.svg, branding.json)
-		// from a host directory under /branding/*, registered before the SPA
-		// catch-all. index.html unconditionally <link>s theme.css and the SPA fetches
-		// branding.json, so when no overlay is configured we serve silent empty
-		// fallbacks for those two — otherwise a stock deployment fills the browser
-		// console with 404s.
-		var brandingFS fs.FS
-		if dir := cfg.Branding.Dir; dir != "" {
-			if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
-				log.Warn("branding.dir is set but not a usable directory", "dir", dir)
-			} else {
-				brandingFS = os.DirFS(dir)
-				log.Info("branding overlay serving", "dir", dir)
+		// The process contract (Health & Metrics in platform-docs): GET /api/ready
+		// from a cached prober, and GET /metrics on this same port. The NATS check
+		// reads the connection through a closure because it is built below.
+		var reg health.Registry
+		registerReadiness(&reg, e.App, func() *nats.Conn {
+			if nc == nil {
+				return nil
 			}
-		}
-		e.Router.GET("/branding/{path...}", func(re *core.RequestEvent) error {
-			p := re.Request.PathValue("path")
-			if p == "" || strings.Contains(p, "..") {
-				return re.NotFoundError("Not found", nil)
-			}
-			if brandingFS != nil {
-				if f, openErr := brandingFS.Open(p); openErr == nil {
-					_ = f.Close()
-					return re.FileFS(brandingFS, p)
-				}
-			}
-			// Silent fallbacks for the two files the shell always requests.
-			switch p {
-			case "theme.css":
-				return re.Blob(200, "text/css; charset=utf-8", nil)
-			case "branding.json":
-				return re.Blob(200, "application/json", []byte("{}"))
-			}
-			return re.NotFoundError("Not found", nil)
+			return nc.NC
 		})
-
-		e.Router.GET("/{path...}", func(re *core.RequestEvent) error {
-			p := re.Request.PathValue("path")
-			if p == "" || p == "/" {
-				return re.FileFS(uiFS, "index.html")
-			}
-			if f, openErr := uiFS.Open(p); openErr == nil {
-				_ = f.Close()
-				return re.FileFS(uiFS, p)
-			}
-			// A missing asset (has an extension) is a real 404; anything else is
-			// a client-side route → hand back index.html so vue-router resolves it.
-			if strings.Contains(p, ".") {
-				return re.NotFoundError("File not found", nil)
-			}
-			return re.FileFS(uiFS, "index.html")
-		})
+		prober := health.NewProber(&reg, version.Build(), 0, 0)
+		pbx.ServeReady(e, prober)
 
 		updateInterval, _ := time.ParseDuration(cfg.Metrics.UpdateInterval)
 		collector = metrics.NewCollector(m, updateInterval)
 		collector.Start()
 
 		if cfg.Metrics.Enabled {
-			metricsSrv = m.NewServer(cfg.Metrics.Address, cfg.Metrics.Path)
-			go func() {
-				log.Info("metrics server listening", "address", cfg.Metrics.Address, "path", cfg.Metrics.Path)
-				if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					log.Error("metrics server error", "error", err)
-				}
-			}()
+			pbx.ServeMetrics(e, m.GetRegistry(), cfg.Metrics.Token)
 		}
 
 		// On reconnect, re-establish the status watcher (WatchAll re-delivers every
 		// key = full re-sync) and re-run the policy mirror's sync, since a record
 		// edited while NATS was down failed its KV write and nothing else retries
 		// it. Both are assigned below, before any reconnect can fire.
-		nc, err = natsx.Connect(&cfg.NATS, log, m, func() {
+		nc, err = natsx.Connect(&cfg.NATS, natsx.ServiceAccessd, log, m, func() {
 			if statusProj != nil {
 				statusProj.Resync()
 			}
@@ -325,7 +284,7 @@ func main() {
 		// Controller health: core-NATS heartbeat subscriber → controllers
 		// last_seen/status (a direct record update, not an events row). Owns its
 		// own lifetime; stopped in OnTerminate.
-		healthMon = health.New(e.App, nc.NC, subj, cfg.Accessd.ControllerOfflineAfter, log, m)
+		healthMon = liveness.New(e.App, nc.NC, subj, cfg.Accessd.ControllerOfflineAfter, log, m)
 		if err := healthMon.Start(); err != nil {
 			return err
 		}
@@ -380,13 +339,19 @@ func main() {
 			return err
 		}
 
-		// Service discovery: identity only (no endpoints), never fatal. Registered
-		// once everything else is up; stopped first in OnTerminate.
+		// Service discovery: identity only (no endpoints), never fatal, and skipped
+		// without accessd.code. Registered once everything else is up; stopped
+		// first in OnTerminate.
 		meta := map[string]string{}
 		if host, err := os.Hostname(); err == nil {
 			meta["host"] = host
 		}
-		discovery = nc.RegisterService(natsx.ServiceAccessd, "stone-access system of record", meta)
+		discovery = nc.RegisterService(natsx.ServiceAccessd, "stone-access system of record", cfg.Accessd.Code, meta)
+
+		// Started last, so the first probe sees the NATS connection above. It
+		// probes once synchronously, so /api/ready answers as soon as the server
+		// listens.
+		prober.Start(proberCtx)
 
 		log.Info("accessd serving",
 			"policyBucket", cfg.Policy.Bucket,
@@ -399,6 +364,7 @@ func main() {
 
 	pb.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		log.Info("accessd terminating")
+		stopProber()
 		if discovery != nil {
 			_ = discovery.Stop() // before nc.Close below
 		}
@@ -431,11 +397,6 @@ func main() {
 		}
 		if collector != nil {
 			collector.Stop()
-		}
-		if metricsSrv != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = metricsSrv.Shutdown(ctx)
-			cancel()
 		}
 		if nc != nil {
 			_ = nc.Close()

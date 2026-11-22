@@ -1,6 +1,10 @@
 package subjects
 
-import "testing"
+import (
+	"testing"
+
+	kitsubjects "github.com/stone-age-io/kit/subjects"
+)
 
 func TestBuild(t *testing.T) {
 	s := Default()
@@ -120,6 +124,27 @@ func TestEventMsg(t *testing.T) {
 	for _, subj := range []string{s.Heartbeat("hq", "c1"), s.Grant("hq", "door", "d1"), s.Tap("hq", "door", "d1")} {
 		if m := EventMsg(subj, nil); m.Header != nil {
 			t.Errorf("%s: header %v, want none", subj, m.Header)
+		}
+	}
+}
+
+// The stream subject and each consumer's filters, through the kit's overlap
+// check (ADR 0008). JetStream refuses a consumer whose filters overlap, and the
+// notify sink has three.
+func TestFiltersDisjoint(t *testing.T) {
+	s := Default()
+	if err := kitsubjects.Disjoint(s.NotifyWildcards()...); err != nil {
+		t.Errorf("notify filters: %v", err)
+	}
+	stream := s.EventsWildcards()[0]
+	for _, f := range append(s.NotifyWildcards(), s.TapEventWildcard()) {
+		if !kitsubjects.Overlap(stream, f) {
+			t.Errorf("consumer filter %s is outside the stream subject %s", f, stream)
+		}
+	}
+	for _, f := range []string{s.TapWildcard("hq"), s.PostureWildcard("hq"), s.HeartbeatWildcard(), s.Health("hq", "c1")} {
+		if kitsubjects.Overlap(stream, f) {
+			t.Errorf("%s is not an event but the stream subject %s captures it", f, stream)
 		}
 	}
 }

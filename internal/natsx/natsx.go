@@ -1,21 +1,23 @@
 // file: internal/natsx/natsx.go
 
-// Package natsx is a small NATS connection helper for the stone-access
-// binaries. It is adapted (not imported) from rule-router's broker: connection
-// lifecycle, auth, and TLS, plus convenience helpers to ensure the policy KV
-// bucket and the audit JetStream stream exist. It deliberately knows nothing
-// about consumers, subscriptions, or the rule engine.
+// Package natsx is the stone-access binaries' NATS layer. The connection itself
+// comes from stone-age-io/kit's natsx, which reconnects forever and keeps trying
+// through auth errors, so a creds file creds-keeper rewrites after a Revoke is
+// picked up. What is here is what only access control needs: its auth and TLS
+// options, its metrics hooks, and helpers to ensure the policy KV buckets and
+// the audit stream exist.
 package natsx
 
 import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	kitnatsx "github.com/stone-age-io/kit/natsx"
+
 	"github.com/stone-age-io/access-control/config"
 	"github.com/stone-age-io/access-control/internal/logger"
 	"github.com/stone-age-io/access-control/internal/metrics"
@@ -38,42 +40,65 @@ type Conn struct {
 }
 
 // Connect establishes the NATS connection and JetStream context using the
-// configured auth and TLS settings. The metrics argument may be nil.
+// configured auth and TLS settings. name is the client name the server reports
+// (the binary's discovery name). The metrics argument may be nil.
 //
-// onReconnect, if non-nil, is invoked from the NATS reconnect handler (and, when
-// retryOnFailedConnect is set, from the first-connect handler too) — the
-// controller uses it to re-arm its KV watcher and re-publish its status shadow,
-// which go stale across a connection loss.
+// onReconnect, if non-nil, is invoked on every reconnect (and, when
+// retryOnFailedConnect is set, on the first connect too): the controller uses it
+// to re-arm its KV watcher and re-publish its status shadow, which go stale
+// across a connection loss.
 //
 // retryOnFailedConnect makes a cold boot with no reachable server non-fatal: the
 // controller (an always-on edge device) returns a connection in reconnecting
 // state and keeps trying in the background, so it can come up on its cached config
-// and converge when NATS returns. accessd leaves it false and fails fast — the hub
+// and converge when NATS returns. accessd leaves it false and fails fast: the hub
 // has nothing useful to do without its own NATS.
-func Connect(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onReconnect func(), retryOnFailedConnect bool) (*Conn, error) {
+func Connect(cfg *config.NATSConfig, name string, log *logger.Logger, m *metrics.Metrics, onReconnect func(), retryOnFailedConnect bool) (*Conn, error) {
 	log = log.With("component", "natsx")
 
-	opts, err := buildOptions(cfg, log, m, onReconnect, retryOnFailedConnect)
+	extra, err := authOptions(cfg, log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build NATS options: %w", err)
 	}
+	extra = append(extra,
+		nats.ReconnectWait(cfg.ReconnectWait),
+		// nats.maxReconnects defaults to -1, the kit's own setting. An explicit
+		// value still wins, as the configuration reference documents.
+		nats.MaxReconnects(cfg.MaxReconnects),
+		nats.ReconnectJitter(reconnectJitterMin, reconnectJitterMax),
+		nats.DrainTimeout(drainTimeout),
+	)
 
-	urlString := strings.Join(cfg.URLs, ",")
-	log.Info("connecting to NATS", "urls", cfg.URLs)
-
-	nc, err := nats.Connect(urlString, opts...)
+	resync := func() {
+		if onReconnect != nil {
+			onReconnect()
+		}
+	}
+	nc, err := kitnatsx.Connect(kitnatsx.Options{
+		URLs:  cfg.URLs,
+		Creds: cfg.CredsFile,
+		Name:  name,
+		Log:   log.Logger,
+		Hooks: kitnatsx.Hooks{
+			Connected: func() {
+				m.SetNATSConnectionStatus(true)
+				resync()
+			},
+			Disconnected: func() { m.SetNATSConnectionStatus(false) },
+			Reconnected: func() {
+				m.SetNATSConnectionStatus(true)
+				m.IncNATSReconnects()
+				resync()
+			},
+			Closed: func() { m.SetNATSConnectionStatus(false) },
+		},
+		RetryOnFailedConnect: retryOnFailedConnect,
+		Extra:                extra,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to NATS (urls=%v): %w", cfg.URLs, err)
+		return nil, err
 	}
-	if nc.IsConnected() {
-		m.SetNATSConnectionStatus(true)
-		log.Info("NATS connection established", "connectedURL", nc.ConnectedUrl())
-	} else {
-		// retryOnFailedConnect path: no server reachable yet. Not fatal — the client
-		// keeps retrying and the connect handler flips the metric once it lands.
-		m.SetNATSConnectionStatus(false)
-		log.Warn("NATS not reachable at startup; retrying in background", "urls", cfg.URLs)
-	}
+	m.SetNATSConnectionStatus(nc.IsConnected())
 
 	js, err := jetstream.New(nc)
 	if err != nil {
@@ -86,7 +111,7 @@ func Connect(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onR
 
 // KVBinder returns a closure that binds the named KV bucket read-only on demand.
 // The controller hands this to its PolicyStore/StatusWriter so the bind is retried
-// lazily (inside the watcher/drain loop) rather than done fatally at boot — the
+// lazily (inside the watcher/drain loop) rather than done fatally at boot: the
 // key to surviving a reboot with NATS unreachable.
 func (c *Conn) KVBinder(bucket string) func(context.Context) (jetstream.KeyValue, error) {
 	return func(ctx context.Context) (jetstream.KeyValue, error) {
@@ -95,7 +120,7 @@ func (c *Conn) KVBinder(bucket string) func(context.Context) (jetstream.KeyValue
 }
 
 // EnsureKVBucket returns the named KV bucket, creating it if it does not exist.
-// Only accessd (the policy writer/owner) should call this — it needs stream
+// Only accessd (the policy writer/owner) should call this: it needs stream
 // create/update rights on the bucket. Read-only consumers use KVBucket.
 func (c *Conn) EnsureKVBucket(ctx context.Context, bucket string) (jetstream.KeyValue, error) {
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
@@ -129,7 +154,8 @@ func (c *Conn) KVBucket(ctx context.Context, bucket string) (jetstream.KeyValue,
 }
 
 // EnsureStream returns the named JetStream stream, creating it if it does not
-// exist (file storage; subjs are the event subjects to capture).
+// exist (file storage; subjs are the event subjects to capture). CreateOrUpdate,
+// so a change of subjects reaches an existing deployment at startup.
 func (c *Conn) EnsureStream(ctx context.Context, name string, subjs []string) (jetstream.Stream, error) {
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
@@ -159,50 +185,14 @@ func (c *Conn) Close() error {
 	return nil
 }
 
-func buildOptions(cfg *config.NATSConfig, log *logger.Logger, m *metrics.Metrics, onReconnect func(), retryOnFailedConnect bool) ([]nats.Option, error) {
-	opts := []nats.Option{
-		nats.ReconnectWait(cfg.ReconnectWait),
-		nats.MaxReconnects(cfg.MaxReconnects),
-		nats.ReconnectJitter(reconnectJitterMin, reconnectJitterMax),
-		nats.DrainTimeout(drainTimeout),
-		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
-			log.Warn("NATS client disconnected", "error", err)
-			m.SetNATSConnectionStatus(false)
-		}),
-		nats.ReconnectHandler(func(nc *nats.Conn) {
-			log.Info("NATS client reconnected", "url", nc.ConnectedUrl())
-			m.SetNATSConnectionStatus(true)
-			m.IncNATSReconnects()
-			if onReconnect != nil {
-				onReconnect()
-			}
-		}),
-		nats.ClosedHandler(func(nc *nats.Conn) {
-			log.Error("NATS connection permanently closed", "error", nc.LastError())
-			m.SetNATSConnectionStatus(false)
-		}),
-	}
-
-	if retryOnFailedConnect {
-		// Cold boot with no server is non-fatal; keep retrying forever. The connect
-		// handler fires when a boot that started disconnected finally lands — treat it
-		// like a reconnect (flip the metric, re-arm the watcher, re-publish status).
-		opts = append(opts,
-			nats.RetryOnFailedConnect(true),
-			nats.ConnectHandler(func(nc *nats.Conn) {
-				log.Info("NATS connection established", "url", nc.ConnectedUrl())
-				m.SetNATSConnectionStatus(true)
-				if onReconnect != nil {
-					onReconnect()
-				}
-			}),
-		)
-	}
+// authOptions turns the configured auth and TLS settings into client options.
+// A creds file is not here: the kit's Connect takes it directly.
+func authOptions(cfg *config.NATSConfig, log *logger.Logger) ([]nats.Option, error) {
+	var opts []nats.Option
 
 	switch {
 	case cfg.CredsFile != "":
 		log.Info("using NATS JWT authentication", "credsFile", cfg.CredsFile)
-		opts = append(opts, nats.UserCredentials(cfg.CredsFile))
 	case cfg.NKeySeedFile != "":
 		log.Info("using NATS NKey authentication", "seedFile", cfg.NKeySeedFile)
 		nkeyOpt, err := nats.NkeyOptionFromSeed(cfg.NKeySeedFile)

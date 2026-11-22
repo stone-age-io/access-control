@@ -1,9 +1,9 @@
-// Package health keeps the controllers collection's liveness columns
+// Package liveness keeps the controllers collection's liveness columns
 // (last_seen/status) in step with controller heartbeats. It is the accessd-side
 // counterpart to the controller's heartbeat publisher.
 //
 // Heartbeats are ephemeral control-plane signals: they ride core NATS (not
-// JetStream) and sit outside the .evt subtree, so they are deliberately NOT in
+// JetStream) on the heartbeat channel, outside evt, so they are deliberately NOT in
 // the audit stream. This monitor subscribes to them directly and writes the
 // controllers record — never an events row, which would flood the audit log. A
 // periodic sweep flips a controller to "offline" once its last heartbeat is older
@@ -16,7 +16,7 @@
 // So each transition publishes {app}.{location}.ctrl.{code}.evt.state, which the
 // existing 6-token stream wildcard captures with no stream change, putting it in
 // the events timeline and within reach of the notification sinks.
-package health
+package liveness
 
 import (
 	"context"

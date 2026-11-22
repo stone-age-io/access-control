@@ -1,4 +1,4 @@
-package health
+package liveness
 
 import (
 	"encoding/json"

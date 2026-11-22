@@ -59,9 +59,11 @@ logging:
 # ----------------------------------------------------------------------------
 metrics:
   enabled: true
-  address: ":2113"
-  path: "/metrics"
+  # accessd serves GET /metrics on its own HTTP port, beside GET /api/ready.
+  # address and path are the controller's side listener; accessd ignores them.
   updateInterval: 15s
+  # When set, GET /metrics needs this as a Bearer token or a Basic password.
+  token: ""
 
 # ----------------------------------------------------------------------------
 # Policy KV — the bucket accessd mirrors the policy graph into, one key per
@@ -104,6 +106,9 @@ accessd:
   # gitignored. The management UI is //go:embed-ed into the binary (from
   # internal/webui/public), not served from disk — there is no pb_public.
   dataDir: "./pb_data"
+  # accessd's Thing code on the platform (ADR 0008). NATS service discovery
+  # carries it as `code` metadata; empty skips the registration.
+  code: ""
   # How long without a heartbeat before a controller is shown offline. accessd
   # subscribes to acc.*.heartbeat.ctrl.* (core NATS) and updates the controllers
   # record directly. Keep this a few controller heartbeatIntervals so one dropped

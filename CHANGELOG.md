@@ -46,17 +46,40 @@ together. A publisher on an old subject reaches nobody.
   `docs/controller.md`.
 - `heartbeat` is now a reserved subject keyword: no location, portal type or
   code may be named `heartbeat`.
+- **accessd's `/metrics` moved to its own HTTP port**, beside the console and
+  the new `/api/ready`. It no longer opens the side listener at
+  `metrics.address` (`:2113`); point the scrape at accessd's PocketBase
+  address. The controller keeps its side listener.
+- **Service discovery needs a Thing code.** A controller registers with its
+  `controller.code`; accessd with the new `accessd.code`, and skips the
+  registration while that is empty. The metadata now carries `version`
+  beside `code`.
 
 ### Added
 
 - **Every event carries a `Nats-Msg-Id`**, made once per event, so
   `ACC_EVENTS` stores an event once within its duplicate window even if a
   publish is retried. Commands, taps and heartbeats carry none.
+- **accessd answers `GET /api/ready`**, the platform's readiness contract:
+  the database, accessd's collections, the schema version and the NATS
+  connection, probed every 15 seconds, `503` only when one fails.
+- **`metrics.token`** protects accessd's `/metrics` with a Bearer token or a
+  Basic password.
+- **The NATS connection keeps retrying through auth errors**, so a creds file
+  that creds-keeper rewrites after a Revoke is picked up at the next
+  reconnect.
 
 ### Changed
 
 - PocketBase is imported from `ganigeorgiev.com/pocketbase` at v0.41.1 (the
   GitHub module is archived), on Go 1.27.
+- **Built on [stone-age-io/kit](https://github.com/stone-age-io/kit) v0.1.0.**
+  The NATS connection, service discovery, the version, readiness, `/metrics`
+  and accessd's console and branding routes come from the kit.
+  `internal/version` is gone, and `internal/natsx` keeps only access
+  control's auth and TLS options and its KV and stream helpers.
+  `internal/health`, the controller heartbeat monitor, is now
+  `internal/liveness`, so the name is free for readiness.
 
 ## [0.2.0] - 2026-10-15
 

@@ -123,6 +123,10 @@ type MetricsConfig struct {
 	Address        string `json:"address" yaml:"address" mapstructure:"address"`
 	Path           string `json:"path" yaml:"path" mapstructure:"path"`
 	UpdateInterval string `json:"updateInterval" yaml:"updateInterval" mapstructure:"updateInterval"`
+	// Token, when set, is required on accessd's GET /metrics as a Bearer token or
+	// a Basic password. Only accessd reads it: it serves /metrics on its own HTTP
+	// port. The controller keeps its separate listener at Address and Path.
+	Token string `json:"token" yaml:"token" mapstructure:"token"`
 }
 
 // DiagnosticsConfig configures the controller's opt-in read-only diagnostics
@@ -199,6 +203,10 @@ type SubjectsConfig struct {
 type AccessdConfig struct {
 	// DataDir is the embedded PocketBase data directory.
 	DataDir string `json:"dataDir" yaml:"dataDir" mapstructure:"dataDir"`
+	// Code is the code of accessd's Thing on the platform (ADR 0008 rule 4). It
+	// goes into the NATS service discovery metadata, which is how the console joins
+	// the running process to its Thing. Empty skips discovery registration.
+	Code string `json:"code" yaml:"code" mapstructure:"code"`
 	// ControllerOfflineAfter is how long accessd tolerates silence from a
 	// controller before marking it offline. Should exceed a controller's
 	// HeartbeatInterval by a few intervals. Defaults to 45s.
@@ -310,10 +318,10 @@ func Load(path string) (*Config, error) {
 		"nats.tls.enable", "nats.tls.certFile", "nats.tls.keyFile",
 		"nats.tls.caFile", "nats.tls.insecure",
 		"logging.level", "logging.encoding", "logging.outputPath",
-		"metrics.enabled", "metrics.address", "metrics.path", "metrics.updateInterval",
+		"metrics.enabled", "metrics.address", "metrics.path", "metrics.updateInterval", "metrics.token",
 		"diagnostics.enabled", "diagnostics.address",
 		"policy.bucket", "events.stream", "status.bucket", "subjects.app",
-		"accessd.dataDir", "accessd.controllerOfflineAfter",
+		"accessd.dataDir", "accessd.code", "accessd.controllerOfflineAfter",
 		"accessd.auditRetentionDays", "accessd.eventRetentionDays", "accessd.webhookURL",
 		"policy.cache.enabled", "policy.cache.path", "policy.cache.maxAge", "policy.bindings.path",
 		"branding.dir",

@@ -151,7 +151,7 @@ Nothing in this plan adds a timer to the controller. The two candidates that loo
 like they would, don't:
 
 - **Controller liveness** is accessd work, and
-  [`health.Monitor.sweepLoop`](../internal/health/monitor.go) already ticks at
+  [`liveness.Monitor.sweepLoop`](../internal/liveness/monitor.go) already ticks at
   `offlineAfter/3`, with `sweep()` already being the exact transition branch.
 - **`no_entry`** is edge work, but `reconcileHolds` already ticks every 10s and
   already iterates every driven portal. (It snapshots the portal set under the
@@ -198,7 +198,7 @@ No migrations. No new timers. No new packages.
 
 ### 1.1 Controller online↔offline
 
-[`health.sweep()`](../internal/health/monitor.go) queries only `status = 'online'`
+[`liveness.sweep()`](../internal/liveness/monitor.go) queries only `status = 'online'`
 and writes only on the flip — it is already the transition branch. Emitting is one
 call inside it.
 

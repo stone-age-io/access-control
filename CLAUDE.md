@@ -103,7 +103,7 @@ section and **refuses an empty one**, so a forgotten promotion fails before anyt
 `[Unreleased]` and ships as a prerelease). Entries are paragraphs for an integrator, not commit subjects: the upgrade
 note is the part that exists nowhere else.
 
-- **No ldflags.** The version is what `go build` stamps from the checkout's tag (`internal/version`), and `--version`
+- **No ldflags.** The version is what `go build` stamps from the checkout's tag (the kit's `version.Build`), and `--version`
   and service discovery both read it. A dirty tree stamps `+dirty`, so the release builds the controller once and checks
   its `-version` against the tag before goreleaser publishes anything.
 - **The committed console is what ships.** goreleaser has no `before` hooks (the platform's builds its console there,
@@ -316,7 +316,7 @@ events collection (UI) ◄── internal/audit ◄── ACC_EVENTS JetStream �
   JetStream's `Nak` is the retry, which is the whole argument for a durable over a hook. The URL is **config, not
   a record**: accessd POSTs from inside the deployment's network, so deploy-time means there is no API to abuse;
   redirects are never followed and the timeout is hard.
-- **Controller health** (`internal/health`, accessd-side) — a core-NATS subscriber to the heartbeat subject
+- **Controller health** (`internal/liveness`, accessd-side) — a core-NATS subscriber to the heartbeat subject
   updates `controllers.last_seen`/`status` with a **direct record update, not an events row**, plus a staleness
   sweep that marks a silent box offline. Heartbeats are deliberately kept out of the audit stream — but a
   **liveness transition is not a heartbeat**: an online↔offline flip is one event per outage, and it is the most
@@ -818,9 +818,10 @@ width whether it holds 2 fields or 9, so columns line up across cards. Tailwind 
 ## Conventions
 
 - Module path `github.com/stone-age-io/access-control`, Go 1.27, on PocketBase from `ganigeorgiev.com/pocketbase` (never `github.com/pocketbase`, the archived module). Structured logging via `zap` wrapper
-  (`internal/logger`); Prometheus metrics (`internal/metrics`) on a side port when `metrics.enabled` is set (off by
-  default; `metrics.address` defaults to `:2113` for both binaries, and the example `controller.yaml` uses `:2114`
-  so both can share a host).
+  (`internal/logger`); Prometheus metrics (`internal/metrics`) when `metrics.enabled` is set (off by default):
+  accessd serves `/metrics` and `/api/ready` on its PocketBase port through the kit's `pbx`, and the controller on a
+  side port at `metrics.address` (`:2114` in the example `controller.yaml`). The NATS connection, service discovery,
+  the version, readiness and the SPA/branding routes come from `stone-age-io/kit` v0.1.0.
 - **Fail-safe everywhere**: dangling references, malformed values, not-yet-synced records, parse errors — all
   resolve to deny or "keep previous value," never to a grant or a crash.
 - Decision **reason codes** (`policy.go`) are stable strings that flow verbatim into events and the UI — treat
