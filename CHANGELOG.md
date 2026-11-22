@@ -12,6 +12,12 @@ record for that period, and this file starts where the versioned releases do.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
+The platform keeps accessd's and each controller's NATS creds file current
+(ADR 0009 in platform-docs): set `platform.url` and each binary signs in as its
+own Thing. Nothing changes without it.
+
 ### Added
 
 - **The platform keeps the NATS creds file current** (ADR 0009 in
@@ -314,7 +320,8 @@ Also found in that audit:
 - **A database created before 2026-07-26**, when `cardholders` became an auth
   collection, cannot migrate onto this schema. Start from a fresh `pb_data`.
 
-[Unreleased]: https://github.com/stone-age-io/access-control/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/stone-age-io/access-control/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/stone-age-io/access-control/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/stone-age-io/access-control/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/stone-age-io/access-control/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/stone-age-io/access-control/releases/tag/v0.1.0
