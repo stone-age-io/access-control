@@ -1,0 +1,16 @@
+code: access-gate
+name: Access-Controlled Gate
+description: A vehicle gate on the same controller as the doors, with a much longer held-open threshold.
+subject_prefix: acc.{location}
+operations:
+  - publish_gate_decision
+  - publish_gate_alarm
+  - subscribe_gate_tap
+  - subscribe_gate_grant
+metadata_schema:
+  type: object
+  properties:
+    operator_make: {type: string, title: Gate operator make}
+    reader_protocol: {type: string, title: Reader protocol, enum: [osdp, wiegand]}
+    held_open_seconds: {type: integer, title: Held-open threshold (s)}
+    loop_detector: {type: boolean, title: Vehicle loop fitted}

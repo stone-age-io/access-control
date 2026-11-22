@@ -1,0 +1,19 @@
+code: access-door
+name: Access-Controlled Door
+description: A door with a reader, a strike or maglock, and door-position monitoring. Its code is the portal code in stone-access.
+subject_prefix: acc.{location}
+operations:
+  - publish_door_decision
+  - publish_door_alarm
+  - publish_door_state
+  - subscribe_door_tap
+  - subscribe_door_grant
+  - subscribe_door_posture
+metadata_schema:
+  type: object
+  properties:
+    lock_type: {type: string, title: Lock, enum: [strike, maglock]}
+    reader_make: {type: string, title: Reader make}
+    reader_protocol: {type: string, title: Reader protocol, enum: [osdp, wiegand]}
+    held_open_seconds: {type: integer, title: Held-open threshold (s)}
+    installed: {type: string, format: date, title: Installed}

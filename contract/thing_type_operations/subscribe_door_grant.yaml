@@ -1,0 +1,4 @@
+name: subscribe_door_grant
+capability: subscribe
+subject_suffix: cmd.door.{thing}.grant
+description: Operator-initiated momentary unlock of a door.

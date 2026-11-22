@@ -1,0 +1,15 @@
+code: access-controller
+name: Access Controller
+description: A stone-access edge controller. Decides credential presentations locally against a mirrored policy graph, and keeps deciding when the WAN is down.
+subject_prefix: acc.{location}
+operations:
+  - publish_controller_heartbeat
+  - publish_controller_state
+metadata_schema:
+  type: object
+  properties:
+    model: {type: string, title: Board, enum: [kincony-server-mini, kincony-pi5r8]}
+    serial: {type: string, title: Serial number}
+    reader_bus: {type: string, title: RS485 device}
+    relays: {type: integer, title: Relay outputs}
+    inputs: {type: integer, title: Digital inputs}

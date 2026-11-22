@@ -1,0 +1,4 @@
+name: subscribe_gate_grant
+capability: subscribe
+subject_suffix: cmd.gate.{thing}.grant
+description: Operator-initiated momentary opening of a gate.

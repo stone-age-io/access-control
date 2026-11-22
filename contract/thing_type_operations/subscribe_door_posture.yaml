@@ -1,0 +1,4 @@
+name: subscribe_door_posture
+capability: subscribe
+subject_suffix: cmd.door.{thing}.posture
+description: Set or clear a runtime posture override on a door.

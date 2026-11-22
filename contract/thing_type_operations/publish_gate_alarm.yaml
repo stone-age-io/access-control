@@ -1,0 +1,4 @@
+name: publish_gate_alarm
+capability: publish
+subject_suffix: evt.gate.{thing}.alarm
+description: Gate forced or held open past its threshold.

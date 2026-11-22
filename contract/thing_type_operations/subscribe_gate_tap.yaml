@@ -1,0 +1,4 @@
+name: subscribe_gate_tap
+capability: subscribe
+subject_suffix: tap.gate.{thing}
+description: "A credential presentation arriving from a gate's reader."

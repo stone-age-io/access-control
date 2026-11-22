@@ -1,0 +1,4 @@
+name: publish_door_decision
+capability: publish
+subject_suffix: evt.door.{thing}.tap
+description: The decision on a credential presentation at a door.

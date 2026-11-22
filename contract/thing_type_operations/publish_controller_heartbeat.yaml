@@ -1,0 +1,4 @@
+name: publish_controller_heartbeat
+capability: publish
+subject_suffix: heartbeat.ctrl.{thing}
+description: Controller liveness beat, on the heartbeat channel and outside the audited evt channel.

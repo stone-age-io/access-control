@@ -57,6 +57,10 @@ together. A publisher on an old subject reaches nobody.
 
 ### Added
 
+- **`contract/`**: the Thing Types, operations and NATS roles an organization
+  needs, as a `stone` template. Onboard one with
+  `stone apply --template contract/` (stone-cli, unreleased). The roles are
+  `accessd` and `access-controller`; a controller's cannot write ACC_POLICY.
 - **Every event carries a `Nats-Msg-Id`**, made once per event, so
   `ACC_EVENTS` stores an event once within its duplicate window even if a
   publish is retried. Commands, taps and heartbeats carry none.

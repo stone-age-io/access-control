@@ -1,0 +1,4 @@
+code: accessd
+name: Access Control Server
+description: "accessd: the central access-control server. Holds the policy, mirrors it to the controllers through KV, and audits their events. Its subjects belong to the doors and controllers, so it declares no operations; its role says what it may do."
+subject_prefix: app.acc.{thing}

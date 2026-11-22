@@ -1,0 +1,4 @@
+name: publish_controller_state
+capability: publish
+subject_suffix: evt.ctrl.{thing}.state
+description: Controller online/offline transition, published by accessd.

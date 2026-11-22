@@ -1,0 +1,4 @@
+name: subscribe_door_tap
+capability: subscribe
+subject_suffix: tap.door.{thing}
+description: "A credential presentation arriving from a door's reader. The controller's input, not its output."

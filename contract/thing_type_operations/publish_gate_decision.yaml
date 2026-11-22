@@ -1,0 +1,4 @@
+name: publish_gate_decision
+capability: publish
+subject_suffix: evt.gate.{thing}.tap
+description: The decision on a credential presentation at a gate.

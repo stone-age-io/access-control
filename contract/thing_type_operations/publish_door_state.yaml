@@ -1,0 +1,4 @@
+name: publish_door_state
+capability: publish
+subject_suffix: evt.door.{thing}.state
+description: Effective-posture change on a door.

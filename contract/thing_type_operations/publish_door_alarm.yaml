@@ -1,0 +1,4 @@
+name: publish_door_alarm
+capability: publish
+subject_suffix: evt.door.{thing}.alarm
+description: Door forced or held open past its threshold.
