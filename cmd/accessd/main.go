@@ -60,6 +60,11 @@ import (
 	_ "github.com/stone-age-io/access-control/pbmigrations"
 )
 
+// firstCredsWait bounds how long a first start waits for the platform to write
+// the creds file. A restart finds the file it has and connects at once, even
+// while the platform is down.
+const firstCredsWait = 30 * time.Second
+
 func main() {
 	// PocketBase owns the CLI, but its --version would only run after the config
 	// loads, and loading fails on a box that is not configured yet, which is when
@@ -88,6 +93,12 @@ func main() {
 	m, err := metrics.NewMetrics(prometheus.NewRegistry())
 	if err != nil {
 		log.Fatal("failed to create metrics", "error", err)
+	}
+
+	if cfg.Platform.Enabled() {
+		if err := cfg.CredsOutside(cfg.Accessd.DataDir); err != nil {
+			log.Fatal("invalid configuration", "error", err)
+		}
 	}
 
 	pb := pocketbase.NewWithConfig(pocketbase.Config{
@@ -152,8 +163,9 @@ func main() {
 		discovery   micro.Service
 	)
 
-	// The readiness prober's loop lives for as long as the server does.
-	proberCtx, stopProber := context.WithCancel(context.Background())
+	// The readiness prober's loop and the credential keeper live for as long
+	// as the server does.
+	serveCtx, stopServe := context.WithCancel(context.Background())
 
 	pb.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		// The embedded management UI (SPA) at "/" with history-mode fallback, and
@@ -186,6 +198,24 @@ func main() {
 
 		if cfg.Metrics.Enabled {
 			pbx.ServeMetrics(e, m.GetRegistry(), cfg.Metrics.Token)
+		}
+
+		// The platform keeps nats.credsFile current (ADR 0009). The keeper adds
+		// the credentials and platform checks and the creds_keeper_* metrics.
+		// accessd fails fast without NATS, so a first start that gets no creds
+		// file within firstCredsWait fails too, naming the reason.
+		if cfg.Platform.Enabled() {
+			keeper, err := natsx.StartKeeper(serveCtx, cfg, log.Logger, m.GetRegistry())
+			if err != nil {
+				return err
+			}
+			keeper.RegisterChecks(&reg)
+			waitCtx, cancel := context.WithTimeout(serveCtx, firstCredsWait)
+			err = keeper.WaitForCreds(waitCtx)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("no creds file from the platform (check platform.url and platform.identity, and the logged sync error): %w", err)
+			}
 		}
 
 		// On reconnect, re-establish the status watcher (WatchAll re-delivers every
@@ -351,7 +381,7 @@ func main() {
 		// Started last, so the first probe sees the NATS connection above. It
 		// probes once synchronously, so /api/ready answers as soon as the server
 		// listens.
-		prober.Start(proberCtx)
+		prober.Start(serveCtx)
 
 		log.Info("accessd serving",
 			"policyBucket", cfg.Policy.Bucket,
@@ -364,7 +394,7 @@ func main() {
 
 	pb.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		log.Info("accessd terminating")
-		stopProber()
+		stopServe()
 		if discovery != nil {
 			_ = discovery.Stop() // before nc.Close below
 		}

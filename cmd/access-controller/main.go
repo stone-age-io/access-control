@@ -90,6 +90,29 @@ func main() {
 	// handler — and matching accessd's, so policy/events flow between them.
 	subj := subjects.New(cfg.Subjects.App)
 
+	// The platform keeps nats.credsFile current (ADR 0009), with the
+	// creds_keeper_* metrics on the metrics listener. A reboot finds the file it
+	// already has and goes on at once, so a controller still boots on its cached
+	// config with the platform unreachable. Only a first start, with no file yet,
+	// waits here: nats.go reads the file before it dials, and before the first
+	// file this box has no policy, cache or bindings to arm from.
+	if cfg.Platform.Enabled() {
+		keeper, err := natsx.StartKeeper(ctx, cfg, log.Logger, m.GetRegistry())
+		if err != nil {
+			log.Fatal("failed to start the credential keeper", "error", err)
+		}
+		if _, err := os.Stat(cfg.NATS.CredsFile); err != nil {
+			log.Info("waiting for the first creds file from the platform", "path", cfg.NATS.CredsFile)
+		}
+		waitCtx, stopWait := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		err = keeper.WaitForCreds(waitCtx)
+		stopWait()
+		if err != nil {
+			log.Info("stopped before the first creds file arrived", "error", err)
+			return
+		}
+	}
+
 	// resync/statusResync are wired after the policy store and status writer exist;
 	// a reconnect before then is a harmless no-op. On reconnect we re-establish the
 	// policy watcher and re-publish the whole device shadow.

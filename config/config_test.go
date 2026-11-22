@@ -143,3 +143,50 @@ func TestCacheDefaultsAndEnvOnlyKeys(t *testing.T) {
 		t.Errorf("accessd = %+v, want env overrides applied", cfg.Accessd)
 	}
 }
+
+// With platform.url set the platform writes the creds file, so a file that
+// does not exist yet is fine; without it, a named file must exist.
+func TestPlatformCredsFile(t *testing.T) {
+	missing := t.TempDir() + "/pb_creds/accessd.creds"
+	t.Setenv("SA_NATS_CREDSFILE", missing)
+	if _, err := Load(""); err == nil {
+		t.Fatal("a missing creds file loaded without platform.url")
+	}
+
+	t.Setenv("SA_PLATFORM_URL", "https://platform.example.com")
+	t.Setenv("SA_PLATFORM_IDENTITY", "accessd@ops.thing.local")
+	t.Setenv("SA_PLATFORM_SYNCINTERVAL", "2m")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load with platform.url: %v", err)
+	}
+	if !cfg.Platform.Enabled() || cfg.Platform.Identity != "accessd@ops.thing.local" || cfg.Platform.SyncInterval.String() != "2m0s" {
+		t.Fatalf("platform = %+v", cfg.Platform)
+	}
+
+	t.Setenv("SA_NATS_CREDSFILE", "")
+	if _, err := Load(""); err == nil {
+		t.Fatal("platform.url without nats.credsFile loaded")
+	}
+}
+
+func TestCredsOutside(t *testing.T) {
+	cfg := &Config{}
+	cfg.NATS.CredsFile = "pb_creds/accessd.creds"
+	if err := cfg.CredsOutside("pb_data"); err != nil {
+		t.Fatalf("pb_creds refused: %v", err)
+	}
+	cfg.NATS.CredsFile = "pb_data_creds/accessd.creds"
+	if err := cfg.CredsOutside("pb_data"); err != nil {
+		t.Fatalf("a sibling with a shared prefix refused: %v", err)
+	}
+	cfg.NATS.CredsFile = "pb_data/accessd.creds"
+	if err := cfg.CredsOutside("pb_data"); err == nil {
+		t.Fatal("a creds file in pb_data accepted")
+	}
+	cfg.NATS.CredsFile = "pb_creds/accessd.creds"
+	cfg.Platform.SessionFile = "./pb_data/x/session.json"
+	if err := cfg.CredsOutside("pb_data"); err == nil {
+		t.Fatal("a session file in pb_data accepted")
+	}
+}

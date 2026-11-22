@@ -739,6 +739,10 @@ Unified `config.Config` (`config/config.go`) for both binaries, loaded via Viper
 env apply. `accessd` reads `$SA_CONFIG` (default `config/accessd.yaml`); `access-controller` uses its `-config`
 flag (default `config/controller.yaml`). At most one NATS auth method may be set (creds file / nkey / token /
 user-pass); `*.creds` and `config/local*.yaml` are gitignored — never commit credentials.
+With `platform.url` set, `natsx.StartKeeper` runs the kit's `credskeeper` in process as the binary's own Thing
+(ADR 0009) and the creds file need not exist at load. accessd waits up to 30s for the first file, then fails, and
+refuses credentials inside `accessd.dataDir` (PocketBase backups); a controller waits without a bound, since before
+its first file it has nothing to arm. A restart with a file on disk never waits.
 
 A controller's config is just its identity and hardware selection: `controller.code` (which portals it drives,
 matched against the policy graph), `controller.location` (timezone + command/fire subscription scope),

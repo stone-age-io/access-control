@@ -22,6 +22,13 @@ nats:
   # service discovery; the full list is in docs/controller.md §7). Save its
   # creds file outside the repo (*.creds is gitignored).
   credsFile: "config/controller.creds"
+  #
+  # Or let the platform write and rotate it as this controller's Thing:
+  #   platform:                                # top-level key, beside nats:
+  #     url: "https://platform.example.com"
+  #     identity: "ctrl-hq-1@ops.thing.local"  # password: SA_PLATFORM_PASSWORD, first start only
+  # with credsFile on persistent storage, e.g. "data/creds/controller.creds".
+  # See docs/configuration.md §2.1.
   #   nkeySeedFile: "config/controller.nk"
   #   token: "${SA_NATS_TOKEN}"
   #   username: "controller-hq"

@@ -10,6 +10,18 @@
 #                                       --http; default 127.0.0.1:8090)
 
 # ----------------------------------------------------------------------------
+# Platform — optional. accessd signs in as its own Thing and keeps
+# nats.credsFile current, so a Regenerate or a Revoke on the platform reaches
+# it without a copied file or a restart. Empty url = you provide the creds
+# file. See docs/configuration.md §2.1.
+# ----------------------------------------------------------------------------
+# platform:
+#   url: "https://platform.example.com"
+#   identity: "accessd@ops.thing.local"   # the Thing's login email
+#   # password: first start only, as SA_PLATFORM_PASSWORD, never in this file
+#   syncInterval: 5m
+
+# ----------------------------------------------------------------------------
 # NATS — the data plane. accessd writes policy to the KV bucket and consumes
 # the audit stream. Point this at your remote broker.
 # ----------------------------------------------------------------------------
@@ -26,6 +38,9 @@ nats:
   # user for accessd on the platform, save its creds file outside the repo
   # (anything matching *.creds is gitignored), and reference it here:
   credsFile: "config/example.creds"
+  #
+  # Or let the platform write and rotate it: set platform.url below and point
+  # credsFile OUTSIDE accessd.dataDir, e.g. "pb_creds/accessd.creds".
   #
   # Alternatives (leave credsFile empty if you use one of these):
   #   nkeySeedFile: "config/accessd.nk"   # raw nkey seed file

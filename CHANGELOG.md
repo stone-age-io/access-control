@@ -12,6 +12,25 @@ record for that period, and this file starts where the versioned releases do.
 
 ## [Unreleased]
 
+### Added
+
+- **The platform keeps the NATS creds file current** (ADR 0009 in
+  platform-docs). Set `platform.url` and `platform.identity`, and accessd or
+  a controller signs in as its own Thing with the kit's `credskeeper`,
+  writes `nats.credsFile`, and rewrites it after a Regenerate or a Revoke.
+  The connection moves to the new file without a restart. The password is
+  for the first start only (`SA_PLATFORM_PASSWORD`). accessd's readiness
+  gains `credentials` and `platform`, and both binaries' metrics the
+  `creds_keeper_*` series. Without `platform.url` nothing changes.
+- **accessd refuses its platform credentials inside `accessd.dataDir`**,
+  which PocketBase backups archive. A first start waits up to 30s for the
+  first creds file, then exits. A controller's first start waits as long as
+  it takes. A restart with a file on disk goes on at once.
+
+### Changed
+
+- **Built on kit v0.2.0.**
+
 ## [0.3.0] - 2026-11-22
 
 ### Breaking

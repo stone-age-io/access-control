@@ -76,6 +76,7 @@ const (
 // Accessd/Events; access-controller also reads Controller.
 type Config struct {
 	NATS        NATSConfig        `json:"nats" yaml:"nats" mapstructure:"nats"`
+	Platform    PlatformConfig    `json:"platform" yaml:"platform" mapstructure:"platform"`
 	Logging     LogConfig         `json:"logging" yaml:"logging" mapstructure:"logging"`
 	Metrics     MetricsConfig     `json:"metrics" yaml:"metrics" mapstructure:"metrics"`
 	Diagnostics DiagnosticsConfig `json:"diagnostics" yaml:"diagnostics" mapstructure:"diagnostics"`
@@ -108,6 +109,59 @@ type NATSConfig struct {
 
 	MaxReconnects int           `json:"maxReconnects" yaml:"maxReconnects" mapstructure:"maxReconnects"`
 	ReconnectWait time.Duration `json:"reconnectWait" yaml:"reconnectWait" mapstructure:"reconnectWait"`
+}
+
+// PlatformConfig keeps nats.credsFile current from the platform (ADR 0009 in
+// platform-docs). The binary signs in as its own Thing with the kit's
+// credskeeper, writes the creds file, and rewrites it after a Regenerate or a
+// Revoke; the connection picks the new file up on its next reconnect. accessd
+// and each controller are separate Things, so each has its own identity. Empty
+// URL starts nothing, and nats.credsFile is a file you provide.
+type PlatformConfig struct {
+	// URL is the platform's base URL. https:// unless AllowInsecure.
+	URL string `json:"url" yaml:"url" mapstructure:"url"`
+	// Identity is this binary's Thing login email.
+	Identity string `json:"identity" yaml:"identity" mapstructure:"identity"`
+	// Password is the Thing's password, needed only until the first sync has
+	// saved a session. Set it as SA_PLATFORM_PASSWORD, then remove it.
+	Password string `json:"password" yaml:"password" mapstructure:"password"`
+	// SessionFile defaults to platform-session.json beside nats.credsFile.
+	SessionFile string `json:"sessionFile" yaml:"sessionFile" mapstructure:"sessionFile"`
+	// SyncInterval defaults to 5m.
+	SyncInterval time.Duration `json:"syncInterval" yaml:"syncInterval" mapstructure:"syncInterval"`
+	// AllowInsecure lets URL be http://. Development only: the first sync
+	// sends the password and receives a private key.
+	AllowInsecure bool `json:"allowInsecure" yaml:"allowInsecure" mapstructure:"allowInsecure"`
+}
+
+// Enabled reports whether the platform keeps the creds file.
+func (p PlatformConfig) Enabled() bool { return p.URL != "" }
+
+// CredsOutside refuses a creds file or session file under dir. accessd calls
+// it with its PocketBase data directory, which PocketBase backups archive whole:
+// a backup must not carry the Thing's session or credential, and a restored one
+// must not give a second host accessd's identity.
+func (c *Config) CredsOutside(dir string) error {
+	for key, path := range map[string]string{
+		"nats.credsFile":       c.NATS.CredsFile,
+		"platform.sessionFile": c.Platform.SessionFile,
+	} {
+		if path != "" && within(dir, path) {
+			return fmt.Errorf("%s (%s) is inside %s, which PocketBase backups archive; keep the platform's credentials in a directory beside it, such as ./pb_creds/", key, path, dir)
+		}
+	}
+	return nil
+}
+
+// within reports whether path is dir or under it.
+func within(dir, path string) bool {
+	d, err1 := filepath.Abs(dir)
+	p, err2 := filepath.Abs(path)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(d, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // LogConfig contains logging configuration.
@@ -317,6 +371,8 @@ func Load(path string) (*Config, error) {
 		"nats.maxReconnects", "nats.reconnectWait",
 		"nats.tls.enable", "nats.tls.certFile", "nats.tls.keyFile",
 		"nats.tls.caFile", "nats.tls.insecure",
+		"platform.url", "platform.identity", "platform.password",
+		"platform.sessionFile", "platform.syncInterval", "platform.allowInsecure",
 		"logging.level", "logging.encoding", "logging.outputPath",
 		"metrics.enabled", "metrics.address", "metrics.path", "metrics.updateInterval", "metrics.token",
 		"diagnostics.enabled", "diagnostics.address",
@@ -454,7 +510,16 @@ func validate(cfg *Config) error {
 	if authCount > 1 {
 		return fmt.Errorf("only one NATS authentication method should be specified")
 	}
-	if cfg.NATS.CredsFile != "" {
+	if cfg.Platform.Enabled() {
+		// The platform writes the creds file, so it need not exist yet; it
+		// must be the only auth method, since that file is what connects.
+		if cfg.NATS.CredsFile == "" {
+			return fmt.Errorf("platform.url is set but nats.credsFile is empty: the platform needs a path to write the creds file to")
+		}
+		if cfg.Platform.SyncInterval < 0 {
+			return fmt.Errorf("platform.syncInterval must be positive, got %s", cfg.Platform.SyncInterval)
+		}
+	} else if cfg.NATS.CredsFile != "" {
 		if _, err := os.Stat(cfg.NATS.CredsFile); os.IsNotExist(err) {
 			return fmt.Errorf("NATS creds file does not exist: %s", cfg.NATS.CredsFile)
 		}
